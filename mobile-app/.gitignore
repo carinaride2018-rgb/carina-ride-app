@@ -1,0 +1,7 @@
+node_modules/
+.DS_Store
+# Real secrets never go in the repo
+android/app/google-services.json
+*.keystore
+*.jks
+*.p8

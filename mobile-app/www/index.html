@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Offline</title>
+<style>
+  :root { color-scheme: light dark; --bg: #15171c; --fg: #f4f2ee; --muted: #a9a59c; --accent: #c9a45c; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 16px/1.5 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; }
+  main { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 32px 24px; box-sizing: border-box; gap: 12px; }
+  h1 { font-size: 22px; margin: 8px 0 0; }
+  p { color: var(--muted); margin: 0; max-width: 320px; }
+  button { margin-top: 16px; background: var(--accent); color: #15171c; border: 0; border-radius: 10px; padding: 14px 28px; font-size: 16px; font-weight: 600; }
+  svg { width: 56px; height: 56px; color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 8.8a15 15 0 0 1 20 0"/><path d="M5 12.6a10 10 0 0 1 14 0"/><path d="M8.5 16.4a5 5 0 0 1 7 0"/><path d="M12 20h.01"/><path d="M3 3l18 18"/></svg>
+  <h1>No connection</h1>
+  <p>Your trips and bookings will be here as soon as your phone is back online.</p>
+  <button type="button" id="retry">Try again</button>
+</main>
+<script src="site.js"></script>
+<script>
+  const retry = () => { if (window.SITE_URL) location.href = window.SITE_URL; else location.reload(); };
+  document.getElementById('retry').onclick = retry;
+  window.addEventListener('online', retry);
+</script>
+</body>
+</html>

@@ -1,0 +1,78 @@
+# Cloud builds for the store apps (https://codemagic.io, free tier is enough).
+# Codemagic builds the iPhone app on its Macs, so no Mac is needed.
+# Lives at the repo root (Codemagic looks there); the app itself is in mobile-app/.
+# One-time setup is in mobile-app/STORES.md.
+workflows:
+  android-release:
+    name: Android (Google Play)
+    instance_type: mac_mini_m2   # the free tier runs on these
+    working_directory: mobile-app
+    environment:
+      node: 22
+      java: 21
+      android_signing:
+        - upload_key            # the keystore uploaded in Codemagic > Code signing
+      groups:
+        - app_settings          # APP_SITE_URL (and optional APP_NAME, APP_ID)
+        - firebase              # GOOGLE_SERVICES_JSON, for phone notifications
+    scripts:
+      - name: Install
+        script: npm ci
+      - name: Firebase file for notifications
+        script: |
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then echo "$GOOGLE_SERVICES_JSON" > android/app/google-services.json; fi
+      - name: Copy settings into the app
+        script: npx cap sync android
+      - name: Build the Google Play bundle and an installable APK
+        script: |
+          cd android
+          chmod +x gradlew
+          ./gradlew bundleRelease assembleRelease
+    artifacts:
+      - mobile-app/android/app/build/outputs/bundle/release/*.aab
+      - mobile-app/android/app/build/outputs/apk/release/*.apk
+    publishing:
+      email:
+        recipients:
+          - carinaride2018@gmail.com
+      # After the first upload by hand, Codemagic can send new versions to Play itself:
+      # google_play:
+      #   credentials: $GCLOUD_SERVICE_ACCOUNT_CREDENTIALS
+      #   track: internal
+
+  ios-release:
+    name: iPhone (App Store)
+    instance_type: mac_mini_m2
+    working_directory: mobile-app
+    integrations:
+      app_store_connect: apple_key   # the App Store Connect API key added in Codemagic
+    environment:
+      node: 22
+      xcode: latest
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.limorelay.app
+      groups:
+        - app_settings
+    scripts:
+      - name: Install
+        script: npm ci
+      - name: Copy settings into the app
+        script: npx cap sync ios
+      - name: Use the signing profiles
+        script: xcode-project use-profiles
+      - name: Set the build number
+        script: |
+          cd ios/App
+          agvtool new-version -all $BUILD_NUMBER
+      - name: Build the iPhone app
+        script: xcode-project build-ipa --project ios/App/App.xcodeproj --scheme App
+    artifacts:
+      - build/ios/ipa/*.ipa
+    publishing:
+      email:
+        recipients:
+          - carinaride2018@gmail.com
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
