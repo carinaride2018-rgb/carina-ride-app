@@ -1,0 +1,31 @@
+# Render blueprint: one web service with a small persistent disk.
+# Render reads this when you choose New > Blueprint and pick the GitHub repo.
+services:
+  - type: web
+    name: livery
+    runtime: node
+    plan: starter
+    buildCommand: "true"
+    startCommand: node server.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATA_FILE
+        value: /data/db.json
+      - key: TRUST_PROXY
+        value: "1"
+      - key: SAMPLE_DATA
+        value: "off"
+      - key: PUBLIC_URL
+        sync: false
+      - key: OWNER_NAME
+        sync: false
+      - key: OWNER_EMAIL
+        sync: false
+      - key: OWNER_PASSWORD
+        sync: false
+    disk:
+      name: livery-data
+      mountPath: /data
+      sizeGB: 1

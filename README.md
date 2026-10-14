@@ -1,0 +1,122 @@
+# Livery: limo booking & dispatch
+
+One system that runs many limo companies. Each company gets its own booking
+page, dispatch board, driver logins and customer accounts, kept separate from
+every other company. The platform owner adds companies and bills them monthly.
+
+"Livery" is a placeholder name. Change `PLATFORM` at the top of `public/app.js`.
+
+## Who signs in, and what they get
+
+| Login | Screen | What they can do |
+|---|---|---|
+| Customer | My trips, Book a ride | Book a Transfer or By the hour ride with pickup date, time, addresses and flight number; live quote; pay, cancel, see flight status and chauffeur, rate the ride, receipts |
+| Driver | Phone-first trip list | Accept or decline, go on/off duty, step through on the way, arrived, on board, complete; add wait time and tolls (chauffeurs never take payment); see flight status, weekly pay, rating and on-time score; ask for time off |
+| Dispatcher / company admin | Board, Trips, Flights, Drivers, Fleet, Customers, Pricing, Texts & emails, Rates & brand, Team | Drag trips onto drivers with warnings for conflicts, take phone bookings, adjust prices, track flights and move pickups, manage vehicles, documents and service, driver schedules, pay and time off, customer discounts, pricing rules and promo codes |
+| Platform owner | Companies, Billing | Add a company with its admin login, change plan, pause or resume, create monthly invoices with setup fee, mark them paid |
+
+Each company's public booking page is `/#book.<slug>`, for example `/#book.carina`.
+
+## Version 2 features
+
+- **Booking:** Transfer or By the hour, pickup date and time, pickup and drop-off address, flight number. Transfers to or from an airport price as airport transfers. Extras: child seats, meet & greet, extra stops, promo codes.
+- **Address autofill:** pickup and drop-off fields suggest airports, hotels and venues as you type, plus the customer's own past addresses (staff see the company's recent ones). A typed street address is completed with the local city.
+- **Company network:** every company on the platform can join a network and send trips it can't cover to another member at an agreed amount (farm-out). The partner accepts or declines; once accepted it dispatches the trip on its own board, and status, chauffeur and vehicle flow back to the sender's trip. The passenger keeps hearing only from the company they booked with. Partners can hand a trip back, the sender can take it back, companies message each other, and a balances page tracks who owes whom until trips are marked settled. The Network tab has Trips, Partners (directory by area and fleet), Messages, Balances and Settings.
+- **Live tracking:** when the driver taps "On the way", the passenger and dispatch see the car on a map with minutes and miles to the pickup. The driver's phone shares GPS; without it the position is estimated along the route. The "on the way" text includes a tracking link (`/#track.<code>`) that works without signing in. Set `PUBLIC_URL` so the link points at your domain. Partner trips pass tracking back to the sender.
+- **Flight monitoring:** every trip with a flight is checked every few minutes. Late arrivals move the pickup automatically (on/off and minimum delay set under Flights) and text the driver and passenger. Cancellations and delays show as alerts on the board.
+- **Price adjusting:** late-night, weekend and busy-time surcharges, busy dates (holidays, proms), add-on prices, promo codes with limits and end dates, customer account discounts, and per-trip adjustments or fixed totals by dispatch.
+- **Phone app (installable web app):** `public/sw.js` (offline app shell, notification taps, Web Push) and `/manifest.webmanifest?c=<slug>&r=<role>` served by server.js, so each company's app carries its name and colour; passengers open on the booking page, drivers and staff on their own screen. "Get the app" in the top bar installs it (Android/desktop) or shows the iPhone Add to Home Screen steps, and turns on notifications. The app checks `notify.feed` every 15 s: new trips for drivers; chauffeur confirmed, on the way, arrived and pickup moved for passengers; new bookings, trips needing a driver, cancellations and partner offers for dispatch. Installing needs HTTPS (the live site). On the live server the same notifications also arrive while the app is closed, through Web Push (`webpush.js`, no packages and no outside account): turning notifications on subscribes the device (`push.subscribe`), and after each action the server sends anything new in that person's feed (`core.pushOutbox()`), encrypted for the phone and signed with a key kept in `vapid.json`. Signing out removes the device. On phones, customer screens use a bottom tab bar.
+- **Reports**: revenue and trips by day, week or month with a hover chart; payments, booking sources, services and vehicle types; driver pay, tips, ratings and on-time; vehicle use; top customers; every trip with CSV download and print. The demo seeds four months of history.
+- **Premium booking**: stops on the way by address (priced per stop, distance runs through each one), return trip booked in the same step, suitcases checked against each vehicle type, vehicle cards showing the company's real models ("Lincoln Navigator or similar"), greeting-sign name for meet & greet, ride preferences (temperature, music, quiet ride) saved to the customer's profile, and a full-screen name sign in the driver app. Cancellation and free-waiting policy set under Rates & brand, shown at booking; late cancellations ask the customer to confirm the fee and record it on the trip.
+- **No-shows**: when the driver taps Arrived, the app shows when the free wait ends (airport or elsewhere, from the policy; it starts at pickup time if the driver is early). After that the driver can tap "Passenger didn't show" (`driver.noShow`); the office can do it at any point (`dispatch.noShow`). The trip closes as cancelled with a `noShow` record (minutes waited, fee from `policy.noShowFeePct`, default 100%, note). The passenger gets a text and dispatch gets a notification. On a partner trip, the partner's no-show closes the sending company's trip too, and the partner is still owed. The fee is recorded, not charged automatically.
+- **Card on file, no deposits (v26)**: customers save a card when they book (booking form, quote page, or the per-ride card link `#card.<token>` the office can text). Nothing is charged at booking. The fare goes on the card `policy.chargeHours` (default 24) before pickup, or at once when pickup is sooner; extras (waiting, tolls, stops, a changed destination or price adjustment) go on it 30 minutes after drop-off; a cancellation keeps any late or no-show fee and refunds the rest (the office can tick "keep the fee" when it cancels late). Charges live in `trip.payment.charges` (fare, extra, fee, refund). In the demo they settle at once and a card ending 0341 is declined; with Stripe the card is saved by Checkout in setup mode on the company's account and charged off-session by the server (`core.pay.pendingCharges` / `chargeResult`, `providers.pay.charge`, idempotency key = charge id). Office: trip modal Payment box with charge now, refund, text card link, paid in cash. Chauffeurs never take payment: there is no "pay the chauffeur" option and the driver app has no payment collection.
+- **Automatic farm-out (v29)**: Network > Auto farm-out (admins edit). When on, a trip goes to the first partner in your order when auto-dispatch finds no free driver, and/or when it is still unassigned N hours before pickup (default 2). The partner is offered `ratePct` (default 80%) of the fare; a decline or no answer within `answerMin` (default 15) moves it to the next partner; when all pass, the trip is flagged for the office. Only partners with a vehicle of that type (or bigger, never a party bus unless booked) that seats everyone are tried. Sending or taking back a trip by hand stops the automation for it. Core: `company.network.auto`, `sweepAutoFarm()` in the dispatch sweep, `network.saveAuto`, `trip.autoFarm`, `farmout.auto`.
+- **Chauffeur photo and car (v30)**: drivers add a photo in the driver app (My photo), or the office does it in Drivers > driver. The browser crops it square and shrinks it to a small JPEG before sending (`driver.setPhoto`, `dispatch.setDriverPhoto`, stored as `user.photo`, max 200 KB data URL). Once a trip is the passenger's chauffeur's, the customer app and the tracking page show photo, name, color, year, model and plate. Texts: "chauffeur confirmed" (also emailed when the booking has an email), "on the way" and "arrived" name the car and plate (`{car_line}`). Partner chauffeurs' photos come across with the farm-out copy.
+- **Text allowance (v31)**: each company gets a monthly number of texts (default 500; owner sets the default, pack size and price on Billing, and a per-company number from the Texts column on Companies). Bought packs (default 500 for $15) never expire and go on the company's next platform invoice; optional automatic top-up. At 80% used the admin gets an email and a notification; when out, a passenger text goes by email instead (or is held if they already got the same email or have no email), and driver texts are held. Emails are unlimited. Texts over 160 characters count per carrier segment. Core: `DEFAULT_TEXTS`, `db.textPlan`, `company.texts`, `meterTexts()` before every save, `dispatch.texts/buyTexts/saveTexts`, `owner.textPlan/saveTextPlan`.
+- **Ride when you land (v32)**: when a booking goes to an airport with a flight number, the form offers a pickup at the other end. The flight gives the arrival airport and scheduled landing (FlightAware `destination`/`scheduled_in` when connected; a stand-in otherwise, and the passenger can change the airport). A network partner whose area covers that airport (and runs the vehicle) gets it as an automatic farm-out, priced at the partner's own rates; the booking company keeps the usual farm-out share (Auto farm-out rate %). No partner there: the trip is flagged "Out of town: arrange a local company" and auto-dispatch never sends your own drivers. The landing pickup is its own trip (card on file as usual), linked both ways, tracked as an airport pickup, and named in the booking confirmation and the dispatch New booking notice. Core: `AIRPORTS`, `landingPreview()` (in every quote), `landingTrip()`, `trip.outOfTown`, `landingId/landingOf`.
+- **Store app readiness (v33)**: `public/native.js` (store-app bridge; `window.LiveryNative` is null in a browser) and `nativepush.js` (Firebase and Apple notifications, keys in `.env.example`); `push.subscribe` accepts `{ native: 'apns:…' | 'fcm:…' }`. My account page (`#account`, footer link on every signed-in screen) with Delete my account (`auth.deleteAccount`, password required): customers are removed and their name and contact stripped from past trips, messages and quotes; chauffeurs and staff are switched off and anonymised so pay history still adds up; upcoming trips must be cancelled or reassigned first; a company's last admin is asked to add another admin. Privacy policy draft at `public/privacy.html` (fill the brackets). In the iPhone app, buying texts is hidden (Apple rules); companies buy on the website.
+- **Sample fleet models (v34)**: Carina Ride's sample cars are Cadillac CT6 (Sedan), Lincoln Navigator (SUV), Ford Transit (Business Van, 10 passengers) and Mercedes-Benz Sprinter (Sprinter Van, 14 passengers), so the booking cards read "Cadillac CT6 or similar" and so on. The cards always list the company's own active cars, so each company shows its real models by editing Fleet. Saved demo data from before v34 is renamed on load (matched by the sample VINs only).
+- **Phone per event ride (v35)**: each ride on the event quote request has an optional "Phone for this ride" after its note (for example the bridal party's contact). It shows on the quote, and when the quote is booked that ride's trips use it as the passenger phone, so the chauffeur's texts go to that group; rides without one use the organizer's phone.
+- **Stops priced by distance and waiting (v36)**: each stop costs the extra miles it adds (per-mile rate × vehicle multiplier) plus the wait booked there (waiting rate per minute). The customer picks the wait for each stop when booking (default 10 minutes, set under Pricing > Add-ons, along with an optional fixed stop fee, now $0). The price shows one line per stop, for example "Stop 1: Pike Place Market (+3.2 mi, 15 min wait)". Airport flat-rate trips add the stop miles too. Without a maps service the extra miles are a steady 1 to 8 mile estimate. Old trips that only have a stop count are charged the default wait for each. Existing companies switch from the old flat $20 stop fee on load.
+- **Subscription plans (v37)**: three plans, each including dispatch, the driver app and the passenger app. Founding $49/month for the first 100 companies, no setup fee, price locked for 2 years, 500 texts. Standard $99/month, 1,000 texts. Fleet $199/month, 3,000 texts. The setup fee ($299) goes on the first invoice and is waived on yearly billing, which bills 12 months for the price of 10. New companies can start with a 30-day free trial, and nothing is billed until it ends. The owner picks the plan, billing and trial when adding a company, changes them from the Companies table, and sets texts per plan on Billing. Company admins see their plan under Texts & emails. Old Membership companies move to Founding automatically. Prices live in `PLANS` in core.js.
+- **Travel agent login (v38)**: travel agents and corporate bookers sign up from the "Agent sign-up or login" banner on the booking page, under the event quote banner (or `#agent.<company>`) with their agency name. They book rides for their clients, pick saved clients, and choose who pays: the agent's saved card, or the client (who is texted a link to add a card). Clients get the normal confirmation and reminder texts; the agent gets an email copy. Agents earn a commission (default 10% of the ride price before gratuity and tax) once a ride is completed, and see it on a Commission tab. The office manages agents under Customers > Travel agents: set the default and per-agent rate, turn commission off, and mark commission paid by month. Demo login: Travel agent (Sofia Reyes, Emerald City Travel).
+- **Access levels for office staff (v41)**: on Dispatch > Team, each office login gets an access level. Admin can do everything (rates, pricing, brand, texts plan, agent commission, the team). Dispatcher can do what the admin ticks: book/edit/cancel rides, assign drivers and farm out, charge cards and mark paid, customers/accounts/invoices, drivers/cars/hours, driver pay, reports and sales totals. New dispatchers start with everything ticked except reports (Dawit, v42). View only sees the board, trips, calendar, quotes and flights but can't change anything. The server enforces it (`STAFF_PERMS` and `PERM_OF` in core.js); tabs and buttons a login can't use are hidden. Sample dispatcher: Omar Haddad, nights@carina.demo.
+- **Ride calendar (v28)**: dispatch Calendar tab with month and week views of every ride (filter by driver or Unassigned, show cancelled, tap a ride to open it, tap a day for its week; phones show a count per day and a stacked week). Drivers get "My calendar" with their own rides. `dispatch.trips` takes `from`/`to` (up to two months) and then returns every trip in the range.
+- **Polish pass (v27)**: chauffeurs never take payment; long tab lists get a More menu and fade instead of being cut off; phone tables show each row as a card; Trips opens on Upcoming with Past/All and loads 50 at a time; compact past rides for customers; cleaner driver trip buttons; readable dates (no monospace, no raw ISO ranges); brand-coloured links and switches; sticky save bar on Rates & brand.
+- **Live dispatch map (v25)**: the top of the Board shows every car (on the way, at pickup, on board, free, off duty) and the pickups in the next 6 hours, with unassigned ones in red (`dispatch.fleetMap`). Cars use the driver's phone GPS from "on the way" until drop-off (`user.lastLoc`), otherwise an estimate along the route or the last known spot. Pickup spots come from Google Places (`providers.geo`, cached in routes.json) or built-in landmarks. With `GOOGLE_MAPS_BROWSER_KEY` it's a Google street map; without it, a simple drawing. Tap a car or pin to open the trip; Hide map is remembered per browser.
+- **Limo Anywhere parity (v24)**, see `research/limo-anywhere-comparison.md`:
+  - Message wording: every passenger text and email can be reworded under Texts & emails, "Edit the wording" (`MSG_TEMPLATES`, `company.templates`, `{words}` filled per trip).
+  - "About 10 minutes away" text, sent once from live tracking (`clientMsgs.approach`).
+  - Incidents tab: accidents, damage, injuries, complaints, lost items; drivers report from the driver app (`db.incidents`).
+  - Driver time clock: clock in and out in the driver app; Drivers, Hours to check, fix and download shifts (`db.timeEntries`).
+  - Trip import: Trips, "Import from a spreadsheet" takes a CSV, checks every row, then saves (`dispatch.importTrips`).
+  - Printable trip sheets: one page per driver from the Board, or one trip from its window.
+  - QuickBooks export: Reports, "QuickBooks export" downloads invoice and sales-receipt CSVs in QuickBooks Online's import format.
+  - Booking terms: Rates & brand; customers tick "I agree" to book online or accept a quote, and the trip keeps the version (`termsAgreed`).
+- **Event quotes**: customers ask for a price on weddings, proms, corporate events and groups at `#request.<slug>` (linked from the booking page and My trips), with several rides and several vehicles per ride. Dispatch prices each ride under Quotes (suggested from the normal rates, warns when the fleet is short), sets a deposit and a valid-until date, and sends a link. The customer reviews it at `#quote.<token>`, pays the deposit (simulated card) and one trip per vehicle is booked at the quoted price, or declines. The office can also take a quote by phone and book it with the deposit paid by card, check, transfer or cash.
+- **Company accounts (Customers > Company accounts / Invoices):** businesses that book on account with payment terms (due on receipt, net 15/30/45), an account discount, optional required PO number, and a list of bookers. Trips billed to an account carry PO and cost center, skip card payment, and are collected onto an itemized invoice (print or save as PDF, emailed to the billing address). Invoices are marked paid, reopened or voided; overdue invoices and last month's uninvoiced trips show as Billing alerts. Data lives in db.accounts and db.clientInvoices.
+- **Passenger messages (Texts & emails):** booking confirmation by text and email right away, a text and email reminder 24 hours before pickup (trips booked more than a day ahead), and a review request by text and email after the trip with a one-tap rating page (`#review.<token>`, no login). Each can be switched off; the review request can be delayed.
+- **Auto-dispatch (Drivers > Auto-dispatch):** sends trips to the closest free driver with a suitable car (skips time off, off duty, clashes, expired papers, cars in the shop; out-of-shift drivers used last), starting a set number of hours before pickup. The driver must accept within a set number of minutes, or the trip goes to the next best driver or back to dispatch. Drivers get a text the evening before and before pickup, and dispatch is alerted if the driver hasn't tapped "On the way" in time. Each trip shows its best drivers with distance. Timers run every 30 s on the server (`core.tick()`). Driver distance is estimated from their previous drop-off or live position until Google Maps is connected.
+- **Fleet:** vehicle status (in service, in the shop, retired), registration, insurance and inspection dates, trips and revenue per vehicle. Cars in the shop can't be assigned. (Odometer, service-due alerts and the repair log were removed at the owner's request.)
+- **Drivers:** license and permit expiry, weekly schedule, pay setting (% of fare, hourly or per trip), payroll by period with mark-paid, time-off requests and approvals, rating, acceptance and on-time figures. Assigning warns about off-duty, time off, expired documents, double booking and capacity.
+
+## Run it
+
+Needs Node 18 or newer, nothing else.
+
+```
+node server.js                 # http://localhost:3000
+PORT=8080 DATA_FILE=/srv/livery/db.json node server.js
+```
+
+For the real site, start with `SAMPLE_DATA=off` plus `OWNER_EMAIL` and `OWNER_PASSWORD`: the first start creates only your owner login. Going online step by step: [DEPLOY.md](DEPLOY.md) (Render blueprint in `render.yaml`, `Dockerfile` for other hosts, settings in `.env.example`, health check at `/healthz`).
+
+Without `SAMPLE_DATA=off` the first start creates sample data. Sample logins (password `demo1234`):
+
+- `owner@demo.com` (platform owner)
+- `dispatch@carina.demo`, `dispatch@summit.demo` (company admins)
+- `marcus@carina.demo`, `elena@carina.demo`, `tom@carina.demo`, `ana@summit.demo` (drivers)
+- `dispatch@pugetsound.demo` (a second Seattle-area company, to try the network from both sides)
+- `jane@demo.com`, `robert@demo.com`, `kyle@demo.com` (customers)
+
+Delete `data/db.json` to start over. Before real use, sign in as the owner,
+add your own company, and remove the sample companies' data.
+
+`node build-demo.js` writes `dist/demo.html`, the same app as one file that runs
+in the browser with no server (data stays in that browser).
+
+## How it is built
+
+- `core.js`: every rule in one place: pricing, booking checks, dispatch,
+  driver steps, billing, logins and roles. Every method checks the caller's role
+  and company, so one company can never see another company's data.
+  The same file runs on the server and in the demo.
+- `server.js`: plain Node HTTP server. `POST /api/<method>` with a bearer token.
+  Passwords are hashed with scrypt. Data is saved to one JSON file.
+- `public/`: the web app (plain JavaScript, no build step).
+
+## Real services: built in, switched on by keys
+
+Each one stays simulated until its settings are added on the server (see `providers.js` and DEPLOY.md, "Switching on real services"). The owner's Connections tab shows which are on.
+
+| Area | Without keys | With keys |
+|---|---|---|
+| Texts | Logged under "Texts & emails" | Twilio (`TWILIO_*`); each message shows Delivered or why not |
+| Email | Logged under "Texts & emails" | Resend (`RESEND_API_KEY`, `EMAIL_FROM`), sent under each company's name |
+| Card payments | Pretend card on sample data; off on the real site | Stripe Connect: each company connects its own account under Rates & brand; rides and quote deposits are paid on Stripe Checkout |
+| Distances | Stable estimate from the two addresses | Google Routes API, cached in `routes.json` next to the data file |
+| Address search | Built-in list of airports and places, plus past addresses | Google Places Autocomplete (New), after the caller's past addresses |
+| Flight tracking | Simulated times and delays | FlightAware AeroAPI from two days out; pickups move only on real delays |
+| Phone notifications | In-app alerts while the app is open | Web Push while it's closed: on by default on the live server, no keys needed |
+| Live GPS | Driver phone GPS; schematic map | (Google map display not built yet) |
+| Platform billing | Invoices tracked by hand | (Stripe Billing not built yet) |
+| Storage | One JSON file | Postgres before hosting more than a few companies |
+
+## Next steps after this version
+
+1. Put it on a GitHub repository and pick a host (Render, Railway, Fly.io).
+2. Move storage to Postgres.
+3. Add the keys for Twilio, Resend, Stripe, Google Maps and FlightAware.
+4. Wrap the driver screen as an installable phone app.
+5. From the research: affiliate farm-in/farm-out between companies, automatic
+   dispatch, corporate accounts, QuickBooks export.

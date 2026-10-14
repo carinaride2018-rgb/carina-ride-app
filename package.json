@@ -1,0 +1,13 @@
+{
+  "name": "livery",
+  "version": "0.1.0",
+  "description": "Multi-company limousine booking and dispatch: customer booking, driver app, dispatch board and platform owner admin.",
+  "private": true,
+  "main": "server.js",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server.js",
+    "demo": "node build-demo.js"
+  },
+  "license": "UNLICENSED"
+}
