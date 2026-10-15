@@ -8,7 +8,7 @@ const read = (p) => fs.readFileSync(path.join(__dirname, p), 'utf8');
 const safe = (js) => js.replace(/<\/script/gi, '<\\/script');
 
 const svgUri = (p) => 'data:image/svg+xml;base64,' + Buffer.from(read(p)).toString('base64');
-const logos = { light: svgUri('public/icons/logo-light.svg'), dark: svgUri('public/icons/logo-dark.svg') };
+const logos = { light: svgUri('public/icons/logo-light.svg'), dark: svgUri('public/icons/logo-dark.svg'), hero: svgUri('public/icons/hero.svg') };
 
 const html = `<meta charset="utf-8">
 <title>LimoRelay</title>

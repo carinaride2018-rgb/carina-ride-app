@@ -791,6 +791,7 @@
           <p class="small faint">One sign-in for company owners, dispatchers, chauffeurs and customers. Each person lands on their own screen.</p>
         </form>
       </section>
+      <figure class="lp-visual"><img src="${esc(LOGO.hero || 'icons/hero.svg')}" alt="LimoRelay dispatch board, passenger phone app and a chauffeured sedan" width="1200" height="640"></figure>
       ${sample ? `<section class="stack lp-sec">
         <span class="label">Try it with sample logins${DEMO ? '' : ' <span class="pwhint">· password demo1234</span>'}</span>
         <div class="roles">${DEMO_LOGINS.map((d) => `<button type="button" class="role" data-demo="${d.key}"><b>${esc(d.label)}</b><span>${esc(d.who)}. ${esc(d.what)}</span><span class="mono">${esc(d.email)}</span></button>`).join('')}</div>

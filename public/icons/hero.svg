@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" role="img" aria-labelledby="t d">
+  <title id="t">LimoRelay booking and dispatch</title>
+  <desc id="d">A dispatch board on a laptop, a passenger phone showing the chauffeur on the way, and a black sedan at night.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1b1e25"/><stop offset="1" stop-color="#0f1115"/></linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e2c27a"/><stop offset=".5" stop-color="#c9a14a"/><stop offset="1" stop-color="#9c7628"/></linearGradient>
+    <linearGradient id="road" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#22262e"/><stop offset="1" stop-color="#14161b"/></linearGradient>
+    <linearGradient id="car" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a3f49"/><stop offset=".55" stop-color="#16181d"/><stop offset="1" stop-color="#0b0c0f"/></linearGradient>
+    <radialGradient id="glow" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#c9a14a" stop-opacity=".35"/><stop offset="1" stop-color="#c9a14a" stop-opacity="0"/></radialGradient>
+    <clipPath id="screen"><rect x="190" y="92" width="560" height="330" rx="6"/></clipPath>
+    <clipPath id="phone"><rect x="842" y="104" width="196" height="392" rx="26"/></clipPath>
+  </defs>
+  <rect width="1200" height="640" rx="20" fill="url(#bg)"/>
+  <!-- skyline -->
+  <g fill="#1f232b">
+    <rect x="0" y="380" width="60" height="140"/><rect x="62" y="330" width="44" height="190"/><rect x="110" y="360" width="70" height="160"/>
+    <rect x="760" y="300" width="48" height="220"/><rect x="812" y="350" width="30" height="170"/><rect x="1060" y="320" width="56" height="200"/>
+    <rect x="1120" y="270" width="40" height="250"/><rect x="1162" y="350" width="38" height="170"/>
+    <path d="M1138 270 l2-40 2 40z"/>
+  </g>
+  <g fill="#c9a14a" opacity=".35">
+    <rect x="72" y="345" width="4" height="4"/><rect x="84" y="365" width="4" height="4"/><rect x="72" y="395" width="4" height="4"/><rect x="1130" y="290" width="4" height="4"/><rect x="1142" y="320" width="4" height="4"/><rect x="1072" y="340" width="4" height="4"/><rect x="772" y="320" width="4" height="4"/><rect x="784" y="360" width="4" height="4"/>
+  </g>
+  <!-- road -->
+  <rect x="0" y="520" width="1200" height="120" fill="url(#road)"/>
+  <g stroke="#c9a14a" stroke-width="3" stroke-dasharray="36 28" opacity=".5"><line x1="0" y1="590" x2="1200" y2="590"/></g>
+  <!-- laptop -->
+  <rect x="176" y="78" width="588" height="358" rx="14" fill="#0b0c0f" stroke="#2c313a"/>
+  <g clip-path="url(#screen)">
+    <rect x="190" y="92" width="560" height="330" fill="#f4f5f7"/>
+    <rect x="190" y="92" width="560" height="34" fill="#fff"/><rect x="190" y="125" width="560" height="2" fill="#c9a14a"/>
+    <circle cx="208" cy="109" r="9" fill="#14161b"/><text x="208" y="112.5" font-family="Georgia,serif" font-size="8.5" fill="#c9a14a" text-anchor="middle">LR</text>
+    <text x="224" y="113" font-family="Helvetica,Arial,sans-serif" font-size="11" font-weight="700" fill="#15171c">Dispatch board</text>
+    <g font-family="Helvetica,Arial,sans-serif" font-size="9" fill="#545a66"><text x="420" y="113">Board</text><text x="458" y="113">Trips</text><text x="492" y="113">Calendar</text><text x="540" y="113">Flights</text><text x="580" y="113">Drivers</text></g>
+    <rect x="652" y="100" width="86" height="18" rx="5" fill="#14161b"/><text x="695" y="112.5" font-family="Helvetica,Arial,sans-serif" font-size="9" fill="#fff" text-anchor="middle">New booking</text>
+    <!-- lanes -->
+    <g font-family="Helvetica,Arial,sans-serif">
+      <rect x="202" y="138" width="128" height="272" rx="8" fill="#eceef2" stroke="#cfd3da" stroke-dasharray="4 3"/>
+      <text x="212" y="156" font-size="9.5" font-weight="700" fill="#15171c">Unassigned</text>
+      <rect x="210" y="166" width="112" height="54" rx="6" fill="#fff" stroke="#d9dce3"/><text x="218" y="182" font-size="10" font-weight="700" fill="#15171c">2:40 PM</text><text x="218" y="196" font-size="8.5" fill="#545a66">SEA airport → Bellevue</text><text x="218" y="210" font-size="8" fill="#b3261e" font-weight="700">Needs a driver</text>
+      <rect x="340" y="138" width="128" height="272" rx="8" fill="#eceef2"/>
+      <circle cx="356" cy="153" r="8" fill="#fff" stroke="#d9dce3"/><text x="356" y="156" font-size="7" text-anchor="middle" fill="#15171c" font-weight="700">MB</text><text x="370" y="156" font-size="9.5" font-weight="700" fill="#15171c">Marcus · S-Class</text>
+      <rect x="348" y="166" width="112" height="54" rx="6" fill="#fff" stroke="#d9dce3"/><text x="356" y="182" font-size="10" font-weight="700" fill="#15171c">11:15 AM</text><text x="356" y="196" font-size="8.5" fill="#545a66">Pike Place → SEA</text><text x="356" y="210" font-size="8" fill="#2a5db0" font-weight="700">On the way · 8 min</text>
+      <rect x="348" y="228" width="112" height="54" rx="6" fill="#fff" stroke="#d9dce3"/><text x="356" y="244" font-size="10" font-weight="700" fill="#15171c">4:00 PM</text><text x="356" y="258" font-size="8.5" fill="#545a66">Hourly · Wedding</text><text x="356" y="272" font-size="8" fill="#1f7a4d" font-weight="700">Accepted</text>
+      <rect x="478" y="138" width="128" height="272" rx="8" fill="#eceef2"/>
+      <circle cx="494" cy="153" r="8" fill="#fff" stroke="#d9dce3"/><text x="494" y="156" font-size="7" text-anchor="middle" fill="#15171c" font-weight="700">EK</text><text x="508" y="156" font-size="9.5" font-weight="700" fill="#15171c">Elena · Escalade</text>
+      <rect x="486" y="166" width="112" height="54" rx="6" fill="#fff" stroke="#d9dce3"/><text x="494" y="182" font-size="10" font-weight="700" fill="#15171c">12:30 PM</text><text x="494" y="196" font-size="8.5" fill="#545a66">AS 331 lands 12:10</text><text x="494" y="210" font-size="8" fill="#1f7a4d" font-weight="700">Passenger on board</text>
+      <rect x="616" y="138" width="122" height="272" rx="8" fill="#fff" stroke="#d9dce3"/>
+      <text x="626" y="156" font-size="9.5" font-weight="700" fill="#15171c">Live map</text>
+      <rect x="624" y="164" width="106" height="150" rx="6" fill="#eceef2"/>
+      <path d="M634 300 C 660 270, 650 220, 690 200 S 720 180, 722 172" fill="none" stroke="#2a5db0" stroke-width="2.5" stroke-dasharray="5 4"/>
+      <circle cx="690" cy="200" r="6" fill="#2a5db0" stroke="#fff" stroke-width="2"/><circle cx="660" cy="262" r="6" fill="#1f7a4d" stroke="#fff" stroke-width="2"/><path d="M722 162 a7 7 0 0 1 7 7 c0 6 -7 12 -7 12 s-7 -6 -7 -12 a7 7 0 0 1 7 -7z" fill="#c9a14a"/>
+      <text x="626" y="334" font-size="8.5" fill="#545a66">Today</text><text x="626" y="350" font-size="15" font-weight="700" fill="#15171c">18 rides</text><text x="626" y="368" font-size="8.5" fill="#1f7a4d" font-weight="700">All assigned but 1</text>
+    </g>
+  </g>
+  <path d="M130 436 h680 l-26 22 h-628z" fill="#2a2e36"/><rect x="420" y="436" width="100" height="6" rx="3" fill="#1b1e25"/>
+  <!-- phone -->
+  <ellipse cx="940" cy="300" rx="190" ry="190" fill="url(#glow)"/>
+  <rect x="832" y="94" width="216" height="412" rx="34" fill="#0b0c0f" stroke="url(#gold)" stroke-width="2"/>
+  <g clip-path="url(#phone)">
+    <rect x="842" y="104" width="196" height="392" fill="#f4f5f7"/>
+    <rect x="842" y="104" width="196" height="64" fill="#14161b"/>
+    <text x="940" y="136" font-family="Georgia,serif" font-size="15" fill="#f5f1e8" text-anchor="middle" letter-spacing="2">CARINA <tspan fill="#c9a14a">RIDE</tspan></text>
+    <text x="940" y="153" font-family="Helvetica,Arial,sans-serif" font-size="8" fill="#9aa0ab" text-anchor="middle">Your ride today</text>
+    <rect x="852" y="178" width="176" height="120" rx="10" fill="#e6e8ed"/>
+    <g stroke="#d4d7de" stroke-width="1"><line x1="852" y1="208" x2="1028" y2="208"/><line x1="852" y1="238" x2="1028" y2="238"/><line x1="852" y1="268" x2="1028" y2="268"/><line x1="896" y1="178" x2="896" y2="298"/><line x1="940" y1="178" x2="940" y2="298"/><line x1="984" y1="178" x2="984" y2="298"/></g>
+    <path d="M868 284 C 900 270, 900 230, 940 222 S 990 200, 1004 192" fill="none" stroke="#14161b" stroke-width="3" stroke-dasharray="2 7" stroke-linecap="round"/>
+    <circle cx="930" cy="226" r="11" fill="#2a5db0" opacity=".25"/><circle cx="930" cy="226" r="6" fill="#2a5db0" stroke="#fff" stroke-width="2"/>
+    <path d="M1004 180 a9 9 0 0 1 9 9 c0 8 -9 15 -9 15 s-9 -7 -9 -15 a9 9 0 0 1 9 -9z" fill="#c9a14a"/><circle cx="1004" cy="189" r="3" fill="#fff"/>
+    <g font-family="Helvetica,Arial,sans-serif">
+      <text x="856" y="322" font-size="13" font-weight="700" fill="#15171c">Marcus is on the way</text>
+      <text x="856" y="338" font-size="9.5" fill="#545a66">Black S-Class · ABC 1234</text>
+      <rect x="856" y="350" width="168" height="5" rx="2.5" fill="#d9dce3"/><rect x="856" y="350" width="112" height="5" rx="2.5" fill="#c9a14a"/>
+      <text x="856" y="372" font-size="9" fill="#545a66">Arriving in</text><text x="1024" y="372" font-size="9" fill="#15171c" font-weight="700" text-anchor="end">8 min</text>
+      <rect x="856" y="386" width="168" height="44" rx="8" fill="#fff" stroke="#d9dce3"/>
+      <circle cx="874" cy="408" r="5" fill="none" stroke="#15171c" stroke-width="2"/><text x="886" y="404" font-size="8" fill="#868c98">Pickup</text><text x="886" y="416" font-size="9.5" fill="#15171c">Pike Place Market</text>
+      <rect x="856" y="440" width="168" height="34" rx="8" fill="#14161b"/><text x="940" y="461" font-size="10.5" fill="#fff" text-anchor="middle" font-weight="700">Call chauffeur</text>
+    </g>
+  </g>
+  <rect x="910" y="110" width="60" height="8" rx="4" fill="#0b0c0f"/>
+  <!-- sedan -->
+  <g transform="translate(330 470)">
+    <ellipse cx="200" cy="96" rx="230" ry="12" fill="#000" opacity=".5"/>
+    <path d="M10 70 C 12 54, 30 46, 70 42 L 130 38 C 160 18, 190 8, 250 8 C 300 8, 330 18, 360 38 L 400 44 C 420 48, 432 56, 432 70 L 432 80 C 432 86, 428 88, 420 88 L 20 88 C 12 88, 8 84, 10 70 Z" fill="url(#car)" stroke="#3a3f49"/>
+    <path d="M150 40 C 170 22, 196 16, 246 16 C 290 16, 314 24, 336 40 Z" fill="#2c3340" opacity=".9"/>
+    <line x1="246" y1="16" x2="244" y2="40" stroke="#16181d" stroke-width="4"/>
+    <path d="M30 60 H 420" stroke="url(#gold)" stroke-width="1.6" opacity=".9"/>
+    <rect x="414" y="52" width="16" height="7" rx="3" fill="#f5f1e8"/><rect x="12" y="54" width="14" height="7" rx="3" fill="#b3261e" opacity=".85"/>
+    <g fill="#0b0c0f" stroke="#3a3f49" stroke-width="3"><circle cx="100" cy="86" r="24"/><circle cx="350" cy="86" r="24"/></g>
+    <g fill="url(#gold)"><circle cx="100" cy="86" r="9"/><circle cx="350" cy="86" r="9"/></g>
+  </g>
+  <path d="M760 527 L 1200 560 L 1200 520 L 760 520 Z" fill="#f5f1e8" opacity=".05"/>
+</svg>
