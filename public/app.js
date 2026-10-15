@@ -772,7 +772,7 @@
     ['Corporate accounts and travel agents', 'Company accounts with monthly invoices, PO numbers and bookers, plus a travel agent login with commission tracking.'],
     ['Reports and team access', 'Sales, drivers, vehicles and customers at a glance, QuickBooks export, and access levels for every dispatcher.'],
   ];
-  const KEEP_PCT = 100 - ((C.DEFAULT_AUTOFARM && C.DEFAULT_AUTOFARM.ratePct) || 80);
+  const KEEP_PCT = 100 - ((C.DEFAULT_AUTOFARM && C.DEFAULT_AUTOFARM.ratePct) || 87.5);
   const CONTACT_EMAIL = C.PLATFORM_EMAIL || 'info@limorelay.com';
   const mailLink = (cls = '') => `<a${cls ? ` class="${cls}"` : ''} href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>`;
   const LP_FAQ = [
@@ -2431,7 +2431,7 @@
     async function farmModal(t, back) {
       let partners;
       try { partners = await api('network.partnersFor', { tripId: t.id }); } catch (e) { return toast(e.message, true); }
-      const suggested = Math.round(t.price.total * 0.8);
+      const suggested = Math.round(t.price.total * ((C.DEFAULT_AUTOFARM && C.DEFAULT_AUTOFARM.ratePct) || 87.5)) / 100;
       const m = openModal({
         title: `Send ${t.ref} to a partner`, onClose: back,
         body: partners.length ? `<form id="fm" class="stack" novalidate>
@@ -2589,8 +2589,8 @@
               <input class="input num-in" type="number" name="lastCallHours" min="1" max="48" value="${a.lastCallHours || 2}" ${ro}><span class="small">hours before pickup</span></div>
           </fieldset>
           <fieldset class="fs"><legend>Offer</legend>
-            <div class="row"><span>Pay the partner</span><input class="input num-in" type="number" name="ratePct" min="10" max="100" value="${a.ratePct}" ${ro}><span>% of the fare</span></div>
-            <p class="small muted" style="margin:0">You keep the rest as your commission (${100 - a.ratePct}% now). This also applies to pickups your clients book for when they land in another city.</p>
+            <div class="row"><span>Pay the partner</span><input class="input num-in" type="number" name="ratePct" min="10" max="100" step="0.5" value="${a.ratePct}" ${ro}><span>% of the fare</span></div>
+            <p class="small muted" style="margin:0">You keep the rest as your commission (${+(100 - a.ratePct).toFixed(1)}% now). This also applies to pickups your clients book for when they land in another city.</p>
             <div class="row"><span>Wait</span><input class="input num-in" type="number" name="answerMin" min="5" max="240" value="${a.answerMin}" ${ro}><span>minutes for an answer, then try the next partner</span></div>
           </fieldset>
           <fieldset class="fs"><legend>Partners, in order</legend>

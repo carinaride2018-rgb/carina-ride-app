@@ -94,7 +94,7 @@
   const DEFAULT_DISPATCH = { autoAssign: false, horizonHours: 24, acceptMin: 20, onNoAnswer: 'next', remindEvening: true, eveningHour: 18, remindBeforeMin: 120, lateStartMin: 20, minNoticeHours: 3 };
   // Automatic farm-out: send a trip to network partners, in the company's order,
   // when its own drivers can't cover it. Off until the company turns it on.
-  const DEFAULT_AUTOFARM = { on: false, noDriver: true, lastCallHours: 2, ratePct: 80, answerMin: 15, partners: [] };
+  const DEFAULT_AUTOFARM = { on: false, noDriver: true, lastCallHours: 2, ratePct: 87.5, answerMin: 15, partners: [] };
   // Suitcases each vehicle type takes; companies can change these.
   const DEFAULT_BAGS = { 'Sedan': 2, 'SUV': 5, 'Business Van': 8, 'Sprinter Van': 12, 'Party Bus': 4 };
   // Cancellation and free waiting, shown to customers when they book.
@@ -1697,7 +1697,7 @@
       if (lp.partner) {
         const p = findCompany(lp.partner.id);
         lt.priceOverride = lp.price; reprice(lt);
-        makeOffer(c, lt, p, Math.round(lt.price.total * acfg(c).ratePct / 100), `Passenger booked this with their flight ${t.flight} from ${t.ref}. Priced at your rates.`, 'System', true);
+        makeOffer(c, lt, p, round2(lt.price.total * acfg(c).ratePct / 100), `Passenger booked this with their flight ${t.flight} from ${t.ref}. Priced at your rates.`, 'System', true);
       } else if (!lp.home) {
         lt.needsDriver = { at: now().toISOString(), why: `Out of town in ${ap.city}: arrange a local company`, outOfTown: true };
       }
@@ -3178,7 +3178,7 @@
       const bool = (k) => (k in a ? a[k] === true || a[k] === 'true' || a[k] === 'on' : cur[k]);
       const whole = (k, lo, hi) => (k in a ? Math.min(hi, Math.max(lo, Math.round(num(a[k], cur[k])))) : cur[k]);
       const partners = Array.isArray(a.partners) ? [...new Set(a.partners.map(String))].filter((pid) => { const c = findCompany(pid); return c && c.id !== ctx.company.id && isMember(c); }) : cur.partners;
-      const next = { on: bool('on'), noDriver: bool('noDriver'), lastCallHours: whole('lastCallHours', 0, 48), ratePct: whole('ratePct', 10, 100), answerMin: whole('answerMin', 5, 240), partners };
+      const next = { on: bool('on'), noDriver: bool('noDriver'), lastCallHours: whole('lastCallHours', 0, 48), ratePct: Math.round(('ratePct' in a ? Math.min(100, Math.max(10, num(a.ratePct, cur.ratePct))) : cur.ratePct) * 2) / 2, answerMin: whole('answerMin', 5, 240), partners };
       if (next.on && !ctx.company.network.joined) fail('Join the network first, under Network settings.');
       if (next.on && Array.isArray(a.partners) && !partners.length) fail('Pick at least one partner to send trips to.');
       if (next.on && !next.noDriver && !next.lastCallHours) fail('Choose when trips should be sent: when no driver is free, or a set time before pickup.');
@@ -3258,7 +3258,7 @@
           continue;
         }
         t.autoFarm.tried.push(next.id);
-        const rate = Math.max(1, Math.round(t.price.total * cfg.ratePct / 100));
+        const rate = Math.max(1, round2(t.price.total * cfg.ratePct / 100));
         makeOffer(c, t, next, rate, 'Sent automatically: no free car of our own.', 'Auto farm-out', true);
         t.needsDriver = null;
         changed = true;
