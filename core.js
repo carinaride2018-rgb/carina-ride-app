@@ -1933,6 +1933,17 @@
 
     // Delete my account (both app stores require it). Trip and payment records
     // stay for the company's books, with the person's name and contact removed.
+    // The platform owner and company admins can move their own login to a new email.
+    def('auth.changeEmail', ['owner', 'admin'], true, async (ctx, a) => {
+      const u = ctx.user;
+      const email = str(a.email, 120).toLowerCase();
+      if (!emailOk(email)) fail('Enter a valid email address.');
+      if (!u.passHash || (await hashPw(String(a.password || ''), u.salt)) !== u.passHash) fail('That password is not right.', 401);
+      if (email === u.email) fail('That is already your sign-in email.');
+      if (db.users.some((x) => x.id !== u.id && x.email === email && x.active !== false)) fail('Another login already uses that email.');
+      u.email = email;
+      return { user: pubUser(u) };
+    });
     def('auth.deleteAccount', 'any', true, async (ctx, a) => {
       const u = ctx.user;
       if (!u.passHash || (await hashPw(String(a.password || ''), u.salt)) !== u.passHash) fail('That password is not right.', 401);

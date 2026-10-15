@@ -412,10 +412,29 @@
       <div><a class="linkbtn small" href="#${HOME[u.role]}">← Back</a><h1 style="margin-top:6px">My account</h1></div>
       <section class="panel"><dl class="kv"><dt>Name</dt><dd>${esc(u.name)}</dd><dt>Email</dt><dd>${esc(u.email)}</dd>${u.phone ? `<dt>Mobile</dt><dd>${esc(u.phone)}</dd>` : ''}<dt>Account</dt><dd>${esc(roleName)}${co ? ` · ${esc(co.name)}` : ''}</dd></dl></section>
       <section class="panel stack"><h2>Your privacy</h2><p class="small muted">What we keep and why is in the ${privacyLink()}. To change your name or number, ${u.role === 'customer' ? `call ${esc((co && co.name) || 'the company')}` : 'ask your office'}.</p></section>
+      ${['owner', 'admin'].includes(u.role) ? `<section class="panel stack"><h2>Sign-in email</h2><p class="small muted">You sign in with ${esc(u.email)}.${u.role === 'owner' ? ' Free-trial requests are emailed there too.' : ''}</p><div><button class="btn" type="button" id="acct-email">Change sign-in email</button></div></section>` : ''}
       ${u.role === 'owner' ? '' : `<section class="panel stack danger-zone"><h2>Delete my account</h2>
         <p class="small muted">${u.role === 'customer' ? 'This removes your login, saved card and contact details. Past rides stay on the company\'s books for tax records, with your name removed. You can\'t undo this.' : 'This switches off your login and removes your name, contact details and photo. Past trips and pay records stay on the company\'s books without your name. You can\'t undo this.'}</p>
         <button class="btn danger" type="button" id="acct-del">Delete my account</button></section>`}
     </div>`;
+    const em = $('#acct-email', v);
+    if (em) em.onclick = () => {
+      const m = openModal({
+        title: 'Change sign-in email',
+        body: `<form id="em-form" class="stack" novalidate>
+          <label class="field"><span>New email</span><input id="em-email" name="email" type="email" autocomplete="email" placeholder="info@limorelay.com"></label>
+          <label class="field"><span>Your current password</span><input id="em-pass" name="password" type="password" autocomplete="current-password"></label><div id="em-err"></div></form>`,
+        footer: '<button class="btn" type="button" data-close>Cancel</button><button class="btn brand" type="button" id="em-go">Change email</button>',
+      });
+      $('[data-close]', m).onclick = closeModal;
+      $('#em-go', m).onclick = (e) => busy(e.currentTarget, async () => {
+        try {
+          const r = await api('auth.changeEmail', { email: $('#em-email', m).value, password: $('#em-pass', m).value });
+          setSession({ ...session, user: r.user });
+          closeModal(); toast(`You now sign in with ${r.user.email}.`); viewAccount();
+        } catch (x) { showErr($('#em-err', m), x); }
+      });
+    };
     const del = $('#acct-del', v);
     if (del) del.onclick = () => {
       const m = openModal({

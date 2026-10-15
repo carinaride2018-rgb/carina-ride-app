@@ -135,7 +135,7 @@ function limited(ip) {
 
 // Hosts put the app behind a proxy; only then is X-Forwarded-For the visitor.
 const clientIp = (req) => (TRUST_PROXY && String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()) || req.socket.remoteAddress;
-const LIMITED = new Set(['auth.login', 'auth.signup', 'public.requestQuote', 'public.acceptQuote', 'public.rate', 'public.requestTrial']);
+const LIMITED = new Set(['auth.login', 'auth.signup', 'public.requestQuote', 'public.acceptQuote', 'public.rate', 'public.requestTrial', 'auth.changeEmail']);
 
 // ---- Outside services ---------------------------------------------------------
 
