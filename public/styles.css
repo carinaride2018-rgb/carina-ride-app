@@ -749,3 +749,14 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 .lp-faq summary { cursor: pointer; font-weight: 600; }
 .lp-faq details p { margin-top: 8px; }
 .lp-foot { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 18px; color: var(--ink-3); }
+
+/* LimoRelay logo in the top bar (v44) */
+.wordmark.brandlogo img { display: block; height: 34px; width: auto; }
+.wordmark.brandlogo .logo-d { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .wordmark.brandlogo .logo-l { display: none; }
+  :root:not([data-theme="light"]) .wordmark.brandlogo .logo-d { display: block; }
+}
+:root[data-theme="dark"] .wordmark.brandlogo .logo-l { display: none; }
+:root[data-theme="dark"] .wordmark.brandlogo .logo-d { display: block; }
+@media (max-width: 640px) { .wordmark.brandlogo img { height: 28px; } }

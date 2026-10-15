@@ -8,6 +8,8 @@
   'use strict';
 
   const PLATFORM = 'LimoRelay';
+  // The demo build inlines the logo files; the live site loads them from icons/.
+  const LOGO = window.LIMO_LOGOS || { light: 'icons/logo-light.svg', dark: 'icons/logo-dark.svg' };
   const DEMO = !!window.LIMO_DEMO;
   const C = window.LimoCore;
 
@@ -245,8 +247,8 @@
     const demoKey = u ? (u.role === 'admin' || u.role === 'dispatcher' ? 'dispatch' : u.role) : '';
     app.innerHTML = `
       <header class="topbar">
-        <div class="wordmark"><span class="seal">${esc(initials(co ? co.name : PLATFORM))}</span>
-          <div>${esc(co ? co.name : PLATFORM)}<small>${co ? 'on ' + PLATFORM : 'Booking & dispatch'}</small></div></div>
+        ${co ? `<div class="wordmark"><span class="seal">${esc(initials(co.name))}</span>
+          <div>${esc(co.name)}<small>on ${PLATFORM}</small></div></div>` : `<div class="wordmark brandlogo"><img class="logo-l" src="${LOGO.light}" alt="${PLATFORM}" width="160" height="34"><img class="logo-d" src="${LOGO.dark}" alt="${PLATFORM}" width="160" height="34"></div>`}
         <div class="navrow"><nav class="tabs" aria-label="Sections">${(tabs || []).map((t) => `<button type="button" data-tab="${t.key}" aria-current="${t.key === active}">${esc(t.label)}</button>`).join('')}</nav>
           ${tabs && tabs.length > 4 ? `<button type="button" class="tabmore" aria-haspopup="true" aria-expanded="false" hidden>More<span aria-hidden="true"> ▾</span></button>
           <div class="tabmenu" role="menu" hidden>${tabs.map((t) => `<button type="button" role="menuitem" data-go="${t.key}" aria-current="${t.key === active}">${esc(t.label)}</button>`).join('')}</div>` : ''}</div>
