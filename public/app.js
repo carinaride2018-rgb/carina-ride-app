@@ -473,6 +473,7 @@
     if (route.startsWith('request.')) return viewRequest(route.slice(8));
     if (route.startsWith('quote.')) return viewQuote(route.slice(6));
     if (route.startsWith('agent.')) return viewAgentSignup(route.slice(6));
+    if (route.startsWith('setpw.')) return viewSetPassword(route.slice(6));
     if (!session) return viewSignin();
     if (!seenInit) { watchFeed(); syncPush(); }
     if (route === 'account') return viewAccount();
@@ -811,6 +812,7 @@
           <label class="field"><span>Password</span><input id="si-password" name="password" type="password" autocomplete="current-password" required></label>
           <div id="si-err"></div>
           <button class="btn primary big" type="submit">Sign in</button>
+          <div><button class="linkbtn small" type="button" id="si-forgot">Forgot password?</button></div>
           <p class="small faint">One sign-in for company owners, dispatchers, chauffeurs and customers. Each person lands on their own screen.</p>
         </form>
       </section>
@@ -888,6 +890,7 @@
         catch (err) { showErr($('#si-err', v), err); }
       });
     };
+    $('#si-forgot', v).onclick = () => forgotModal($('#si-email', v).value);
     $('#tr-form', v).onsubmit = async (e) => {
       e.preventDefault();
       const f = formData(e.target);
@@ -1511,6 +1514,50 @@
   }
 
   // ---- Travel agent sign-up ---------------------------------------------------
+  // Forgot password: emails a link to choose a new one.
+  function forgotModal(email) {
+    const m = openModal({
+      title: 'Reset your password',
+      body: `<form id="fp" class="stack" novalidate><p class="muted">Enter the email you sign in with. We'll email you a link to choose a new password.</p>
+        <label class="field"><span>Email</span><input id="fp-email" name="email" type="email" autocomplete="username" value="${esc(email || '')}"></label><div id="fp-err"></div></form>`,
+      footer: '<button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="fp-go">Email me a link</button>',
+    });
+    $('[data-close]', m).onclick = closeModal;
+    const go2 = (e) => busy($('#fp-go', m), async () => {
+      if (e) e.preventDefault();
+      try {
+        await api('public.forgotPassword', { email: $('#fp-email', m).value });
+        $('#fp', m).innerHTML = `<div class="note ok" id="fp-done">If an account uses that email, a link to set a new password is on its way. It works for 2 hours. Check your spam folder if it doesn't arrive.</div>`;
+        $('#fp-go', m).remove(); $('[data-close]', m).textContent = 'Done';
+      } catch (err) { showErr($('#fp-err', m), err); }
+    });
+    $('#fp-go', m).onclick = () => go2(); $('#fp', m).onsubmit = go2;
+  }
+  // Set a password from an emailed link (welcome or reset).
+  async function viewSetPassword(token) {
+    current = null;
+    const v = shell({ narrow: true });
+    let info;
+    try { info = await api('public.loginLink', { token }); } catch (e) {
+      v.innerHTML = `<section class="panel stack"><h1>Link expired</h1><p class="muted">${esc(e.message)}</p><div><button class="btn primary" type="button" id="sp-new">Get a new link</button> <a class="btn" href="#signin">Sign in</a></div></section>`;
+      $('#sp-new', v).onclick = () => forgotModal('');
+      return;
+    }
+    const welcome = info.purpose === 'welcome';
+    v.innerHTML = `<form class="panel stack" id="sp-form" novalidate>
+      <h1>${welcome ? `Welcome${info.name ? ', ' + esc(info.name) : ''}` : 'Choose a new password'}</h1>
+      <p class="muted">${welcome ? `Set a password for ${info.company ? esc(info.company) + ' on ' : ''}${PLATFORM}. ` : ''}You'll sign in with <b>${esc(info.email)}</b>.</p>
+      <label class="field"><span>New password</span><input id="sp-pass" name="password" type="password" autocomplete="new-password" placeholder="At least 8 characters"></label>
+      <label class="field"><span>Type it again</span><input id="sp-pass2" type="password" autocomplete="new-password"></label>
+      <div id="sp-err"></div>
+      <button class="btn primary big" type="submit" id="sp-go">${welcome ? 'Set password and sign in' : 'Save and sign in'}</button></form>`;
+    $('#sp-form', v).onsubmit = (e) => { e.preventDefault(); busy($('#sp-go', v), async () => {
+      const pw = $('#sp-pass', v).value;
+      if (pw !== $('#sp-pass2', v).value) return showErr($('#sp-err', v), 'The two passwords are different.');
+      try { const res = await api('public.setPassword', { token, password: pw }); setSession(res); toast('Password saved. You are signed in.'); history.replaceState(null, '', '#' + HOME[res.user.role]); render(); }
+      catch (err) { showErr($('#sp-err', v), err); }
+    }); };
+  }
   async function viewAgentSignup(slug) {
     current = null;
     let info;
@@ -3892,13 +3939,18 @@
             <td class="r num nowrap">${c.billing === 'yearly' ? `${money(c.yearlyFee)}/yr` : `${money(c.monthlyFee)}/mo`}${c.inTrial ? `<div class="small faint">Trial until ${esc(fmtYMD(c.trialEnds))}</div>` : c.priceLockedUntil ? `<div class="small faint">Locked until ${esc(fmtYMD(c.priceLockedUntil))}</div>` : c.paidThrough ? `<div class="small faint">Paid through ${esc(c.paidThrough)}</div>` : ''}</td><td class="r num">${c.drivers}</td><td class="r num">${c.vehicles}</td><td class="r num">${c.tripsMonth}</td><td class="r num">${money0(c.bookedMonth)}</td>
             <td class="nowrap"><button class="linkbtn num" type="button" data-texts="${c.id}">${c.texts.used} / ${c.texts.included}${c.texts.custom ? '*' : ''}</button>${c.texts.out ? ' <span class="pill s-cancelled">Out</span>' : c.texts.low ? ' <span class="pill unpaid">Low</span>' : ''}${c.texts.credits ? `<div class="small faint">+${c.texts.credits} bought</div>` : ''}</td>
             <td>${c.status === 'active' ? '<span class="pill s-on_board">Active</span>' : '<span class="pill s-cancelled">Paused</span>'}</td>
-            <td><button class="btn sm" type="button" data-status="${c.id}" data-to="${c.status === 'active' ? 'suspended' : 'active'}">${c.status === 'active' ? 'Pause' : 'Resume'}</button></td></tr>`).join('')}
+            <td class="nowrap"><button class="btn sm" type="button" data-sendlogin="${c.id}">Send login email</button> <button class="btn sm" type="button" data-status="${c.id}" data-to="${c.status === 'active' ? 'suspended' : 'active'}">${c.status === 'active' ? 'Pause' : 'Resume'}</button></td></tr>`).join('')}
           </tbody></table></div>
           <p class="small faint" style="margin-top:10px">Pausing a company signs out its staff, drivers and customers and closes its booking page until you resume it.</p>`;
         $('#co-add', v).onclick = addCompany;
         $$('[data-lead]', v).forEach((el) => { el.onchange = async () => { try { await api('owner.leadAction', { id: el.dataset.lead, action: el.value }); last = ''; refresh(); } catch (e) { toast(e.message, true); } }; });
         $$('[data-rmlead]', v).forEach((el) => { el.onclick = async () => { if (!confirm('Remove this request?')) return; try { await api('owner.leadAction', { id: el.dataset.rmlead, action: 'delete' }); last = ''; refresh(); } catch (e) { toast(e.message, true); } }; });
         $$('[data-texts]', v).forEach((b) => { b.onclick = () => textsModal(list.find((c) => c.id === b.dataset.texts)); });
+        $$('[data-sendlogin]', v).forEach((b) => { b.onclick = () => busy(b, async () => {
+          const c = list.find((x) => x.id === b.dataset.sendlogin);
+          if (!confirm(`Email ${c.name}'s admin a link to set their password and sign in?`)) return;
+          try { const r = await api('owner.sendLogin', { id: c.id }); if (r.links.length) loginLinksModal(c.name, r.links); else toast(`Login email sent to ${r.sent.join(', ')}.`); } catch (e) { toast(e.message, true); }
+        }); });
         $$('[data-plan]', v).forEach((s) => { s.onchange = async () => { try { await api('owner.updateCompany', { id: s.dataset.plan, plan: s.value }); toast('Plan changed.'); } catch (e) { toast(e.message, true); } last = ''; refresh(); }; });
         $$('[data-billing]', v).forEach((s) => { s.onchange = async () => { try { await api('owner.updateCompany', { id: s.dataset.billing, billing: s.value }); toast(s.value === 'yearly' ? 'Now billed yearly: 12 months for the price of 10.' : 'Now billed monthly.'); } catch (e) { toast(e.message, true); } last = ''; refresh(); }; });
         $$('[data-status]', v).forEach((b) => { b.onclick = () => busy(b, async () => { try { await api('owner.updateCompany', { id: b.dataset.status, status: b.dataset.to }); toast(b.dataset.to === 'active' ? 'Company resumed.' : 'Company paused.'); last = ''; refresh(); } catch (e) { toast(e.message, true); } }); });
@@ -3922,6 +3974,17 @@
           try { await api('owner.updateCompany', { id: c.id, textsIncluded: f.textsIncluded, ...(f.giftPacks ? { giftPacks: f.giftPacks } : {}) }); closeModal(); toast('Texts updated.'); last = ''; refresh(); } catch (err) { showErr($('#ot-err', m), err); }
         });
       }
+      // Email isn't switched on yet: show the links so the owner can send them by hand.
+      function loginLinksModal(name, links) {
+        const m = openModal({
+          title: `Login link for ${name}`,
+          body: `<div class="stack"><div class="note warn">Email isn't switched on yet (add the Resend keys in Render), so nothing was emailed. Send this link to them yourself. It works for 7 days and lets them choose their password.</div>
+            ${links.map((l, i) => `<label class="field"><span>${esc(l.email)}</span><div class="row"><input class="input grow mono small" readonly id="ll-${i}" value="${esc(l.link)}"><button class="btn sm" type="button" data-copyll="${i}">Copy</button></div></label>`).join('')}</div>`,
+          footer: '<button class="btn primary" type="button" data-close>Done</button>',
+        });
+        $('[data-close]', m).onclick = closeModal;
+        $$('[data-copyll]', m).forEach((b) => { b.onclick = async () => { const inp = $('#ll-' + b.dataset.copyll, m); try { await navigator.clipboard.writeText(inp.value); toast('Link copied.'); } catch (e) { inp.select(); toast('Press Ctrl+C or ⌘C to copy.'); } }; });
+      }
       function addCompany() {
         const m = openModal({
           title: 'Add a limo company',
@@ -3938,7 +4001,7 @@
             <h3>Their admin login</h3>
             <div class="grid2"><label class="field"><span>Admin name</span><input id="ac-aname" name="adminName"></label>
               <label class="field"><span>Admin email</span><input id="ac-aemail" name="adminEmail" type="email"></label></div>
-            <label class="field"><span>Temporary password</span><input id="ac-apass" name="adminPassword" type="text" autocomplete="new-password" placeholder="At least 8 characters"><span class="hint">Share it with them; they can add drivers, vehicles and dispatchers after signing in.</span></label>
+            <label class="field"><span>Temporary password (optional)</span><input id="ac-apass" name="adminPassword" type="text" autocomplete="new-password" placeholder="Leave blank to email them a link"><span class="hint">We email the admin a welcome with a link to set their own password.</span></label>
             <div id="ac-err"></div></form>`,
           footer: `<button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="ac-save">Create company</button>`,
         });
@@ -3947,7 +4010,8 @@
         name.oninput = show; slug.oninput = show;
         $('[data-close]', m).onclick = closeModal;
         $('#ac-save', m).onclick = (e) => busy(e.currentTarget, async () => {
-          try { const c = await api('owner.createCompany', formData($('#ac', m))); closeModal(); toast(`${c.name} is set up. Their admin can sign in now.`); last = ''; refresh(); } catch (err) { showErr($('#ac-err', m), err); }
+          const f = formData($('#ac', m));
+          try { const c = await api('owner.createCompany', f); closeModal(); if (c.loginLink) loginLinksModal(c.name, [{ email: f.adminEmail, link: c.loginLink }]); else toast(`${c.name} is set up. We emailed their admin a link to set a password.`); last = ''; refresh(); } catch (err) { showErr($('#ac-err', m), err); }
         });
       }
       current = { poll: true, refresh };

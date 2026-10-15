@@ -61,7 +61,7 @@ function createProviders(env, opts) {
     return null;
   }
   const fromAddress = () => { const m = String(env.EMAIL_FROM).match(/<([^>]+)>/); return (m ? m[1] : String(env.EMAIL_FROM)).trim(); };
-  const SUBJECTS = { reminder: 'Ride reminder', quote: 'Your quote', invoice: 'Your invoice' };
+  const SUBJECTS = { reminder: 'Ride reminder', quote: 'Your quote', invoice: 'Your invoice', login: 'Your LimoRelay login', reset: 'Reset your password' };
   function subjectOf(m) {
     if (SUBJECTS[m.kind]) return `${SUBJECTS[m.kind]}${m.ref ? ' ' + m.ref : ''}`;
     const body = String(m.body || '').replace(new RegExp('^' + escapeRe(m.company.name) + ':\\s*'), '');

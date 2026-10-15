@@ -631,6 +631,7 @@
     function normalize(d) {
       d.accounts = d.accounts || [];
       d.leads = d.leads || [];
+      d.pwTokens = d.pwTokens || [];
       d.clientInvoices = d.clientInvoices || [];
       d.quotes = d.quotes || [];
       d.incidents = d.incidents || [];
@@ -2930,7 +2931,7 @@
       return quoteView(q, true);
     });
 
-    def('dispatch.messages', STAFF, false, (ctx) => db.messages.filter((m) => m.companyId === ctx.company.id).slice(0, 150));
+    def('dispatch.messages', STAFF, false, (ctx) => db.messages.filter((m) => m.companyId === ctx.company.id).slice(0, 150).map(hideLink));
 
     // ---- Text allowance -----------------------------------------------------
     // Each company gets textPlan().included texts a month (the owner can set a
@@ -3862,6 +3863,68 @@
     }
     // Free-trial requests from the home page. The platform owner follows up
     // and adds the company (Companies > Add company).
+    // ---- Login links: set or reset a password from an emailed link --------
+    const WELCOME_DAYS = 7, RESET_HOURS = 2;
+    const loginUrl = (tok) => `${opts.publicUrl || ''}#setpw.${tok}`;
+    function loginLink(u, purpose) {
+      const t = now().getTime();
+      db.pwTokens = (db.pwTokens || []).filter((x) => x.userId !== u.id && new Date(x.expires).getTime() > t);
+      const token = randomId(24);
+      db.pwTokens.push({ token, userId: u.id, purpose, expires: new Date(t + (purpose === 'reset' ? RESET_HOURS * 3600e3 : WELCOME_DAYS * 864e5)).toISOString() });
+      return loginUrl(token);
+    }
+    function linkUser(token) {
+      const x = (db.pwTokens || []).find((r) => r.token === String(token || ''));
+      const u = x && new Date(x.expires).getTime() > now().getTime() && findUser(x.userId);
+      if (!u || u.active === false) fail('This link has expired or was already used. Ask for a new one.', 404);
+      return { x, u };
+    }
+    function mailUser(u, companyId, kind, body) {
+      db.messages.unshift({ id: id('msg'), companyId, tripId: null, ref: '', at: now().toISOString(), recipient: u.email, channel: 'email', kind, metered: true, body });
+    }
+    // Welcome email for a company admin, from LimoRelay, with a set-your-password link.
+    function sendWelcome(c, u) {
+      const link = loginLink(u, 'welcome');
+      const site = (opts.publicUrl || 'https://limorelay.com/').replace(/#.*$/, '');
+      mailUser(u, null, 'login', `Welcome to LimoRelay, ${u.name.split(' ')[0]}. ${c.name} is set up on LimoRelay. Your sign-in email is ${u.email}. Set your password with this link (it works for ${WELCOME_DAYS} days): ${link} After that, sign in any time at ${site} to add your drivers, cars and dispatchers. Questions? Reply to this email or write to ${PLATFORM_EMAIL}.`);
+      return link;
+    }
+    // Message logs show these emails without the link inside.
+    const hideLink = (m) => (m.kind === 'login' || m.kind === 'reset' ? { ...m, body: String(m.body).replace(/https?:\/\/\S*#setpw\.\S+|#setpw\.\S+/g, '[private link]') } : m);
+    def('public.forgotPassword', 'public', true, (ctx, a) => {
+      const email = str(a.email, 120).toLowerCase();
+      if (!emailOk(email)) fail('Enter the email you sign in with.');
+      for (const u of db.users.filter((x) => x.email === email && x.active !== false)) {
+        const c = u.companyId && findCompany(u.companyId);
+        mailUser(u, c ? c.id : null, 'reset', `${c ? c.name + ': r' : 'R'}eset your password with this link (it works for ${RESET_HOURS} hours): ${loginLink(u, 'reset')} If you didn't ask for this, ignore this email and your password stays the same.`);
+      }
+      return { ok: true };
+    });
+    def('public.loginLink', 'public', false, (ctx, a) => {
+      const { x, u } = linkUser(a.token);
+      const c = u.companyId && findCompany(u.companyId);
+      return { email: u.email, name: u.name.split(' ')[0], purpose: x.purpose, company: c ? c.name : '' };
+    });
+    def('public.setPassword', 'public', true, async (ctx, a) => {
+      const { u } = linkUser(a.token);
+      const pw = String(a.password || '');
+      if (pw.length < 8) fail('Choose a password of at least 8 characters.');
+      if (u.companyId) { const c = findCompany(u.companyId); if (c && c.status !== 'active') fail(`${c.name}'s account is paused. Contact the platform owner.`, 403); }
+      await setPassword(u, pw);
+      db.pwTokens = db.pwTokens.filter((r) => r.userId !== u.id);
+      for (const [k, sx] of Object.entries(db.sessions)) if (sx.userId === u.id) delete db.sessions[k];
+      const token = randomId(24);
+      db.sessions[token] = { userId: u.id, at: now().toISOString() };
+      return { token, user: pubUser(u), company: pubCompany(findCompany(u.companyId)) };
+    });
+    def('owner.sendLogin', ['owner'], true, (ctx, a) => {
+      const c = findCompany(a.id);
+      if (!c) fail('Company not found.', 404);
+      const admins = db.users.filter((u) => u.companyId === c.id && u.role === 'admin' && u.active !== false);
+      if (!admins.length) fail(`${c.name} has no admin login.`);
+      const links = admins.map((u) => ({ email: u.email, link: sendWelcome(c, u) }));
+      return { sent: admins.map((u) => u.email), emailOn: !!live.email, links: live.email ? [] : links };
+    });
     def('public.requestTrial', 'public', true, (ctx, a) => {
       const name = str(a.name, 80), company = str(a.company, 100), email = str(a.email, 120).toLowerCase();
       const phone = str(a.phone, 30), city = str(a.city, 80), fleet = str(a.fleet, 20), note = str(a.note, 600);
@@ -3917,7 +3980,7 @@
       const adminEmail = str(a.adminEmail, 120).toLowerCase();
       if (!str(a.adminName, 80)) fail("Enter the company admin's name.");
       if (!emailOk(adminEmail)) fail("Enter the company admin's email.");
-      if (String(a.adminPassword || '').length < 8) fail('Set an admin password of at least 8 characters.');
+      if (a.adminPassword && String(a.adminPassword).length < 8) fail('Make the temporary password at least 8 characters, or leave it blank.');
       const prefix = (name.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() || 'TRP').padEnd(3, 'X');
       const c = {
         id: id('co'), slug, name, tagline: str(a.tagline, 120), color: /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color : '#3d4f7c',
@@ -3931,9 +3994,10 @@
       };
       db.companies.push(c);
       const u = { id: id('usr'), role: 'admin', companyId: c.id, name: str(a.adminName, 80), email: adminEmail, phone: c.phone, active: true, createdAt: now().toISOString() };
-      await setPassword(u, a.adminPassword);
+      if (a.adminPassword) await setPassword(u, a.adminPassword);
       db.users.push(u);
-      return pubCompany(c);
+      const link = sendWelcome(c, u);
+      return { ...pubCompany(c), emailOn: !!live.email, loginLink: live.email ? '' : link };
     });
     def('owner.updateCompany', ['owner'], true, (ctx, a) => {
       const c = findCompany(a.id);
