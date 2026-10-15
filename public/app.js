@@ -815,6 +815,10 @@
         </form>
       </section>
       <figure class="lp-visual"><img src="${esc(LOGO.hero || 'icons/hero.svg')}" alt="LimoRelay dispatch board, passenger phone app and a chauffeured sedan" width="1200" height="640"></figure>
+      ${DEMO ? '' : `<section class="lp-sec lp-video" id="lp-video">
+        <div class="stack" style="gap:6px"><span class="label">See it in 60 seconds</span><h2>Booking, dispatch, driver and passenger apps in one minute.</h2></div>
+        <video controls playsinline preload="none" poster="media/limorelay-promo-poster.jpg" width="1280" height="720"><source src="media/limorelay-promo.mp4" type="video/mp4">Your browser can't play this video. <a href="media/limorelay-promo.mp4">Download it</a>.</video>
+      </section>`}
       ${sample ? `<section class="stack lp-sec">
         <span class="label">Try it with sample logins${DEMO ? '' : ' <span class="pwhint">· password demo1234</span>'}</span>
         <div class="roles">${DEMO_LOGINS.map((d) => `<button type="button" class="role" data-demo="${d.key}"><b>${esc(d.label)}</b><span>${esc(d.who)}. ${esc(d.what)}</span><span class="mono">${esc(d.email)}</span></button>`).join('')}</div>
