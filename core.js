@@ -628,6 +628,7 @@
     // names on customers become real corporate accounts.
     function normalize(d) {
       d.accounts = d.accounts || [];
+      d.leads = d.leads || [];
       d.clientInvoices = d.clientInvoices || [];
       d.quotes = d.quotes || [];
       d.incidents = d.incidents || [];
@@ -3846,6 +3847,35 @@
         priceLockedUntil: c.priceLockedUntil || null, paidThrough: c.paidThrough || null,
       };
     }
+    // Free-trial requests from the home page. The platform owner follows up
+    // and adds the company (Companies > Add company).
+    def('public.requestTrial', 'public', true, (ctx, a) => {
+      const name = str(a.name, 80), company = str(a.company, 100), email = str(a.email, 120).toLowerCase();
+      const phone = str(a.phone, 30), city = str(a.city, 80), fleet = str(a.fleet, 20), note = str(a.note, 600);
+      if (!name) fail('Enter your name.');
+      if (!company) fail('Enter your company name.');
+      if (!emailOk(email)) fail('Enter a valid email address.');
+      if (phone && phone.replace(/\D/g, '').length < 7) fail('Check the phone number.');
+      const day = now().getTime() - 86400e3;
+      db.leads = db.leads || [];
+      if (db.leads.some((l) => l.email === email && new Date(l.at).getTime() > day)) return { ok: true, again: true };
+      if (db.leads.filter((l) => new Date(l.at).getTime() > now().getTime() - 3600e3).length >= 30) fail('Too many requests right now. Please try again later.', 429);
+      const lead = { id: id('lead'), at: now().toISOString(), name, company, email, phone, city, fleet, note, status: 'new' };
+      db.leads.unshift(lead);
+      const owner = db.users.find((u) => u.role === 'owner' && u.active !== false);
+      if (owner && owner.email) db.messages.unshift({ id: id('msg'), companyId: null, tripId: null, ref: 'Trial', at: lead.at, recipient: owner.email, channel: 'email', kind: 'lead', metered: true,
+        body: `New free-trial request: ${name}, ${company}${city ? ', ' + city : ''}. Email ${email}${phone ? ', phone ' + phone : ''}${fleet ? '. Fleet: ' + fleet + ' vehicles' : ''}.${note ? ' Note: ' + note : ''}` });
+      return { ok: true };
+    });
+    def('owner.leads', ['owner'], false, () => clone(db.leads || []));
+    def('owner.leadAction', ['owner'], true, (ctx, a) => {
+      const l = (db.leads || []).find((x) => x.id === a.id);
+      if (!l) fail('Request not found.', 404);
+      if (a.action === 'delete') db.leads = db.leads.filter((x) => x !== l);
+      else if (['new', 'contacted', 'signed'].includes(a.action)) l.status = a.action;
+      else fail('Unknown action.');
+      return clone(db.leads);
+    });
     def('owner.plans', ['owner'], false, () => ({ plans: clone(PLANS), yearlyMonths: YEARLY_MONTHS, trialDays: TRIAL_DAYS, foundingLeft: foundingLeft(), texts: textPlan().plans }));
     def('owner.companies', ['owner'], false, () => {
       const m = monthKey(now());

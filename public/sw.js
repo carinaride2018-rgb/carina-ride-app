@@ -33,9 +33,9 @@ self.addEventListener('notificationclick', (e) => {
 // closed or in the background; an app on screen shows its own banner instead.
 self.addEventListener('push', (e) => {
   let d = {};
-  try { d = e.data ? e.data.json() : {}; } catch (err) { d = { title: 'Livery', body: e.data && e.data.text() }; }
+  try { d = e.data ? e.data.json() : {}; } catch (err) { d = { title: 'LimoRelay', body: e.data && e.data.text() }; }
   e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
     if (list.some((c) => c.visibilityState === 'visible' && c.focused)) return null;
-    return self.registration.showNotification(d.title || 'Livery', { body: d.body || '', icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag: d.tag, data: { hash: d.hash || '' } });
+    return self.registration.showNotification(d.title || 'LimoRelay', { body: d.body || '', icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag: d.tag, data: { hash: d.hash || '' } });
   }));
 });

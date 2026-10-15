@@ -7,7 +7,7 @@
 (function () {
   'use strict';
 
-  const PLATFORM = 'Livery';
+  const PLATFORM = 'LimoRelay';
   const DEMO = !!window.LIMO_DEMO;
   const C = window.LimoCore;
 
@@ -738,24 +738,47 @@
   }
 
   // ---- Sign-in --------------------------------------------------------------
+  // Home page: what a limo company sees before signing in. Sign-in sits in
+  // the hero so drivers and staff are one tap from their screens.
+  const LP_FEATURES = [
+    ['Online booking page', 'Your own branded page for transfers and hourly rides, with instant quotes, flight numbers, extra stops, child seats and meet & greet.'],
+    ['Live dispatch board', 'Every ride for the day by chauffeur, with drag-and-drop assigning, alerts for anything unassigned and a live map of your cars.'],
+    ['Driver app', 'Chauffeurs accept trips, see the passenger and flight, move each ride from on the way to drop-off and share GPS with dispatch.'],
+    ['Passenger updates', 'Automatic confirmation, 24-hour reminder, "your chauffeur is on the way" with live tracking, and a review request after the ride.'],
+    ['Card on file payments', 'The card is saved at booking and charged 24 hours before pickup. Waiting time and extra stops are charged after the ride. No cash.'],
+    ['Flight tracking', 'Airport pickups follow the flight. Delays move the pickup time and the chauffeur is told.'],
+    ['Farm-out network', 'Send rides you can’t cover to trusted partner companies and take theirs, with balances settled in one place.'],
+    ['Corporate accounts and travel agents', 'Company accounts with monthly invoices, PO numbers and bookers, plus a travel agent login with commission tracking.'],
+    ['Reports and team access', 'Sales, drivers, vehicles and customers at a glance, QuickBooks export, and access levels for every dispatcher.'],
+  ];
+  const LP_FAQ = [
+    ['Is there a setup fee?', `Founding members pay no setup fee. On Standard and Fleet it is $${C.PLANS.standard.setup}, and it is waived when you pay yearly.`],
+    ['What happens after the free trial?', 'You choose a plan and add a card. Nothing is charged during the 30 days, and you keep all your rides, drivers and customers.'],
+    ['Do my drivers and passengers need to download anything?', 'No. Everything works in the phone’s browser and can be added to the home screen like an app.'],
+    ['What if I run out of texts?', 'Each plan includes a monthly text allowance. Extra texts are $15 for 500, and emails are always free.'],
+    ['Can I bring my existing rides?', 'Yes. Upcoming rides can be imported from a spreadsheet, so you can switch without losing bookings.'],
+  ];
   async function viewSignin() {
     current = null;
     const v = shell({});
     let companies = [], sample = true;
     try { [companies, { sample }] = await Promise.all([api('public.companies'), api('public.info')]); } catch (e) { /* listing optional */ }
-    v.innerHTML = `
-      <div class="signin">
-        <div class="stack" style="gap:20px">
-          <div class="stack">
-            <span class="label">Limousine booking &amp; dispatch</span>
-            <h1>Bookings, chauffeurs and dispatch for every limo company you run.</h1>
-            <p class="lede">Each company gets its own booking page, dispatch board, driver app and customer accounts, kept separate from every other company on the platform. You run the platform and bill them monthly.</p>
-          </div>
-          ${sample ? `<div class="stack">
-            <span class="label">Sample logins${DEMO ? '' : ' <span class="pwhint">· password demo1234</span>'}</span>
-            <div class="roles">${DEMO_LOGINS.map((d) => `<button type="button" class="role" data-demo="${d.key}"><b>${esc(d.label)}</b><span>${esc(d.who)}. ${esc(d.what)}</span><span class="mono">${esc(d.email)}</span></button>`).join('')}</div>
-          </div>` : ''}
-          ${companies.length ? `<div class="stack"><span class="label">Public booking pages</span><div class="row">${companies.map((c) => `<a class="btn" href="#book.${esc(c.slug)}"><span class="seal" style="width:10px;height:10px;border-radius:50%;background:${esc(c.color)}"></span>${esc(c.name)}</a>`).join('')}</div></div>` : ''}
+    const P = C.PLANS, yearly = (k) => P[k].monthly * 10;
+    const plan = (k, blurb, items, featured) => `<div class="lp-plan${featured ? ' featured' : ''}">
+        ${featured ? '<span class="lp-flag">Best for new companies</span>' : ''}
+        <h3>${esc(P[k].label)}</h3><p class="small muted">${blurb}</p>
+        <div class="lp-price"><b>$${P[k].monthly}</b><span>/month</span></div>
+        <p class="small faint">or $${yearly(k).toLocaleString()} a year (2 months free)</p>
+        <ul>${items.map((x) => `<li>${x}</li>`).join('')}</ul>
+        <button class="btn ${featured ? 'brand' : ''}" type="button" data-scroll="lp-trial">Start free trial</button></div>`;
+    v.innerHTML = `<div class="lp">
+      <section class="signin lp-hero">
+        <div class="stack" style="gap:18px">
+          <span class="label">Limo booking &amp; dispatch software</span>
+          <h1>Run your limo company from one screen.</h1>
+          <p class="lede">${PLATFORM} gives chauffeured transportation companies an online booking page, a live dispatch board, a driver app and automatic passenger updates. Every ride is booked, assigned, tracked and paid in one place.</p>
+          <div class="row"><button class="btn brand lp-cta" type="button" data-scroll="lp-trial">Start your 30-day free trial</button><button class="btn lp-cta" type="button" data-scroll="lp-pricing">See pricing</button></div>
+          <ul class="lp-ticks small"><li>No card needed for the trial</li><li>Dispatch, driver and passenger apps included</li><li>Your brand on every page and message</li></ul>
         </div>
         <form class="panel stack" id="signin-form" novalidate>
           <h2>Sign in</h2>
@@ -763,17 +786,70 @@
           <label class="field"><span>Password</span><input id="si-password" name="password" type="password" autocomplete="current-password" required></label>
           <div id="si-err"></div>
           <button class="btn primary big" type="submit">Sign in</button>
-          <p class="small faint">One sign-in page for customers, drivers, dispatchers and the platform owner. Each person lands on their own screen.</p>
-          <p class="small">${privacyLink()}</p>
+          <p class="small faint">One sign-in for company owners, dispatchers, chauffeurs and customers. Each person lands on their own screen.</p>
         </form>
-      </div>`;
+      </section>
+      ${sample ? `<section class="stack lp-sec">
+        <span class="label">Try it with sample logins${DEMO ? '' : ' <span class="pwhint">· password demo1234</span>'}</span>
+        <div class="roles">${DEMO_LOGINS.map((d) => `<button type="button" class="role" data-demo="${d.key}"><b>${esc(d.label)}</b><span>${esc(d.who)}. ${esc(d.what)}</span><span class="mono">${esc(d.email)}</span></button>`).join('')}</div>
+      </section>` : ''}
+      ${companies.length && sample ? `<section class="stack lp-sec"><span class="label">Public booking pages</span><div class="row">${companies.map((c) => `<a class="btn" href="#book.${esc(c.slug)}"><span class="seal" style="width:10px;height:10px;border-radius:50%;background:${esc(c.color)}"></span>${esc(c.name)}</a>`).join('')}</div></section>` : ''}
+      <section class="lp-sec" id="lp-features">
+        <div class="lp-head"><h2>Everything a chauffeur business needs</h2><p class="muted">Made for airport transfers, hourly charters, weddings, corporate travel and group events.</p></div>
+        <div class="lp-grid">${LP_FEATURES.map(([t, d]) => `<div class="lp-card"><h3>${esc(t)}</h3><p class="small muted">${esc(d)}</p></div>`).join('')}</div>
+      </section>
+      <section class="lp-sec">
+        <div class="lp-head"><h2>Up and running in a day</h2></div>
+        <ol class="lp-steps">
+          <li><b>Set up your company</b><span class="small muted">Add your rates, vehicles, logo and colors. We help you import upcoming rides.</span></li>
+          <li><b>Add your chauffeurs</b><span class="small muted">Each driver gets their own login and signs in to the driver app on their phone.</span></li>
+          <li><b>Share your booking link</b><span class="small muted">Put it on your website, Google profile and emails. Bookings land on your dispatch board.</span></li>
+        </ol>
+      </section>
+      <section class="lp-sec" id="lp-pricing">
+        <div class="lp-head"><h2>Simple pricing</h2><p class="muted">Every plan includes the dispatch board, the driver app and the passenger app. Try any plan free for 30 days.</p></div>
+        <div class="lp-plans">
+          ${plan('founding', `For the first ${P.founding.limit} companies. Price locked for 2 years.`, ['All features', `${P.founding.texts.toLocaleString()} passenger texts a month`, 'No setup fee', 'Unlimited bookings'], true)}
+          ${plan('standard', 'For growing companies.', ['All features', `${P.standard.texts.toLocaleString()} passenger texts a month`, `$${P.standard.setup} setup, waived on yearly billing`, 'Unlimited bookings'])}
+          ${plan('fleet', 'For larger fleets and busy offices.', ['All features', `${P.fleet.texts.toLocaleString()} passenger texts a month`, `$${P.fleet.setup} setup, waived on yearly billing`, 'Unlimited bookings'])}
+        </div>
+        <p class="small faint" style="margin-top:12px">Extra texts are $15 for 500. Card processing is billed by Stripe directly to your company; ${PLATFORM} takes no share of your fares.</p>
+      </section>
+      <section class="lp-sec lp-trial" id="lp-trial">
+        <div class="stack" style="gap:8px"><h2>Start your 30-day free trial</h2><p class="muted">Tell us about your company and we’ll set up your account, usually the same day. No card needed.</p></div>
+        <form id="tr-form" class="stack" novalidate>
+          <div class="grid2"><label class="field"><span>Your name</span><input id="tr-name" name="name" autocomplete="name"></label><label class="field"><span>Company name</span><input id="tr-company" name="company" autocomplete="organization"></label></div>
+          <div class="grid2"><label class="field"><span>Email</span><input id="tr-email" name="email" type="email" autocomplete="email"></label><label class="field"><span>Phone</span><input id="tr-phone" name="phone" type="tel" autocomplete="tel"></label></div>
+          <div class="grid2"><label class="field"><span>City</span><input id="tr-city" name="city"></label><label class="field"><span>Vehicles in your fleet</span><select id="tr-fleet" name="fleet"><option value="">Choose</option><option>1-3</option><option>4-10</option><option>11-25</option><option>26+</option></select></label></div>
+          <label class="field"><span>Anything we should know? (optional)</span><textarea id="tr-note" name="note" placeholder="The software you use today, when you want to start"></textarea></label>
+          <div id="tr-err"></div>
+          <div><button class="btn brand" type="submit" id="tr-go">Request my free trial</button></div>
+        </form>
+      </section>
+      <section class="lp-sec">
+        <div class="lp-head"><h2>Questions</h2></div>
+        <div class="lp-faq">${LP_FAQ.map(([q, a]) => `<details><summary>${esc(q)}</summary><p class="small muted">${esc(a)}</p></details>`).join('')}</div>
+      </section>
+      <footer class="lp-foot small"><span>© ${new Date().getFullYear()} ${PLATFORM}. Limo booking and dispatch software.</span><span>${privacyLink()} · <button class="linkbtn" type="button" data-scroll="signin-form">Sign in</button></span></footer>
+    </div>`;
     $$('[data-demo]', v).forEach((b) => { b.onclick = () => demoLogin(b.dataset.demo); });
+    $$('[data-scroll]', v).forEach((b) => { b.onclick = () => { const t = document.getElementById(b.dataset.scroll); if (t) { t.scrollIntoView({ behavior: 'smooth', block: 'start' }); const f = t.querySelector('input'); if (f) setTimeout(() => f.focus({ preventScroll: true }), 400); } }; });
     $('#signin-form', v).onsubmit = async (e) => {
       e.preventDefault();
       const f = formData(e.target);
       await busy($('button[type=submit]', e.target), async () => {
         try { const res = await api('auth.login', f); setSession(res); go(HOME[res.user.role]); }
         catch (err) { showErr($('#si-err', v), err); }
+      });
+    };
+    $('#tr-form', v).onsubmit = async (e) => {
+      e.preventDefault();
+      const f = formData(e.target);
+      await busy($('#tr-go', v), async () => {
+        try {
+          await api('public.requestTrial', f);
+          $('#tr-form', v).outerHTML = `<div class="note ok" id="tr-done"><b>Thank you, ${esc(f.name.split(' ')[0])}.</b> We’ve got your request for ${esc(f.company)} and will be in touch at ${esc(f.email)} to set up your free trial.</div>`;
+        } catch (err) { showErr($('#tr-err', v), err); }
       });
     };
   }
@@ -3738,9 +3814,9 @@
     async function drawCompanies(v) {
       let last = '', plans = null;
       async function refresh(silent) {
-        let list, invoices;
-        try { [list, invoices, plans] = await Promise.all([api('owner.companies'), api('owner.invoices'), api('owner.plans')]); } catch (e) { if (!silent) showErr(v, e); return; }
-        const sig = JSON.stringify([list, invoices, plans]); if (sig === last) return; last = sig;
+        let list, invoices, leads;
+        try { [list, invoices, plans, leads] = await Promise.all([api('owner.companies'), api('owner.invoices'), api('owner.plans'), api('owner.leads')]); } catch (e) { if (!silent) showErr(v, e); return; }
+        const sig = JSON.stringify([list, invoices, plans, leads]); if (sig === last) return; last = sig;
         const active = list.filter((c) => c.status === 'active');
         const mrr = active.filter((c) => !c.inTrial).reduce((s, c) => s + c.monthlyEquivalent, 0);
         const trials = active.filter((c) => c.inTrial).length;
@@ -3754,6 +3830,13 @@
             <div class="tile"><span class="label">Trips booked this month</span><b>${list.reduce((s, c) => s + c.tripsMonth, 0)}</b></div>
             <div class="tile"><span class="label">Unpaid invoices</span><b>${money0(open)}</b></div>
           </div>
+          ${leads.length ? `<details class="panel" id="co-leads" style="margin-bottom:20px" ${leads.some((l) => l.status === 'new') ? 'open' : ''}><summary><b>Free-trial requests</b> <span class="pill ${leads.some((l) => l.status === 'new') ? 's-assigned' : 'off'} count">${leads.filter((l) => l.status === 'new').length} new</span> <span class="small faint">from the home page. Add the company when you have spoken to them.</span></summary>
+            <div class="tablewrap" style="margin-top:12px"><table><thead><tr><th>Received</th><th>Name and company</th><th>Contact</th><th>City</th><th>Fleet</th><th>Note</th><th>Status</th><th></th></tr></thead><tbody>
+            ${leads.map((l) => `<tr><td class="mono small nowrap">${esc(fmtDT(l.at))}</td><td data-label="Name and company"><b>${esc(l.name)}</b><br><span class="small">${esc(l.company)}</span></td>
+              <td data-label="Contact" class="small"><a href="mailto:${esc(l.email)}">${esc(l.email)}</a>${l.phone ? `<br><a href="tel:${esc(l.phone)}">${esc(l.phone)}</a>` : ''}</td><td data-label="City" class="small">${esc(l.city || '')}</td><td data-label="Fleet" class="small">${esc(l.fleet || '')}</td><td data-label="Note" class="small" style="max-width:260px">${esc(l.note || '')}</td>
+              <td data-label="Status"><select class="input" style="width:auto;min-height:32px;padding:3px 6px" data-lead="${l.id}" aria-label="Status">${[['new', 'New'], ['contacted', 'Contacted'], ['signed', 'Signed up']].map(([k, t]) => `<option value="${k}" ${l.status === k ? 'selected' : ''}>${t}</option>`).join('')}</select></td>
+              <td><button class="linkbtn small" type="button" data-rmlead="${l.id}">Remove</button></td></tr>`).join('')}
+            </tbody></table></div></details>` : ''}
           <div class="tablewrap"><table><thead><tr><th>Company</th><th>Admin login</th><th>Plan</th><th class="r">Fee</th><th class="r">Drivers</th><th class="r">Vehicles</th><th class="r">Trips this month</th><th class="r">Booked this month</th><th>Texts this month</th><th>Status</th><th></th></tr></thead><tbody>
           ${list.map((c) => `<tr><td><div class="row" style="flex-wrap:nowrap"><span class="avatar" style="background:${esc(c.color)};color:#fff;border:0">${esc(initials(c.name))}</span><div><b>${esc(c.name)}</b><br><a class="small mono" href="#book.${esc(c.slug)}">#book.${esc(c.slug)}</a></div></div></td>
             <td class="mono small">${esc(c.adminEmail)}</td>
@@ -3766,6 +3849,8 @@
           </tbody></table></div>
           <p class="small faint" style="margin-top:10px">Pausing a company signs out its staff, drivers and customers and closes its booking page until you resume it.</p>`;
         $('#co-add', v).onclick = addCompany;
+        $$('[data-lead]', v).forEach((el) => { el.onchange = async () => { try { await api('owner.leadAction', { id: el.dataset.lead, action: el.value }); last = ''; refresh(); } catch (e) { toast(e.message, true); } }; });
+        $$('[data-rmlead]', v).forEach((el) => { el.onclick = async () => { if (!confirm('Remove this request?')) return; try { await api('owner.leadAction', { id: el.dataset.rmlead, action: 'delete' }); last = ''; refresh(); } catch (e) { toast(e.message, true); } }; });
         $$('[data-texts]', v).forEach((b) => { b.onclick = () => textsModal(list.find((c) => c.id === b.dataset.texts)); });
         $$('[data-plan]', v).forEach((s) => { s.onchange = async () => { try { await api('owner.updateCompany', { id: s.dataset.plan, plan: s.value }); toast('Plan changed.'); } catch (e) { toast(e.message, true); } last = ''; refresh(); }; });
         $$('[data-billing]', v).forEach((s) => { s.onchange = async () => { try { await api('owner.updateCompany', { id: s.dataset.billing, billing: s.value }); toast(s.value === 'yearly' ? 'Now billed yearly: 12 months for the price of 10.' : 'Now billed monthly.'); } catch (e) { toast(e.message, true); } last = ''; refresh(); }; });

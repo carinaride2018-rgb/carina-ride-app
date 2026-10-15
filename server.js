@@ -98,7 +98,7 @@ async function serveManifest(req, res) {
   const staff = q.get('r') && q.get('r') !== 'customer';
   let co = null;
   if (slug) { try { co = await core.call(null, 'public.company', { slug }); } catch (e) { co = null; } }
-  const name = co ? (co.company || co).name + (q.get('r') === 'driver' ? ' Driver' : q.get('r') === 'staff' ? ' Dispatch' : '') : 'Livery';
+  const name = co ? (co.company || co).name + (q.get('r') === 'driver' ? ' Driver' : q.get('r') === 'staff' ? ' Dispatch' : '') : 'LimoRelay';
   const color = co ? (co.company || co).color || '#15171c' : '#15171c';
   send(res, 200, {
     name, short_name: name.length > 14 ? name.split(' ')[0] : name, description: co ? `Book and track rides with ${name}` : 'Limousine booking and dispatch',
@@ -135,7 +135,7 @@ function limited(ip) {
 
 // Hosts put the app behind a proxy; only then is X-Forwarded-For the visitor.
 const clientIp = (req) => (TRUST_PROXY && String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()) || req.socket.remoteAddress;
-const LIMITED = new Set(['auth.login', 'auth.signup', 'public.requestQuote', 'public.acceptQuote', 'public.rate']);
+const LIMITED = new Set(['auth.login', 'auth.signup', 'public.requestQuote', 'public.acceptQuote', 'public.rate', 'public.requestTrial']);
 
 // ---- Outside services ---------------------------------------------------------
 
@@ -349,7 +349,7 @@ flushOutbox();
 process.on('SIGTERM', () => server.close(() => process.exit(0)));
 
 server.listen(PORT, () => {
-  console.log(`Livery running at http://localhost:${PORT}`);
+  console.log(`LimoRelay running at http://localhost:${PORT}`);
   console.log(`Data file: ${DATA_FILE}${BLANK ? ' (no sample data)' : ''}`);
   const st = live.status();
   console.log('Connections: ' + Object.entries(st).map(([k, v]) => `${k} ${v.on ? 'on' : 'simulated'}`).join(', '));
