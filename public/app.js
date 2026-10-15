@@ -753,6 +753,8 @@
     ['Corporate accounts and travel agents', 'Company accounts with monthly invoices, PO numbers and bookers, plus a travel agent login with commission tracking.'],
     ['Reports and team access', 'Sales, drivers, vehicles and customers at a glance, QuickBooks export, and access levels for every dispatcher.'],
   ];
+  const CONTACT_EMAIL = C.PLATFORM_EMAIL || 'info@limorelay.com';
+  const mailLink = (cls = '') => `<a${cls ? ` class="${cls}"` : ''} href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>`;
   const LP_FAQ = [
     ['Is there a setup fee?', `Founding members pay no setup fee. On Standard and Fleet it is $${C.PLANS.standard.setup}, and it is waived when you pay yearly.`],
     ['What happens after the free trial?', 'You choose a plan and add a card. Nothing is charged during the 30 days, and you keep all your rides, drivers and customers.'],
@@ -819,7 +821,7 @@
         <p class="small faint" style="margin-top:12px">Extra texts are $15 for 500. Card processing is billed by Stripe directly to your company; ${PLATFORM} takes no share of your fares.</p>
       </section>
       <section class="lp-sec lp-trial" id="lp-trial">
-        <div class="stack" style="gap:8px"><h2>Start your 30-day free trial</h2><p class="muted">Tell us about your company and we’ll set up your account, usually the same day. No card needed.</p></div>
+        <div class="stack" style="gap:8px"><h2>Start your 30-day free trial</h2><p class="muted">Tell us about your company and we’ll set up your account, usually the same day. No card needed. Questions first? Email ${mailLink()}.</p></div>
         <form id="tr-form" class="stack" novalidate>
           <div class="grid2"><label class="field"><span>Your name</span><input id="tr-name" name="name" autocomplete="name"></label><label class="field"><span>Company name</span><input id="tr-company" name="company" autocomplete="organization"></label></div>
           <div class="grid2"><label class="field"><span>Email</span><input id="tr-email" name="email" type="email" autocomplete="email"></label><label class="field"><span>Phone</span><input id="tr-phone" name="phone" type="tel" autocomplete="tel"></label></div>
@@ -832,8 +834,9 @@
       <section class="lp-sec">
         <div class="lp-head"><h2>Questions</h2></div>
         <div class="lp-faq">${LP_FAQ.map(([q, a]) => `<details><summary>${esc(q)}</summary><p class="small muted">${esc(a)}</p></details>`).join('')}</div>
+        <p class="muted lp-contact">Something else? Email us at ${mailLink()} and we’ll get back to you.</p>
       </section>
-      <footer class="lp-foot small"><span>© ${new Date().getFullYear()} ${PLATFORM}. Limo booking and dispatch software.</span><span>${privacyLink()} · <button class="linkbtn" type="button" data-scroll="signin-form">Sign in</button></span></footer>
+      <footer class="lp-foot small"><span>© ${new Date().getFullYear()} ${PLATFORM}. Limo booking and dispatch software.</span><span>${mailLink()} · ${privacyLink()} · <button class="linkbtn" type="button" data-scroll="signin-form">Sign in</button></span></footer>
     </div>`;
     $$('[data-demo]', v).forEach((b) => { b.onclick = () => demoLogin(b.dataset.demo); });
     $$('[data-scroll]', v).forEach((b) => { b.onclick = () => { const t = document.getElementById(b.dataset.scroll); if (t) { t.scrollIntoView({ behavior: 'smooth', block: 'start' }); const f = t.querySelector('input'); if (f) setTimeout(() => f.focus({ preventScroll: true }), 400); } }; });
@@ -851,7 +854,7 @@
       await busy($('#tr-go', v), async () => {
         try {
           await api('public.requestTrial', f);
-          $('#tr-form', v).outerHTML = `<div class="note ok" id="tr-done"><b>Thank you, ${esc(f.name.split(' ')[0])}.</b> We’ve got your request for ${esc(f.company)} and will be in touch at ${esc(f.email)} to set up your free trial.</div>`;
+          $('#tr-form', v).outerHTML = `<div class="note ok" id="tr-done"><b>Thank you, ${esc(f.name.split(' ')[0])}.</b> We’ve got your request for ${esc(f.company)} and will be in touch at ${esc(f.email)} to set up your free trial. You can also reach us at ${mailLink()}.</div>`;
         } catch (err) { showErr($('#tr-err', v), err); }
       });
     };

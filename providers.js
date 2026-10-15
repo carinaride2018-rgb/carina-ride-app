@@ -84,7 +84,7 @@ function createProviders(env, opts) {
     const name = String(m.company.name || 'Bookings').replace(/["<>]/g, '');
     const r = await request('POST', `${url('RESEND', 'https://api.resend.com')}/emails`, {
       headers: { Authorization: `Bearer ${env.RESEND_API_KEY}` },
-      body: { from: `${name} <${fromAddress()}>`, to: [to], subject: subjectOf(m), text: m.body, ...(isEmail(m.company.email) ? { reply_to: m.company.email } : {}) },
+      body: { from: `${name} <${fromAddress()}>`, to: [to], subject: subjectOf(m), text: m.body, ...(isEmail(m.replyTo) ? { reply_to: m.replyTo } : isEmail(m.company.email) ? { reply_to: m.company.email } : {}) },
     });
     return r && r.id;
   }

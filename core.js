@@ -33,6 +33,8 @@
   // with no setup fee and the price locked for 2 years. Paying a year up front
   // costs 10 months and skips the setup fee. New companies can start with a
   // 30-day free trial.
+  // Platform contact address: shown on the home page and used as reply-to on emails that come from LimoRelay itself.
+  const PLATFORM_EMAIL = 'info@limorelay.com';
   const PLANS = {
     founding: { label: 'Founding', monthly: 49, setup: 0, texts: 500, lockMonths: 24, limit: 100, note: 'First 100 companies, price locked for 2 years' },
     standard: { label: 'Standard', monthly: 99, setup: 299, texts: 1000, note: 'Everything included' },
@@ -3863,7 +3865,7 @@
       const lead = { id: id('lead'), at: now().toISOString(), name, company, email, phone, city, fleet, note, status: 'new' };
       db.leads.unshift(lead);
       const owner = db.users.find((u) => u.role === 'owner' && u.active !== false);
-      if (owner && owner.email) db.messages.unshift({ id: id('msg'), companyId: null, tripId: null, ref: 'Trial', at: lead.at, recipient: owner.email, channel: 'email', kind: 'lead', metered: true,
+      if (owner && owner.email) db.messages.unshift({ id: id('msg'), companyId: null, tripId: null, ref: 'Trial', at: lead.at, recipient: owner.email, channel: 'email', kind: 'lead', metered: true, replyTo: email,
         body: `New free-trial request: ${name}, ${company}${city ? ', ' + city : ''}. Email ${email}${phone ? ', phone ' + phone : ''}${fleet ? '. Fleet: ' + fleet + ' vehicles' : ''}.${note ? ' Note: ' + note : ''}` });
       return { ok: true };
     });
@@ -4576,8 +4578,8 @@
           changed = true;
           if (new Date(m.at).getTime() < cutoff) { m.delivery = { status: 'logged' }; continue; }
           m.delivery = { status: 'sending' };
-          const c = findCompany(m.companyId) || {};
-          out.push({ id: m.id, channel: m.channel, recipient: m.recipient, body: m.body, kind: m.kind || '', ref: m.ref || '', company: { name: c.name || '', email: c.email || '', phone: c.phone || '' } });
+          const c = m.companyId ? findCompany(m.companyId) || {} : { name: 'LimoRelay', email: PLATFORM_EMAIL };
+          out.push({ id: m.id, channel: m.channel, recipient: m.recipient, body: m.body, kind: m.kind || '', ref: m.ref || '', replyTo: m.replyTo || '', company: { name: c.name || '', email: c.email || '', phone: c.phone || '' } });
         }
         if (changed) save(db);
         return out;
@@ -4642,5 +4644,5 @@
     };
   }
 
-  return { createCore, MSG_TEMPLATES, INCIDENT_KINDS, setProviders, routeVia, TEMPS, MUSIC, MAX_STOPS, STOP_WAITS, DEFAULT_POLICY, quote, estimateRoute, suggestPlaces, isAirport, flightStatus, normFlight, ApiError, VEHICLE_TYPES, SERVICES, EVENT_TYPES, STATUS_LABELS, DRIVER_FLOW, PLANS, DEFAULT_DISPATCH, DEFAULT_RATES, DEFAULT_PRICING, VEHICLE_STATUS, MAINT_KINDS, PAY_TYPES, DAYS, AIRLINES };
+  return { createCore, MSG_TEMPLATES, INCIDENT_KINDS, setProviders, routeVia, TEMPS, MUSIC, MAX_STOPS, STOP_WAITS, DEFAULT_POLICY, quote, estimateRoute, suggestPlaces, isAirport, flightStatus, normFlight, ApiError, VEHICLE_TYPES, SERVICES, EVENT_TYPES, STATUS_LABELS, DRIVER_FLOW, PLANS, PLATFORM_EMAIL, DEFAULT_DISPATCH, DEFAULT_RATES, DEFAULT_PRICING, VEHICLE_STATUS, MAINT_KINDS, PAY_TYPES, DAYS, AIRLINES };
 });
