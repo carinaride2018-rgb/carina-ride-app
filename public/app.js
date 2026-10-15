@@ -768,10 +768,11 @@
     ['Passenger updates', 'Automatic confirmation, 24-hour reminder, "your chauffeur is on the way" with live tracking, and a review request after the ride.'],
     ['Card on file payments', 'The card is saved at booking and charged 24 hours before pickup. Waiting time and extra stops are charged after the ride. No cash.'],
     ['Flight tracking', 'Airport pickups follow the flight. Delays move the pickup time and the chauffeur is told.'],
-    ['Farm-out network', 'Send rides you can’t cover to trusted partner companies and take theirs, with balances settled in one place.'],
+    ['Farm-out network', 'Send rides you can’t cover to trusted partner companies and take theirs, with balances settled in one place. You earn a commission on every ride you send.'],
     ['Corporate accounts and travel agents', 'Company accounts with monthly invoices, PO numbers and bookers, plus a travel agent login with commission tracking.'],
     ['Reports and team access', 'Sales, drivers, vehicles and customers at a glance, QuickBooks export, and access levels for every dispatcher.'],
   ];
+  const KEEP_PCT = 100 - ((C.DEFAULT_AUTOFARM && C.DEFAULT_AUTOFARM.ratePct) || 80);
   const CONTACT_EMAIL = C.PLATFORM_EMAIL || 'info@limorelay.com';
   const mailLink = (cls = '') => `<a${cls ? ` class="${cls}"` : ''} href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>`;
   const LP_FAQ = [
@@ -779,6 +780,7 @@
     ['What happens after the free trial?', 'You choose a plan and add a card. Nothing is charged during the 30 days, and you keep all your rides, drivers and customers.'],
     ['Do my drivers and passengers need to download anything?', 'No. Everything works in the phone’s browser and can be added to the home screen like an app.'],
     ['What if I run out of texts?', 'Each plan includes a monthly text allowance. Extra texts are $15 for 500, and emails are always free.'],
+    ['How does the farm-out commission work?', `When your client books a ride in another city through your booking page, a LimoRelay company there drives it. Your client pays you, the partner is paid their share and you keep the rest: ${KEEP_PCT}% by default, and you can change it in Network settings.`],
     ['Can I bring my existing rides?', 'Yes. Upcoming rides can be imported from a spreadsheet, so you can switch without losing bookings.'],
   ];
   async function viewSignin() {
@@ -818,6 +820,21 @@
         <div class="roles">${DEMO_LOGINS.map((d) => `<button type="button" class="role" data-demo="${d.key}"><b>${esc(d.label)}</b><span>${esc(d.who)}. ${esc(d.what)}</span><span class="mono">${esc(d.email)}</span></button>`).join('')}</div>
       </section>` : ''}
       ${companies.length && sample ? `<section class="stack lp-sec"><span class="label">Public booking pages</span><div class="row">${companies.map((c) => `<a class="btn" href="#book.${esc(c.slug)}"><span class="seal" style="width:10px;height:10px;border-radius:50%;background:${esc(c.color)}"></span>${esc(c.name)}</a>`).join('')}</div></section>` : ''}
+      <section class="lp-sec lp-earn" id="lp-earn">
+        <div class="lp-earn-copy stack">
+          <span class="lp-kicker">Farm-out commission</span>
+          <h2>Earn on every ride your clients take in another city.</h2>
+          <p>Your client flies out of your city and books their pickup at the other end through you. A LimoRelay company there drives the ride, and you keep a commission on it: ${KEEP_PCT}% of the fare by default, set by you.</p>
+          <ul class="lp-ticks"><li>Clients book it with their flight on your booking page</li><li>Priced at the local company’s rates</li><li>Your client stays your client</li></ul>
+          <div><button class="btn brand lp-cta" type="button" data-scroll="lp-trial">Start earning on farm-outs</button></div>
+        </div>
+        <div class="lp-earn-card">
+          <span class="small faint">Example</span>
+          <p><b>Seattle to New York.</b> Your client books their drive to SEA with you and adds a pickup when they land at JFK.</p>
+          <dl class="lp-earn-math"><dt>JFK to Manhattan fare</dt><dd>$150.00</dd><dt>Paid to the New York company</dt><dd>$${(150 * (100 - KEEP_PCT) / 100).toFixed(2)}</dd><dt class="em">Your commission</dt><dd class="em">$${(150 * KEEP_PCT / 100).toFixed(2)}</dd></dl>
+          <p class="small faint">The same works for any ride you send to a partner when your own cars are busy.</p>
+        </div>
+      </section>
       <section class="lp-sec" id="lp-features">
         <div class="lp-head"><h2>Everything a chauffeur business needs</h2><p class="muted">Made for airport transfers, hourly charters, weddings, corporate travel and group events.</p></div>
         <div class="lp-grid">${LP_FEATURES.map(([t, d]) => `<div class="lp-card"><h3>${esc(t)}</h3><p class="small muted">${esc(d)}</p></div>`).join('')}</div>
@@ -2481,7 +2498,7 @@
           <div class="row"><button class="btn primary" type="button" data-accept="${r.id}">Accept for ${money(r.rate)}</button>
             <input class="input grow" style="min-width:160px" data-reason="${r.id}" placeholder="Reason if you decline (optional)"><button class="btn" type="button" data-decline="${r.id}">Decline</button></div>
         </article>`).join('')}</div>` : ''}
-        <span class="label">Trips you sent</span>
+        <span class="label">Trips you sent</span>${(() => { const done = d.sent.filter((r) => ['accepted', 'completed'].includes(r.status) && r.margin > 0); const tot = done.reduce((x, r) => x + r.margin, 0); return done.length ? `<p class="small" id="net-comm" style="margin:4px 0 0">Your commission on ${done.length} trip${done.length === 1 ? '' : 's'} sent: <b>${money(tot)}</b></p>` : ''; })()}
         ${d.sent.length ? `<div class="tablewrap" style="margin:8px 0 22px"><table><thead><tr><th>Pickup</th><th>Trip</th><th>Partner</th><th>Status</th><th>Chauffeur</th><th class="r">You pay</th><th class="r">You keep</th><th></th></tr></thead><tbody>
           ${d.sent.map((r) => `<tr><td class="mono small">${r.trip ? esc(fmtDT(r.trip.pickupAt)) : ''}</td><td><span class="mono small">${esc(r.ref)}</span><div class="small">${esc(r.trip ? r.trip.passengerName : '')}</div></td>
             <td>${esc(r.partnerName)}${r.auto ? ' <span class="pill count">Auto</span>' : ''}${r.childRef ? `<div class="mono small faint">${esc(r.childRef)}</div>` : ''}</td>
@@ -2573,6 +2590,7 @@
           </fieldset>
           <fieldset class="fs"><legend>Offer</legend>
             <div class="row"><span>Pay the partner</span><input class="input num-in" type="number" name="ratePct" min="10" max="100" value="${a.ratePct}" ${ro}><span>% of the fare</span></div>
+            <p class="small muted" style="margin:0">You keep the rest as your commission (${100 - a.ratePct}% now). This also applies to pickups your clients book for when they land in another city.</p>
             <div class="row"><span>Wait</span><input class="input num-in" type="number" name="answerMin" min="5" max="240" value="${a.answerMin}" ${ro}><span>minutes for an answer, then try the next partner</span></div>
           </fieldset>
           <fieldset class="fs"><legend>Partners, in order</legend>

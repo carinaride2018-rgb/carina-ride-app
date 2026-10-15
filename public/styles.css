@@ -723,6 +723,19 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 .lp-hero { padding-top: 12px; }
 .lp-hero h1 { font-size: clamp(30px, 5vw, 46px); }
 .lp-visual { margin: -24px 0 0; border-radius: 16px; overflow: hidden; box-shadow: var(--shadow); border: 1px solid var(--line); background: #14161B; }
+.lp-earn { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 28px; align-items: center; background: #14161B; color: #F5F1E8; border-radius: 16px; padding: 32px; }
+.lp-earn h2 { font-size: clamp(24px, 3.4vw, 32px); color: #F5F1E8; }
+.lp-earn p { color: #d8d3c7; }
+.lp-earn .lp-ticks { color: #d8d3c7; }
+.lp-earn .lp-ticks li::before { color: #C9A14A; }
+.lp-earn .btn.brand { background: #C9A14A; border-color: #C9A14A; color: #14161B; }
+.lp-kicker { color: #C9A14A; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; font-size: 12.5px; }
+.lp-earn-card { background: #1f222a; border: 1px solid #C9A14A55; border-radius: 14px; padding: 20px; display: grid; gap: 10px; }
+.lp-earn-card .faint { color: #a9a59c; }
+.lp-earn-math { display: grid; grid-template-columns: 1fr auto; gap: 6px 16px; margin: 4px 0; font-variant-numeric: tabular-nums; }
+.lp-earn-math dd { margin: 0; text-align: right; }
+.lp-earn-math .em { color: #C9A14A; font-weight: 700; border-top: 1px solid #C9A14A55; padding-top: 6px; }
+@media (max-width: 760px) { .lp-earn { grid-template-columns: 1fr; padding: 22px 18px; } }
 .lp-contact { margin: 14px 0 0; }
 .lp-visual img { display: block; width: 100%; height: auto; }
 @media (max-width: 600px) { .lp-visual { margin-top: -32px; border-radius: 12px; } }
