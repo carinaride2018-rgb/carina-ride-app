@@ -1272,8 +1272,6 @@
           else if (left <= 30) out.push({ level: 'warn', area: 'drivers', text: `${who}: ${label} expires in ${left} day${left === 1 ? '' : 's'}` });
         }
       }
-      const pending = db.timeOff.filter((x) => x.companyId === company.id && x.status === 'requested').length;
-      if (pending) out.push({ level: 'warn', area: 'drivers', text: `${pending} time-off request${pending === 1 ? '' : 's'} waiting for approval` });
       for (const t of db.trips) {
         if (t.companyId !== company.id || !t.flightInfo || ['completed', 'cancelled'].includes(t.status)) continue;
         const f = t.flightInfo;
@@ -1320,9 +1318,6 @@
     }
 
     // ---- Assignment checks ---------------------------------------------------
-    function onTimeOff(driverId, dateStr) {
-      return db.timeOff.some((x) => x.driverId === driverId && x.status === 'approved' && x.from <= dateStr && dateStr <= x.to);
-    }
     function assignWarnings(t) {
       const w = [];
       const c = findCompany(t.companyId);
@@ -1333,7 +1328,6 @@
       const n = now();
       if (d) {
         if (!d.available && new Date(t.pickupAt).getTime() - n.getTime() < 12 * 3600e3) w.push(`${d.name} is marked off duty.`);
-        if (onTimeOff(d.id, lp.date)) w.push(`${d.name} has approved time off that day.`);
         const sh = d.schedule && d.schedule[lp.day];
         if (sh) {
           const hm = String(lp.hour).padStart(2, '0') + ':' + String(lp.minute).padStart(2, '0');
@@ -1576,7 +1570,7 @@
       assign: ['dispatch.assign', 'dispatch.autoAssign', 'network.offer', 'network.respond', 'network.cancelOffer', 'network.handBack'],
       payments: ['dispatch.chargeCard', 'dispatch.markPaid', 'network.settle'],
       customers: ['dispatch.saveCustomer', 'dispatch.saveAccount', 'dispatch.accountBooker', 'dispatch.createInvoice', 'dispatch.invoiceAction', 'dispatch.invoices', 'dispatch.invoice'],
-      drivers: ['dispatch.saveDriver', 'dispatch.setDriverPhoto', 'dispatch.timeOff', 'dispatch.saveVehicle', 'dispatch.addMaintenance', 'dispatch.deleteMaintenance', 'dispatch.saveTime'],
+      drivers: ['dispatch.saveDriver', 'dispatch.setDriverPhoto', 'dispatch.saveVehicle', 'dispatch.addMaintenance', 'dispatch.deleteMaintenance'],
       pay: ['dispatch.payroll', 'dispatch.markPayout'],
       reports: ['dispatch.reports'],
     })) for (const n of names) PERM_OF[n] = perm;
@@ -2162,8 +2156,6 @@
         trips: db.trips.filter((t) => t.driverId === ctx.user.id && t.status !== 'cancelled').sort((x, y) => x.pickupAt.localeCompare(y.pickupAt)).map(tripView),
         week: { from: monday.toISOString(), ...driverPay(ctx.user, week) },
         stats: driverStats(ctx.user, 30),
-        clock: clockState(ctx.user),
-        timeOff: db.timeOff.filter((x) => x.driverId === ctx.user.id).sort((a, b) => b.from.localeCompare(a.from)).slice(0, 10).map(clone),
       };
     });
     def('driver.respond', ['driver'], true, (ctx, a) => {
@@ -2221,16 +2213,6 @@
     def('driver.collect', ['driver'], true, () => fail("Chauffeurs don't take payment. The office handles it."));
     def('driver.setPhoto', ['driver'], true, (ctx, a) => { ctx.user.photo = cleanPhoto(a.photo); return pubUser(ctx.user); });
     def('driver.availability', ['driver'], true, (ctx, a) => { ctx.user.available = !!a.available; return pubUser(ctx.user); });
-    def('driver.requestTimeOff', ['driver'], true, (ctx, a) => {
-      if (!dateOk(a.from) || !dateOk(a.to || a.from)) fail('Choose the first and last day off.');
-      const to = a.to || a.from;
-      if (to < a.from) fail('The last day must be on or after the first day.');
-      const r = { id: id('off'), companyId: ctx.company.id, driverId: ctx.user.id, from: a.from, to, reason: str(a.reason, 200), status: 'requested', createdAt: now().toISOString() };
-      db.timeOff.push(r);
-      return clone(r);
-    });
-
-    // Dispatch office
     def('dispatch.board', STAFF, false, (ctx, a) => {
       if (monitorFlights(ctx.company)) ctx.dirty = true;
       const from = new Date(a.from), to = new Date(a.to);
@@ -2239,7 +2221,7 @@
         .sort((x, y) => x.pickupAt.localeCompare(y.pickupAt)).map(tripView);
       const day = localParts(new Date((from.getTime() + to.getTime()) / 2).toISOString(), ctx.company.timezone).date;
       const drivers = db.users.filter((u) => u.companyId === ctx.company.id && u.role === 'driver' && u.active !== false)
-        .map((u) => ({ ...pubUser(u), timeOff: onTimeOff(u.id, day) }));
+        .map((u) => pubUser(u));
       const vehicles = db.vehicles.filter((v) => v.companyId === ctx.company.id && v.status !== 'retired').map(clone);
       const unassignedLater = db.trips.filter((t) => t.companyId === ctx.company.id && t.status === 'confirmed' && !t.farmout && t.pickupAt >= to.toISOString()).length;
       return { trips, drivers, vehicles, unassignedLater, alerts: companyAlerts(ctx.company) };
@@ -2434,56 +2416,6 @@
       x.status = a.status === 'closed' ? 'closed' : 'open';
       if (closing) { x.closedAt = now().toISOString(); x.closedBy = ctx.user.name; } else if (x.status === 'open') { x.closedAt = null; x.closedBy = null; }
       return incView(x);
-    });
-
-    // ---- Driver time clock ---------------------------------------------------
-    const entryMin = (e, n) => Math.max(0, Math.round(((e.out ? new Date(e.out) : n) - new Date(e.in)) / 60e3));
-    function clockState(u) {
-      const n = now(), mine = db.timeEntries.filter((e) => e.driverId === u.id);
-      const open = mine.find((e) => !e.out);
-      // Today and this week (from Monday) in the company's time zone, not the
-      // server's, so a Seattle shift doesn't roll over at 5 pm.
-      const c = findCompany(u.companyId) || {};
-      const lp = localParts(n.toISOString(), c.timezone);
-      const back = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].indexOf(lp.day);
-      const monday = new Date(Date.parse(lp.date + 'T12:00:00Z') - Math.max(0, back) * 864e5).toISOString().slice(0, 10);
-      const day0 = new Date(localToIso(lp.date, '00:00', c)), week0 = new Date(localToIso(monday, '00:00', c));
-      const sum = (from) => mine.filter((e) => new Date(e.out || n) > from).reduce((m, e) => m + entryMin({ in: new Date(Math.max(new Date(e.in), from)).toISOString(), out: e.out }, n), 0);
-      return { on: !!open, since: open ? open.in : null, todayMin: sum(day0), weekMin: sum(week0) };
-    }
-    def('driver.clock', ['driver'], true, (ctx, a) => {
-      const open = db.timeEntries.find((e) => e.driverId === ctx.user.id && !e.out);
-      if (a.in) { if (open) fail('You are already clocked in.'); db.timeEntries.unshift({ id: id('tim'), companyId: ctx.company.id, driverId: ctx.user.id, in: now().toISOString(), out: null, note: '' }); }
-      else { if (!open) fail('You are not clocked in.'); open.out = now().toISOString(); open.minutes = entryMin(open, now()); }
-      return clockState(ctx.user);
-    });
-    def('dispatch.timeclock', STAFF, false, (ctx, a) => {
-      const from = dateOk(a.from) ? a.from : localParts(new Date(now().getTime() - 13 * 86400e3).toISOString(), ctx.company.timezone).date;
-      const to = dateOk(a.to) ? a.to : localParts(now().toISOString(), ctx.company.timezone).date;
-      const n = now();
-      const rows = db.timeEntries.filter((e) => e.companyId === ctx.company.id).map((e) => ({ ...clone(e), date: localParts(e.in, ctx.company.timezone).date, minutes: entryMin(e, n), driver: (findUser(e.driverId) || {}).name || '' }))
-        .filter((e) => e.date >= from && e.date <= to).sort((x, y) => y.in.localeCompare(x.in));
-      const totals = {};
-      for (const e of rows) totals[e.driverId] = { driverId: e.driverId, name: e.driver, minutes: (totals[e.driverId] ? totals[e.driverId].minutes : 0) + e.minutes, shifts: (totals[e.driverId] ? totals[e.driverId].shifts : 0) + 1 };
-      return { from, to, entries: rows, totals: Object.values(totals).sort((x, y) => y.minutes - x.minutes), onNow: db.users.filter((u) => u.companyId === ctx.company.id && u.role === 'driver' && db.timeEntries.some((e) => e.driverId === u.id && !e.out)).map((u) => u.name) };
-    });
-    def('dispatch.saveTime', STAFF, true, (ctx, a) => {
-      let e = a.id ? db.timeEntries.find((x) => x.id === a.id && x.companyId === ctx.company.id) : null;
-      if (a.id && !e) fail('Time entry not found.', 404);
-      if (a.remove) { if (e) db.timeEntries.splice(db.timeEntries.indexOf(e), 1); return { ok: true }; }
-      const inAt = new Date(a.in), outAt = a.out ? new Date(a.out) : null;
-      if (isNaN(inAt)) fail('Enter the clock-in time.');
-      if (outAt && (isNaN(outAt) || outAt <= inAt)) fail('Clock-out must be after clock-in.');
-      if (outAt && outAt - inAt > 24 * 3600e3) fail('A shift can be 24 hours at most.');
-      if (!e) {
-        const d = findUser(a.driverId);
-        if (!d || d.companyId !== ctx.company.id || d.role !== 'driver') fail('Choose a driver.');
-        e = { id: id('tim'), companyId: ctx.company.id, driverId: d.id };
-        db.timeEntries.unshift(e);
-      }
-      e.in = inAt.toISOString(); e.out = outAt ? outAt.toISOString() : null; e.minutes = e.out ? entryMin(e, now()) : null;
-      e.note = str(a.note, 200); e.editedBy = ctx.user.name;
-      return clone(e);
     });
 
     // ---- Trip import (manifest upload) ----------------------------------------
@@ -3547,34 +3479,17 @@
     });
     def('dispatch.drivers', STAFF, false, (ctx) => db.users.filter((u) => u.companyId === ctx.company.id && u.role === 'driver').map((u) => {
       const s = driverStats(u, 30);
-      const today = localParts(now().toISOString(), ctx.company.timezone).date;
-      return { ...driverFull(u), completed30: s.completed30, rating: s.rating, acceptance: s.acceptance, onTime: s.onTime, timeOffToday: onTimeOff(u.id, today) };
+      return { ...driverFull(u), completed30: s.completed30, rating: s.rating, acceptance: s.acceptance, onTime: s.onTime };
     }));
     def('dispatch.driver', STAFF, false, (ctx, a) => {
       const u = ownDriver(ctx, a.id);
       return {
         driver: driverFull(u), stats: driverStats(u, 30),
-        timeOff: db.timeOff.filter((x) => x.driverId === u.id).sort((x, y) => y.from.localeCompare(x.from)).map(clone),
         recent: db.trips.filter((t) => t.driverId === u.id).sort((x, y) => y.pickupAt.localeCompare(x.pickupAt)).slice(0, 8).map(tripView),
       };
     });
     def('dispatch.saveDriver', STAFF, true, async (ctx, a) => saveStaffUser(ctx, a, 'driver'));
     def('dispatch.setDriverPhoto', STAFF, true, (ctx, a) => { const u = ownDriver(ctx, a.id); u.photo = cleanPhoto(a.photo); return driverFull(u); });
-    def('dispatch.timeOff', STAFF, true, (ctx, a) => {
-      if (a.action === 'add') {
-        const u = ownDriver(ctx, a.driverId);
-        if (!dateOk(a.from) || !dateOk(a.to || a.from)) fail('Choose the first and last day off.');
-        if ((a.to || a.from) < a.from) fail('The last day must be on or after the first day.');
-        const r = { id: id('off'), companyId: ctx.company.id, driverId: u.id, from: a.from, to: a.to || a.from, reason: str(a.reason, 200), status: 'approved', createdAt: now().toISOString(), decidedBy: ctx.user.name };
-        db.timeOff.push(r); return clone(r);
-      }
-      const r = db.timeOff.find((x) => x.id === a.id && x.companyId === ctx.company.id);
-      if (!r) fail('Time-off entry not found.', 404);
-      if (a.action === 'approve' || a.action === 'decline') { r.status = a.action === 'approve' ? 'approved' : 'declined'; r.decidedBy = ctx.user.name; return clone(r); }
-      if (a.action === 'delete') { db.timeOff.splice(db.timeOff.indexOf(r), 1); return true; }
-      fail('Unknown action.');
-    });
-    def('dispatch.timeOffList', STAFF, false, (ctx) => db.timeOff.filter((x) => x.companyId === ctx.company.id).sort((x, y) => y.from.localeCompare(x.from)).map((x) => ({ ...clone(x), driverName: (findUser(x.driverId) || {}).name })));
     def('dispatch.payroll', STAFF, false, (ctx, a) => {
       if (!dateOk(a.from) || !dateOk(a.to)) fail('Choose a pay period.');
       const drivers = db.users.filter((u) => u.companyId === ctx.company.id && u.role === 'driver');
@@ -4175,8 +4090,6 @@
       jane.prefs = { temp: 'cool', music: 'soft', quiet: true, signName: 'J. Porter' };
       const robert = await mkUser({ role: 'customer', companyId: cap.id, name: 'Robert Chen', email: 'robert@demo.com', phone: '(206) 555-0190' });
       const priya = await mkUser({ role: 'customer', companyId: cap.id, name: 'Priya Shah', email: 'travel@acme.demo', phone: '(206) 555-0175', account: 'Acme Corp', discountPct: 10, notes: 'Corporate account, invoice monthly' });
-      db.timeOff.push({ id: id('off'), companyId: cap.id, driverId: sam.id, from: day(0), to: day(2), reason: 'Family wedding', status: 'approved', createdAt: at(-60 * 24 * 10), decidedBy: 'Nadia Hassan' });
-      db.timeOff.push({ id: id('off'), companyId: cap.id, driverId: elena.id, from: day(9), to: day(11), reason: 'Moving house', status: 'requested', createdAt: at(-60 * 5) });
 
       const sum = mkCo({ slug: 'summit', name: 'Summit Black Car', tagline: 'Denver airport and mountain transfers', color: '#24584a', phone: '(303) 555-0120', email: 'rides@summit.demo', plan: 'standard', monthlyFee: 99, setupFee: 299, billing: 'monthly', refPrefix: 'SUM', timezone: 'America/Denver' });
       const sub = mkVeh(sum, { name: 'Chevrolet Suburban', type: 'SUV', capacity: 6, plate: 'CO 552-KRT', color: 'Black', year: 2023, odometer: 30500, lastServiceOdometer: 28000 });

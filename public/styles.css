@@ -505,7 +505,6 @@ a.quotecard:hover { border-color: var(--brand); }
 .switch > input[type="checkbox"] { width: 40px; height: 22px; min-height: 0; padding: 0; border: 0; flex-shrink: 0; }
 .waitbox { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--line, #e3e5ea); border-radius: 10px; }
 .err-text { color: var(--bad); }
-.clockbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; }
 .sheet { display: grid; gap: 10px; padding: 4px 0 18px; border-bottom: 1px dashed var(--line); margin-bottom: 18px; }
 .sheet h2 { margin: 0; font-size: 18px; }
 .sheettable { width: 100%; border-collapse: collapse; font-size: 13px; }

@@ -1944,7 +1944,7 @@
       let data;
       try { data = await api('driver.trips'); } catch (e) { if (!silent) showErr(v, e); return; }
       const sig = JSON.stringify(data); if (sig === last) return; last = sig;
-      const { me, trips, week, stats, timeOff } = data;
+      const { me, trips, week, stats } = data;
       const waiting = trips.filter((t) => t.status === 'assigned');
       const live = trips.find((t) => ['en_route', 'arrived', 'on_board'].includes(t.status)) || trips.find((t) => t.status === 'accepted');
       const upcoming = trips.filter((t) => t.status === 'accepted' && t !== live);
@@ -1955,8 +1955,6 @@
           <div class="spread"><div><h1>${esc(me.name.split(' ')[0])}'s trips</h1><p class="muted small">${esc(session.company.name)}</p></div>
             <label class="switch"><input type="checkbox" id="drv-avail" ${me.available ? 'checked' : ''}><span>${me.available ? 'Available' : 'Off duty'}</span></label></div>
           ${me.photo ? '' : `<div class="panel">${photoField(me.name, '', 'drv-photo')}</div>`}
-          ${data.clock ? `<div class="panel clockbar"><div class="stack" style="gap:2px"><b>${data.clock.on ? 'Clocked in' : 'Not clocked in'}</b><span class="small muted">${data.clock.on ? `Since ${esc(fmtTime(data.clock.since))} · ` : ''}Today ${hm(data.clock.todayMin)} · This week ${hm(data.clock.weekMin)}</span></div>
-            <button class="btn sm ${data.clock.on ? '' : 'primary'}" type="button" data-act="clock" data-in="${data.clock.on ? '0' : '1'}">${data.clock.on ? 'Clock out' : 'Clock in'}</button></div>` : ''}
           ${waiting.length ? `<div class="stack"><span class="label">Needs your answer</span>${waiting.map((t) => `
             <div class="trip"><div class="spread"><b>${esc(fmtDT(t.pickupAt))}</b><span class="mono small faint">${esc(t.ref)}</span></div>
               ${routeHtml(t)}${flightLine(t)}<p class="small muted">${esc(t.serviceLabel)} · ${esc(t.vehicle ? t.vehicle.name : t.vehicleType)} · ${t.passengers} pax${extrasList(t).length ? ' · ' + esc(extrasList(t).join(' · ')) : ''}</p>
@@ -1997,13 +1995,6 @@
           </div>
           ${done.length ? `<div class="stack"><span class="label">Recently completed</span><div class="tablewrap"><table><tbody>${done.map((t) => `<tr><td class="mono small">${esc(fmtDT(t.pickupAt))}</td><td>${esc(t.passengerName)}${t.rating ? `<br><span class="stars small" title="${t.rating.stars} stars">${stars(t.rating.stars)}</span>` : ''}</td><td class="r num">${money(t.price.total)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}
           ${live ? '' : '<div class="row"><button class="btn sm" type="button" data-act="incident" data-id="">Report an incident</button></div>'}
-          <div class="stack"><span class="label">Time off</span>
-            <form class="panel stack" id="drv-off" novalidate>
-              <div class="grid2"><label class="field"><span>First day off</span><input id="off-from" name="from" type="date"></label><label class="field"><span>Last day off</span><input id="off-to" name="to" type="date"></label></div>
-              <label class="field"><span>Reason (optional)</span><input id="off-reason" name="reason"></label>
-              <div id="off-err"></div><button class="btn" type="submit">Ask for time off</button>
-              ${timeOff.length ? `<div>${timeOff.map((x) => `<div class="qline small"><span>${esc(fmtDays(x.from, x.to))}${x.reason ? ' · ' + esc(x.reason) : ''}</span><span class="pill ${x.status === 'approved' ? 's-on_board' : x.status === 'declined' ? 's-cancelled' : 's-assigned'}">${x.status === 'requested' ? 'Waiting' : x.status === 'approved' ? 'Approved' : 'Declined'}</span></div>`).join('')}</div>` : ''}
-            </form></div>
         </div>`;
       shareLocation(live && ['en_route', 'arrived', 'on_board'].includes(live.status) ? live.id : null);
       $('#drv-avail', v).onchange = async (e) => { try { await api('driver.availability', { available: e.target.checked }); last = ''; refresh(); } catch (err) { toast(err.message, true); } };
@@ -2014,16 +2005,11 @@
           if (b.dataset.act === 'accept') { await api('driver.respond', { id, accept: true }); toast('Trip accepted. The passenger has been told.'); }
           if (b.dataset.act === 'decline') { await api('driver.respond', { id, accept: false }); toast('Declined. Dispatch will reassign it.'); }
           if (b.dataset.act === 'advance') { const t = await api('driver.advance', { id }); toast(t.statusLabel + '.'); }
-          if (b.dataset.act === 'clock') { const c = await api('driver.clock', { in: b.dataset.in === '1' }); toast(c.on ? 'Clocked in.' : `Clocked out. ${hm(c.todayMin)} today.`); }
           last = ''; refresh();
         } catch (err) { toast(err.message, true); }
       }); });
       const ex = $('#drv-extras', v);
       if (ex) ex.onsubmit = async (e) => { e.preventDefault(); try { await api('driver.extras', { id: ex.dataset.id, ...formData(ex) }); toast('Extras saved and fare updated.'); last = ''; refresh(); } catch (err) { toast(err.message, true); } };
-      $('#drv-off', v).onsubmit = async (e) => {
-        e.preventDefault();
-        try { await api('driver.requestTimeOff', formData(e.target)); toast('Request sent to dispatch.'); last = ''; refresh(); } catch (err) { showErr($('#off-err', v), err); }
-      };
     }
     current = { poll: true, refresh };
     v.innerHTML = '<p class="faint">Loading…</p>';
@@ -2155,8 +2141,8 @@
               const mine = b.trips.filter((t) => t.driverId === d.id && t.status !== 'cancelled');
               const veh = b.vehicles.find((x) => x.id === d.vehicleId);
               return `<section class="lane" data-driver="${d.id}">
-                <div class="lanehead"><span class="avatar ${d.available && !d.timeOff ? 'on' : ''}">${esc(initials(d.name))}</span>
-                  <div class="grow"><h3>${esc(d.name)}</h3><p class="small faint">${d.timeOff ? 'Time off today' : d.available ? 'Available' : 'Off duty'}${veh ? ' · ' + esc(veh.name) : ''}</p></div><span class="pill count">${mine.length}</span></div>
+                <div class="lanehead"><span class="avatar ${d.available ? 'on' : ''}">${esc(initials(d.name))}</span>
+                  <div class="grow"><h3>${esc(d.name)}</h3><p class="small faint">${d.available ? 'Available' : 'Off duty'}${veh ? ' · ' + esc(veh.name) : ''}</p></div><span class="pill count">${mine.length}</span></div>
                 ${mine.map(cardHtml).join('') || '<p class="empty">No trips</p>'}
               </section>`;
             }).join('') || '<div class="panel muted">No drivers yet. Add them in the Drivers tab.</div>'}</div>
@@ -2427,7 +2413,7 @@
               ${t.status === 'assigned' && t.offer && t.driver ? `<p class="small offertag">Waiting for ${esc(t.driver.name)} to accept · ${minsLeft(t.offer.expiresAt)} min left</p>` : ''}
               ${t.status === 'confirmed' && t.needsDriver ? `<p class="small needtag">Needs a driver: ${esc(t.needsDriver.why)}</p>` : ''}
               ${canSuggest ? '<div id="te-suggest" class="suggest"><p class="small faint">Finding the best drivers…</p></div>' : ''}
-              <label class="field"><span>Driver</span><select id="te-driver" ${noAssign ? 'disabled' : ''}><option value="">Unassigned</option>${drivers.filter((d) => d.active).map((d) => `<option value="${d.id}" ${t.driverId === d.id ? 'selected' : ''}>${esc(d.name)}${d.timeOffToday ? ' (time off)' : d.available ? '' : ' (off duty)'}</option>`).join('')}</select></label>
+              <label class="field"><span>Driver</span><select id="te-driver" ${noAssign ? 'disabled' : ''}><option value="">Unassigned</option>${drivers.filter((d) => d.active).map((d) => `<option value="${d.id}" ${t.driverId === d.id ? 'selected' : ''}>${esc(d.name)}${d.available ? '' : ' (off duty)'}</option>`).join('')}</select></label>
               <label class="field"><span>Vehicle</span><select id="te-vehicle" ${noAssign ? 'disabled' : ''}><option value="">Best free vehicle</option>${vehicles.filter((x) => x.status !== 'retired').map((x) => `<option value="${x.id}" ${t.vehicleId === x.id ? 'selected' : ''}>${esc(x.name)} · ${esc(x.type)} · ${x.capacity} seats${x.status === 'maintenance' ? ' (in the shop)' : ''}</option>`).join('')}</select></label>
               ${noAssign ? '' : '<button class="btn primary" type="button" id="te-assign">Save assignment</button>'}
               <label class="field"><span>Change status by hand</span><select id="te-status">${Object.entries(C.STATUS_LABELS).map(([k, l]) => `<option value="${k}" ${t.status === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
@@ -2903,10 +2889,10 @@
     let driverSub = 'list';
     function drawDrivers(v) {
       current = { poll: false };
-      v.innerHTML = `<div class="subtabs">${[['list', 'Drivers'], ['auto', 'Auto-dispatch'], ...(P.pay ? [['pay', 'Driver pay']] : []), ['hours', 'Hours'], ['timeoff', 'Time off']].map(([k, l]) => `<button type="button" data-sub="${k}" aria-pressed="${driverSub === k}">${l}</button>`).join('')}</div><div id="dv"></div>`;
+      v.innerHTML = `<div class="subtabs">${[['list', 'Drivers'], ['auto', 'Auto-dispatch'], ...(P.pay ? [['pay', 'Driver pay']] : [])].map(([k, l]) => `<button type="button" data-sub="${k}" aria-pressed="${driverSub === k}">${l}</button>`).join('')}</div><div id="dv"></div>`;
       $$('[data-sub]', v).forEach((b) => { b.onclick = () => { driverSub = b.dataset.sub; drawDrivers(v); }; });
       const host = $('#dv', v);
-      ({ list: driverList, auto: autoDispatchView, pay: driverPayView, hours: hoursView, timeoff: timeOffView })[driverSub](host, () => drawDrivers(v));
+      ({ list: driverList, auto: autoDispatchView, pay: driverPayView })[driverSub](host, () => drawDrivers(v));
     }
     async function driverList(host, redraw) {
       let drivers, vehicles;
@@ -2915,7 +2901,7 @@
         <div class="tablewrap"><table><thead><tr><th>Driver</th><th>Usual vehicle</th><th>Today</th><th class="r">Rating</th><th class="r">Accepts</th><th class="r">On time</th><th class="r">Trips (30 days)</th><th>Documents</th></tr></thead><tbody>
         ${drivers.map((d) => `<tr class="click" data-id="${d.id}"><td><div class="row" style="gap:10px;flex-wrap:nowrap">${face(d.name, d.photo, 'sm')}<div><b>${esc(d.name)}</b><br><span class="mono small faint">${esc(d.phone)}</span></div></div></td>
           <td class="small">${esc((vehicles.find((x) => x.id === d.vehicleId) || {}).name || '—')}</td>
-          <td>${!d.active ? '<span class="pill off">Login disabled</span>' : d.timeOffToday ? '<span class="pill s-arrived">Time off</span>' : d.available ? '<span class="pill s-on_board">Available</span>' : '<span class="pill off">Off duty</span>'}</td>
+          <td>${!d.active ? '<span class="pill off">Login disabled</span>'  : d.available ? '<span class="pill s-on_board">Available</span>' : '<span class="pill off">Off duty</span>'}</td>
           <td class="r num">${d.rating == null ? '—' : `<span class="stars">★</span> ${d.rating.toFixed(1)}`}</td><td class="r num">${pct(d.acceptance)}</td><td class="r num">${pct(d.onTime)}</td><td class="r num">${d.completed30}</td>
           <td><div class="row" style="gap:4px">${docPill('License', d.licenseExp)}${docPill('Permit', d.permitExp)}</div></td></tr>`).join('') || '<tr><td colspan="8" class="faint">No drivers yet.</td></tr>'}
         </tbody></table></div>`;
@@ -2923,7 +2909,7 @@
       $$('tr[data-id]', host).forEach((r) => { r.onclick = () => driverModal(r.dataset.id, vehicles, redraw); });
     }
     async function driverModal(id, vehicles, done) {
-      let data = { driver: { name: '', email: '', phone: '', active: true, payType: 'percent', payRate: 35, schedule: Object.fromEntries(C.DAYS.map((d) => [d, { on: !['sat', 'sun'].includes(d), start: '07:00', end: '19:00' }])) }, stats: null, timeOff: [], recent: [] };
+      let data = { driver: { name: '', email: '', phone: '', active: true, payType: 'percent', payRate: 35, schedule: Object.fromEntries(C.DAYS.map((d) => [d, { on: !['sat', 'sun'].includes(d), start: '07:00', end: '19:00' }])) }, stats: null, recent: [] };
       if (id) { try { data = await api('dispatch.driver', { id }); } catch (e) { return toast(e.message, true); } }
       const d = data.driver, s = data.stats;
       const DAYN = { mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday', sun: 'Sunday' };
@@ -2957,12 +2943,7 @@
             <div id="dm-err"></div>
             <div><button class="btn primary" type="submit">${id ? 'Save driver' : 'Add driver'}</button></div>
           </form>
-          ${id ? `<div class="stack"><h3>Time off</h3>
-            ${data.timeOff.length ? `<div class="tablewrap"><table><tbody>${data.timeOff.map((x) => `<tr><td class="small nowrap">${esc(fmtDays(x.from, x.to))}</td><td class="small">${esc(x.reason || '')}</td>
-              <td><span class="pill ${x.status === 'approved' ? 's-on_board' : x.status === 'declined' ? 's-cancelled' : 's-assigned'}">${x.status === 'requested' ? 'Waiting' : x.status === 'approved' ? 'Approved' : 'Declined'}</span></td>
-              <td class="r">${x.status === 'requested' ? `<button class="btn sm" type="button" data-off="approve" data-id="${x.id}">Approve</button> <button class="btn sm" type="button" data-off="decline" data-id="${x.id}">Decline</button>` : `<button class="btn sm" type="button" data-off="delete" data-id="${x.id}">Remove</button>`}</td></tr>`).join('')}</tbody></table></div>` : '<p class="small faint">No time off booked.</p>'}
-            <form class="row" id="dm-off"><input class="input" style="width:auto" type="date" name="from" id="dmo-from"><span class="small">to</span><input class="input" style="width:auto" type="date" name="to" id="dmo-to"><input class="input grow" name="reason" id="dmo-reason" placeholder="Reason"><button class="btn sm" type="submit">Add time off</button></form>
-            </div>
+          ${id ? `
             ${s.reviews.length ? `<div class="stack"><h3>Recent reviews</h3>${s.reviews.map((r) => `<div class="qline"><span><span class="stars">${stars(r.stars)}</span> ${esc(r.comment)}</span><span class="mono small faint">${esc(r.ref)}</span></div>`).join('')}</div>` : ''}
             ${data.recent.length ? `<div class="stack"><h3>Recent trips</h3><div class="tablewrap"><table><tbody>${data.recent.map((t) => `<tr><td class="mono small">${esc(fmtDT(t.pickupAt))}</td><td class="mono small">${esc(t.ref)}</td><td class="small">${esc(t.passengerName)}</td><td>${pill(t)}</td><td class="r num">${money(t.price.total)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}` : ''}`,
       });
@@ -2978,9 +2959,6 @@
           try { const r = await api('dispatch.saveDriver', { ...f, id }); toast(id ? 'Driver saved.' : `${r.name} added. They can sign in now.`); if (id) reopen(); else closeModal(); } catch (err) { showErr($('#dm-err', m), err); }
         });
       };
-      $$('[data-off]', m).forEach((b) => { b.onclick = () => busy(b, async () => { try { await api('dispatch.timeOff', { action: b.dataset.off, id: b.dataset.id }); reopen(); } catch (err) { toast(err.message, true); } }); });
-      const of = $('#dm-off', m);
-      if (of) of.onsubmit = async (e) => { e.preventDefault(); try { await api('dispatch.timeOff', { action: 'add', driverId: id, ...formData(of) }); toast('Time off added.'); reopen(); } catch (err) { toast(err.message, true); } };
     }
     let payPeriod = null;
     function periodFor(kind) {
@@ -3020,7 +2998,7 @@
         <form id="ad-form" class="stack" style="max-width:640px" novalidate>
           <fieldset class="fs"><legend>Auto-assign</legend>
             <label class="switch"><input type="checkbox" name="autoAssign" ${r.autoAssign ? 'checked' : ''} ${ro}><span>Send new trips to the best driver automatically</span></label>
-            <p class="small muted">Picks the closest free driver with a car of the booked type. It skips drivers on time off, off duty, already busy, with expired papers or a car that's in the shop. Drivers working outside their usual shift are used last.</p>
+            <p class="small muted">Picks the closest free driver with a car of the booked type. It skips drivers who are off duty, already busy, with expired papers or a car that's in the shop. Drivers working outside their usual shift are used last.</p>
             <label class="field"><span>Start auto-assigning this many hours before pickup</span><input class="input" type="number" name="horizonHours" min="1" max="168" value="${r.horizonHours}" ${ro}></label>
           </fieldset>
           <fieldset class="fs"><legend>Online booking</legend>
@@ -3049,52 +3027,6 @@
           try { await api('dispatch.saveRules', { rules }); toast('Auto-dispatch saved.'); redraw(); } catch (err) { showErr($('#ad-err', host), err); }
         });
       };
-    }
-    // Drivers clock in and out in the driver app; the office checks and fixes it here.
-    let hoursRange = null;
-    async function hoursView(host, redraw) {
-      let r, drivers;
-      try { [r, drivers] = await Promise.all([api('dispatch.timeclock', hoursRange || {}), api('dispatch.drivers')]); } catch (e) { return showErr(host, e); }
-      hoursRange = { from: r.from, to: r.to };
-      host.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Hours</h1><p class="muted">Drivers clock in and out in the driver app. Fix a missed clock-out here.${r.onNow.length ? ` On the clock now: ${esc(r.onNow.join(', '))}.` : ''}</p></div>
-          <div class="row">${r.entries.length ? '<button class="btn" type="button" id="hr-csv">Download (CSV)</button>' : ''}<button class="btn primary" type="button" id="hr-add">Add a shift</button></div></div>
-        <div class="row" style="margin-bottom:14px"><label class="field inline"><span>From</span><input type="date" id="hr-from" value="${r.from}"></label><label class="field inline"><span>To</span><input type="date" id="hr-to" value="${r.to}"></label></div>
-        ${r.totals.length ? `<div class="tiles">${r.totals.map((t) => `<div class="tile"><span class="label">${esc(t.name)}</span><b class="num">${hm(t.minutes)}</b><span class="small faint">${t.shifts} shift${t.shifts === 1 ? '' : 's'}</span></div>`).join('')}</div>` : ''}
-        ${r.entries.length ? `<div class="tablewrap" style="margin-top:14px"><table><thead><tr><th>Driver</th><th>Clock in</th><th>Clock out</th><th class="r">Hours</th><th>Note</th></tr></thead><tbody>
-          ${r.entries.map((e) => `<tr class="click" data-id="${e.id}"><td>${esc(e.driver)}</td><td class="mono small">${esc(fmtDT(e.in))}</td><td class="mono small">${e.out ? esc(fmtDT(e.out)) : '<span class="pill s-on_board">On the clock</span>'}</td><td class="r num">${hm(e.minutes)}</td><td class="small muted">${esc(e.note || '')}</td></tr>`).join('')}
-        </tbody></table></div>` : `<div class="panel empty"><b>No clock-ins between ${esc(fmtDay(r.from))} and ${esc(fmtDay(r.to))}</b><span class="muted small">Drivers clock in from the driver app, or you can add a shift by hand.</span></div>`}`;
-      const reload = () => { hoursRange = { from: $('#hr-from', host).value, to: $('#hr-to', host).value }; hoursView(host, redraw); };
-      $('#hr-from', host).onchange = reload; $('#hr-to', host).onchange = reload;
-      if ($('#hr-csv', host)) $('#hr-csv', host).onclick = async () => { if (await saveFile(`${session.company.slug}-hours-${r.from}-to-${r.to}.csv`, rowsCsv(r.entries.map((e) => ({ Driver: e.driver, Date: e.date, 'Clock in': fmtDT(e.in), 'Clock out': e.out ? fmtDT(e.out) : '', Hours: (e.minutes / 60).toFixed(2), Note: e.note || '' }))), 'text/csv')) toast('Downloaded.'); };
-      const edit = (e) => {
-        const lv = (iso) => iso ? toLocalInput(new Date(iso)) : '';
-        const m = openModal({
-          title: e ? `Shift: ${e.driver}` : 'Add a shift',
-          body: `<form class="stack" id="hr-f" novalidate>${e ? '' : `<label class="field"><span>Driver</span><select name="driverId"><option value="">Choose…</option>${drivers.filter((d) => d.active).map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select></label>`}
-            <div class="grid2"><label class="field"><span>Clock in</span><input type="datetime-local" name="in" value="${lv(e && e.in)}"></label><label class="field"><span>Clock out</span><input type="datetime-local" name="out" value="${lv(e && e.out)}"></label></div>
-            <label class="field"><span>Note</span><input name="note" maxlength="200" value="${esc((e && e.note) || '')}" placeholder="Forgot to clock out"></label><div id="hr-err"></div></form>`,
-          footer: `${e ? '<button class="btn danger" type="button" id="hr-del">Delete</button>' : ''}<button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="hr-save">Save</button>`,
-        });
-        $('[data-close]', m).onclick = closeModal;
-        const del = $('#hr-del', m); if (del) del.onclick = () => busy(del, async () => { try { await api('dispatch.saveTime', { id: e.id, remove: true }); closeModal(); toast('Shift deleted.'); hoursView(host, redraw); } catch (err) { showErr($('#hr-err', m), err); } });
-        $('#hr-save', m).onclick = (ev) => busy(ev.currentTarget, async () => {
-          const f = formData($('#hr-f', m));
-          try { await api('dispatch.saveTime', { id: e ? e.id : undefined, driverId: f.driverId, in: f.in ? new Date(f.in).toISOString() : '', out: f.out ? new Date(f.out).toISOString() : '', note: f.note }); closeModal(); toast('Shift saved.'); hoursView(host, redraw); } catch (err) { showErr($('#hr-err', m), err); }
-        });
-      };
-      $('#hr-add', host).onclick = () => edit(null);
-      $$('tr[data-id]', host).forEach((row) => { row.onclick = () => edit(r.entries.find((e) => e.id === row.dataset.id)); });
-    }
-    async function timeOffView(host, redraw) {
-      let list;
-      try { list = await api('dispatch.timeOffList'); } catch (e) { return showErr(host, e); }
-      host.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Time off</h1><p class="muted">Requests from the driver app, and time off you've added. Approved days show on the board and warn you when assigning.</p></div></div>
-        <div class="tablewrap"><table><thead><tr><th>Driver</th><th>Dates</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>
-        ${list.map((x) => `<tr><td><b>${esc(x.driverName)}</b></td><td class="small nowrap">${esc(fmtDays(x.from, x.to))}</td><td class="small">${esc(x.reason || '')}</td>
-          <td><span class="pill ${x.status === 'approved' ? 's-on_board' : x.status === 'declined' ? 's-cancelled' : 's-assigned'}">${x.status === 'requested' ? 'Waiting' : x.status === 'approved' ? 'Approved' : 'Declined'}</span>${x.decidedBy ? `<span class="small faint"> by ${esc(x.decidedBy)}</span>` : ''}</td>
-          <td class="r">${x.status === 'requested' ? `<button class="btn sm" type="button" data-off="approve" data-id="${x.id}">Approve</button> <button class="btn sm" type="button" data-off="decline" data-id="${x.id}">Decline</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="5" class="faint">No time off yet.</td></tr>'}
-        </tbody></table></div>`;
-      $$('[data-off]', host).forEach((b) => { b.onclick = () => busy(b, async () => { try { await api('dispatch.timeOff', { action: b.dataset.off, id: b.dataset.id }); toast(b.dataset.off === 'approve' ? 'Approved.' : 'Declined.'); redraw(); } catch (e) { toast(e.message, true); } }); });
     }
 
     function personModal({ title, person, method, extra, done, role, collect, setup }) {
