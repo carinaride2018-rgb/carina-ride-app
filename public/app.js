@@ -83,7 +83,7 @@
     if (p.pending) return `Charging ${esc(card)} now.`;
     if (t.payment.status === 'paid') return `${money(p.paid)} charged to ${esc(card)}.`;
     if (p.fareCharged) return `${money(p.paid)} charged to ${esc(card)}. ${t.status === 'completed' ? `Extras of ${money(p.balance)} go on the card shortly.` : `${money(p.balance)} more (changes or extras) goes on the card after the ride.`}`;
-    return `${esc(card)} on file. The fare is charged ${esc(when)}${p.chargeHours ? ` (${p.chargeHours} hours before pickup)` : ''}, extras like waiting time or added stops after the ride.`;
+    return p.chargeWhen === 'booking' ? `${esc(card)} on file. The fare is charged now, extras like waiting time or added stops after the ride.` : `${esc(card)} on file. The fare is charged ${esc(when)}${p.chargeHours ? ` (${p.chargeHours} hours before pickup)` : ''}, extras like waiting time or added stops after the ride.`;
   }
   // The office's view of a card-on-file trip: state, every charge and refund, and what it can do.
   function cardBox(t) {
@@ -750,7 +750,7 @@
         <div class="panel small"><dl class="kv"><dt>Passenger</dt><dd>${esc(d.passengerName || '')}</dd><dt>From</dt><dd>${esc(d.pickup)}</dd>${d.dropoff ? `<dt>To</dt><dd>${esc(d.dropoff)}</dd>` : ''}<dt>Ride</dt><dd>${esc(d.service)}, ${esc(d.vehicleType)}</dd><dt>Fare</dt><dd class="num">${money(d.total)}</dd></dl></div>
         ${state}
         ${d.closed ? '' : `<form class="panel stack" id="cd-form" novalidate>
-          <p class="small muted">${d.fareCharged ? 'The fare is already paid.' : new Date(d.chargeAt).getTime() <= Date.now() ? `Pickup is less than ${d.chargeHours} hours away, so the ${money(d.balance > 0 ? d.balance : d.total)} fare is charged as soon as you save the card.` : `Nothing is charged now. The fare goes on this card ${d.chargeHours} hours before pickup (${esc(fmtDT(d.chargeAt))}).`} Extras like waiting time, an added stop or a new destination go on the same card after the ride.</p>
+          <p class="small muted">${d.fareCharged ? 'The fare is already paid.' : d.chargeWhen === 'booking' ? `The ${money(d.balance > 0 ? d.balance : d.total)} fare is charged as soon as you save the card.` : new Date(d.chargeAt).getTime() <= Date.now() ? `Pickup is less than ${d.chargeHours} hours away, so the ${money(d.balance > 0 ? d.balance : d.total)} fare is charged as soon as you save the card.` : `Nothing is charged now. The fare goes on this card ${d.chargeHours} hours before pickup (${esc(fmtDT(d.chargeAt))}).`} Extras like waiting time, an added stop or a new destination go on the same card after the ride.</p>
           ${stripe ? '<p class="small muted">You\'ll enter your card on a secure Stripe page, then come straight back here.</p>' : `
           <label class="field"><span>Card number</span><input name="number" class="mono" inputmode="numeric" autocomplete="cc-number" value="4242 4242 4242 4242"></label>
           <label class="field"><span>Expiry (MM/YY)</span><input name="exp" class="mono" autocomplete="cc-exp" value="12/30"></label>
@@ -782,7 +782,7 @@
     ['Live dispatch board', 'Every ride for the day by chauffeur, with drag-and-drop assigning, alerts for anything unassigned and a live map of your cars.'],
     ['Driver app', 'Chauffeurs accept trips, see the passenger and flight, move each ride from on the way to drop-off and share GPS with dispatch.'],
     ['Passenger updates', 'Automatic confirmation, 24-hour reminder, "your chauffeur is on the way" with live tracking, and a review request after the ride.'],
-    ['Card on file payments', 'The card is saved at booking and charged 24 hours before pickup. Waiting time and extra stops are charged after the ride. No cash.'],
+    ['Card on file payments', 'The card is charged when the customer books (or a set time before pickup, your choice). Waiting time, extra stops and other extras go on the same card after the ride. No cash.'],
     ['Flight tracking', 'Airport pickups follow the flight. Delays move the pickup time and the chauffeur is told.'],
     ['Farm-out network', 'Send rides you can’t cover to trusted partner companies and take theirs, with balances settled in one place. You earn a commission on every ride you send.'],
     ['Corporate accounts and travel agents', 'Company accounts with monthly invoices, PO numbers and bookers, plus a travel agent login with commission tracking.'],
@@ -1130,7 +1130,7 @@
       const what = [q.eventType, q.eventName].filter(Boolean).join(': ');
       const open = q.status === 'sent';
       const cardOn = q.cards !== false && q.company.cards !== false, stripeCard = cardOn && q.company.payMode === 'stripe';
-      const cardHow = `No deposit. Nothing is charged now: each ride goes on your card ${q.chargeHours || 24} hours before its pickup, and extras like waiting time or an added stop after the ride.`;
+      const cardHow = q.chargeWhen === 'booking' ? 'No deposit. The rides are charged to your card when you book, and extras like waiting time or an added stop after the ride.' : `No deposit. Nothing is charged now: each ride goes on your card ${q.chargeHours || 24} hours before its pickup, and extras like waiting time or an added stop after the ride.`;
       const cardFields = stripeCard ? `<p class="small muted">${cardHow} You'll save your card on a secure Stripe page, then come straight back here.</p>`
         : `<div class="grid2"><label class="field"><span>Card number</span><input name="number" class="mono" inputmode="numeric" autocomplete="cc-number" value="4242 4242 4242 4242"></label><label class="field"><span>Expiry (MM/YY)</span><input name="exp" class="mono" autocomplete="cc-exp" value="12/30"></label></div>
           <p class="small muted">${cardHow}${q.company.payMode === 'demo' ? ' Demo: no real card is charged.' : ''}</p>`;
@@ -1147,7 +1147,7 @@
           ${open && q.validUntil ? `<p class="small muted">This price is held until ${esc(fmtDate(q.validUntil + 'T12:00:00'))}.</p>` : ''}
         </div>`}
         ${q.status === 'accepted' ? `<div class="panel stack"><p>Thank you${q.contact && q.contact.name ? ', ' + esc(q.contact.name.split(' ')[0]) : ''}. ${q.trips.length} vehicle${q.trips.length === 1 ? ' is' : 's are'} booked. We'll send each chauffeur's details on the day.</p><div class="small mono muted">${q.trips.map((t) => esc(t.ref)).join(' · ')}</div>
-          ${q.card ? `<p class="small muted">${esc(cardName(q.card))} is on file. Each ride is charged ${q.chargeHours || 24} hours before its pickup.</p>` : ''}</div>
+          ${q.card ? `<p class="small muted">${esc(cardName(q.card))} is on file. ${q.chargeWhen === 'booking' ? 'The rides are charged to it' : `Each ride is charged ${q.chargeHours || 24} hours before its pickup`}.</p>` : ''}</div>
           ${q.needsCard ? `<form class="panel stack" id="qc" novalidate><h2>Add a card for the rides</h2>${cardFields}<div id="qc-err"></div><button class="btn brand big" type="submit">Save card</button></form>` : ''}` : ''}
         ${q.status === 'declined' ? `<div class="panel muted">You turned this quote down. Call us if you'd like a new one.</div>` : ''}
         ${q.status === 'expired' ? `<div class="panel muted">This quote expired on ${esc(fmtDate(q.validUntil + 'T12:00:00'))}. Call us for an updated price.</div>` : ''}
@@ -1381,7 +1381,7 @@
         return;
       }
       const hrs = (pol && pol.chargeHours != null ? pol.chargeHours : 24);
-      const how = `Nothing is charged now. The fare goes on your card ${hrs} hours before pickup (right away if pickup is sooner), and extras like waiting time or an added stop after the ride.`;
+      const how = pol && pol.chargeWhen === 'before' ? `Nothing is charged now. The fare goes on your card ${hrs} hours before pickup (right away if pickup is sooner), and extras like waiting time or an added stop after the ride.` : `The fare is charged to your card when you book. Extras like waiting time, an added stop or a new destination go on the same card after the ride${pol && pol.cancelHours ? `, and cancelling at least ${pol.cancelHours} hours before pickup gets a full refund` : ''}.`;
       const k = saved();
       if (k && !newCard) {
         el.innerHTML = `<div class="cardbox"><div class="spread"><span class="small"><b>Card on file</b><br>${esc(cardName(k))}${k.exp ? ` · exp ${esc(k.exp)}` : ''}</span>${co.payMode === 'demo' ? '<button class="linkbtn small" type="button" id="bk-newcard">Use another card</button>' : ''}</div><p class="small muted">${how}</p></div>`;
@@ -3786,8 +3786,9 @@
               <label class="field"><span>Free waiting at airports (minutes after landing)</span><input name="pol_waitAirport" type="number" min="0" max="180" value="${s.company.policy.waitAirport}" ${ro}></label>
               <label class="field"><span>Free waiting elsewhere (minutes)</span><input name="pol_waitOther" type="number" min="0" max="120" value="${s.company.policy.waitOther}" ${ro}></label>
               <label class="field"><span>No-show fee (% of fare)</span><input name="pol_noShowFeePct" type="number" min="0" max="100" value="${s.company.policy.noShowFeePct}" ${ro}></label>
-              <label class="field"><span>Charge the card (hours before pickup)</span><input name="pol_chargeHours" type="number" min="0" max="168" value="${s.company.policy.chargeHours}" ${ro}></label>
-            </div><p class="small faint">After the free time, waiting is charged at the wait time rate above. Once it runs out, the driver can mark the passenger a no-show. Customers save a card when they book (no deposit): the fare goes on it this many hours before pickup, extras like waiting time or added stops 30 minutes after drop-off, and a cancellation keeps any fee and refunds the rest.</p>
+              <label class="field"><span>Charge the fare</span><select name="pol_chargeWhen" id="pol-when" ${ro}><option value="booking" ${s.company.policy.chargeWhen !== 'before' ? 'selected' : ''}>When they book</option><option value="before" ${s.company.policy.chargeWhen === 'before' ? 'selected' : ''}>Hours before pickup</option></select></label>
+              <label class="field" id="pol-hoursf" ${s.company.policy.chargeWhen === 'before' ? '' : 'hidden'}><span>Charge the card (hours before pickup)</span><input name="pol_chargeHours" type="number" min="0" max="168" value="${s.company.policy.chargeHours}" ${ro}></label>
+            </div><p class="small faint">After the free time, waiting is charged at the wait time rate above. Once it runs out, the driver can mark the passenger a no-show. Customers save a card when they book (no deposit): the fare goes on it when they book (or the hours before pickup you set), extras like waiting time or added stops 30 minutes after drop-off, and a cancellation keeps any fee and refunds the rest.</p>
           </div>
           <div class="panel stack"><h2>Booking terms</h2><p class="small muted">Optional. When filled in, customers must tick "I agree" before they book online or accept a quote, and each trip records the version they agreed to.</p>
             <label class="field"><span>Your terms and conditions</span><textarea name="terms" rows="6" maxlength="6000" placeholder="For example: no smoking; a cleaning fee of $250 applies to spills; children under 8 need a car seat." ${ro}>${esc(s.company.terms || '')}</textarea></label></div>
@@ -3801,6 +3802,7 @@
         const inp = $('#rs-link', v);
         try { await navigator.clipboard.writeText(inp.value); toast('Link copied.'); } catch (e) { inp.select(); toast('Press Ctrl+C or ⌘C to copy.'); }
       };
+      const pw = $('#pol-when', v); if (pw) pw.onchange = () => { $('#pol-hoursf', v).hidden = pw.value !== 'before'; };
       $('#rs', v).onsubmit = async (e) => {
         e.preventDefault();
         const f = formData(e.target);
@@ -3808,7 +3810,7 @@
         for (const k of ['base', 'perMile', 'minFare', 'hourly', 'minHours', 'airportFlat', 'gratuityPct', 'taxPct', 'waitPerMin']) rates[k] = f[k];
         $$('[data-mult]', v).forEach((i) => { rates.multipliers[i.dataset.mult] = i.value; });
         rates.bags = {}; $$('[data-bags]', v).forEach((i) => { rates.bags[i.dataset.bags] = i.value; });
-        const policy = { cancelHours: f.pol_cancelHours, cancelFeePct: f.pol_cancelFeePct, waitAirport: f.pol_waitAirport, waitOther: f.pol_waitOther, noShowFeePct: f.pol_noShowFeePct, chargeHours: f.pol_chargeHours };
+        const policy = { cancelHours: f.pol_cancelHours, cancelFeePct: f.pol_cancelFeePct, waitAirport: f.pol_waitAirport, waitOther: f.pol_waitOther, noShowFeePct: f.pol_noShowFeePct, chargeWhen: f.pol_chargeWhen, chargeHours: f.pol_chargeHours };
         await busy($('button[type=submit]', e.target), async () => {
           try {
             const res = await api('dispatch.saveSettings', { name: f.name, color: f.color, tagline: f.tagline, phone: f.phone, email: f.email, rates, policy, terms: f.terms });

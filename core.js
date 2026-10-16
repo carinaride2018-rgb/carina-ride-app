@@ -101,7 +101,7 @@
   // Travel agents and other bookers who book rides for their clients earn a
   // commission on the ride price (before gratuity and tax).
   const DEFAULT_AGENTS = { commissionPct: 10, on: true };
-  const DEFAULT_POLICY = { cancelHours: 24, cancelFeePct: 100, waitAirport: 60, waitOther: 15, noShowFeePct: 100, chargeHours: 24 };
+  const DEFAULT_POLICY = { cancelHours: 24, cancelFeePct: 100, waitAirport: 60, waitOther: 15, noShowFeePct: 100, chargeWhen: 'booking', chargeHours: 24 };
   // Ride preferences a passenger can ask for; saved on their profile.
   const TEMPS = { '': 'No preference', cool: 'Cool', warm: 'Warm' };
   const MUSIC = { '': 'No preference', soft: 'Soft music', none: 'No music', own: 'Own music by Bluetooth' };
@@ -925,9 +925,9 @@
     }
 
     // ---- Card on file -----------------------------------------------------------
-    // No deposits. The customer saves a card when booking; the fare goes on it
-    // policy.chargeHours (24) before pickup, or straight away when the pickup is
-    // sooner. Extras (waiting, stops, a new destination, tolls) go on the same
+    // No deposits. The customer saves a card when booking and the fare goes on it
+    // straight away (policy.chargeWhen 'booking', the default), or, if the company
+    // chooses 'before', policy.chargeHours before pickup (at once when sooner). Extras (waiting, stops, a new destination, tolls) go on the same
     // card EXTRAS_AFTER_MIN after drop-off. A cancellation keeps any fee and
     // refunds the rest. Demo charges settle at once (a card ending 0341 is
     // declined); with Stripe the server runs queued charges off-session.
@@ -941,7 +941,10 @@
       if (exp && !/^(0[1-9]|1[0-2])\s*\/\s*\d{2}$/.test(exp)) fail('Enter the expiry as MM/YY.');
       return { brand: { 4: 'Visa', 5: 'Mastercard', 3: 'Amex', 6: 'Discover' }[digits[0]] || 'Card', last4: digits.slice(-4), exp: exp.replace(/\s/g, ''), savedAt: now().toISOString(), by: str(by, 80) };
     }
-    const chargeAt = (t) => new Date(new Date(t.pickupAt).getTime() - pcfg(findCompany(t.companyId)).chargeHours * 3600e3).toISOString();
+    const atBooking = (c) => pcfg(c).chargeWhen !== 'before';
+    const chargeAt = (t) => { const c = findCompany(t.companyId); return atBooking(c) ? (t.createdAt || now().toISOString()) : new Date(new Date(t.pickupAt).getTime() - pcfg(c).chargeHours * 3600e3).toISOString(); };
+    // How the fare timing reads in texts and errors.
+    const chargeNote = (c) => atBooking(c) ? 'The fare is charged when the card is saved' : `Nothing is charged until ${pcfg(c).chargeHours} hours before pickup`;
     const refundedOf = (t, cid) => (t.payment.charges || []).filter((r) => r.kind === 'refund' && r.of === cid && r.status !== 'failed').reduce((n, r) => n + r.amount, 0);
     function payState(t) {
       const ch = t.payment.charges || [];
@@ -954,7 +957,7 @@
     function payView(t) {
       if (!onFile(t)) return null;
       const s = payState(t), c = findCompany(t.companyId);
-      return { chargeAt: chargeAt(t), chargeHours: pcfg(c).chargeHours, extrasAfterMin: EXTRAS_AFTER_MIN, paid: s.paid, due: s.due, balance: s.balance, fareCharged: s.fare, pending: !!s.pending,
+      return { chargeAt: chargeAt(t), chargeWhen: atBooking(c) ? 'booking' : 'before', chargeHours: pcfg(c).chargeHours, extrasAfterMin: EXTRAS_AFTER_MIN, paid: s.paid, due: s.due, balance: s.balance, fareCharged: s.fare, pending: !!s.pending,
         failed: s.failed ? { amount: s.failed.amount, error: s.failed.error, at: s.failed.at } : null, needsCard: !t.card, cardLink: t.cardToken ? cardUrl(t) : '',
         charges: (t.payment.charges || []).map((x) => ({ id: x.id, kind: x.kind, amount: x.amount, status: x.status, at: x.doneAt || x.at, last4: x.last4, error: x.error || '', retired: !!x.retired, by: x.by })) };
     }
@@ -1999,7 +2002,7 @@
       // Card on file: typed here in the demo; with Stripe it's saved on Stripe's page right after booking.
       const cardIn = a.card || (a.booking || {}).card;
       const card = cardIn && !payByPassenger && payMode === 'demo' && !b.accountId && cardsOn(ctx.company) ? demoCard(cardIn, ctx.user.name) : null;
-      if (!card && !payByPassenger && !ctx.user.card && !b.accountId && cardsOn(ctx.company) && payMode === 'demo') fail(`Add a card. Nothing is charged until ${pcfg(ctx.company).chargeHours} hours before pickup.`);
+      if (!card && !payByPassenger && !ctx.user.card && !b.accountId && cardsOn(ctx.company) && payMode === 'demo') fail(`Add a card. ${chargeNote(ctx.company)}.`);
       if (card) ctx.user.card = card;
       const wantsLanding = !!((a.booking || {}).landing && a.booking.landing.on);
       const t = newTrip(ctx.company, b, ctx.user, 'online', ctx.user.name, (a.booking || {}).promoCode, wantsLanding);
@@ -2025,7 +2028,7 @@
           delete t.card;
           const to = t.passengerPhone || t.passengerEmail;
           db.messages.unshift({ id: id('msg'), companyId: c.id, tripId: t.id, ref: t.ref, at: now().toISOString(), recipient: to, channel: t.passengerPhone ? 'sms' : 'email',
-            body: `${c.name}: ${u.name} of ${u.agent.agency} booked ride ${t.ref} for you, ${fmtLocal(t.pickupAt, c, true)}. Please add a card for it. Nothing is charged until ${pcfg(c).chargeHours} hours before pickup: ${cardUrl(t)}` });
+            body: `${c.name}: ${u.name} of ${u.agent.agency} booked ride ${t.ref} for you, ${fmtLocal(t.pickupAt, c, true)}. Please add a card for it. ${chargeNote(c)}: ${cardUrl(t)}` });
           log(t, 'card_link', u.name, `Card link sent to ${to}`);
         }
       }
@@ -2375,7 +2378,7 @@
       if (!t.cardToken) t.cardToken = randomId(6);
       const c = ctx.company, ph = pcfg(c).chargeHours;
       db.messages.unshift({ id: id('msg'), companyId: c.id, tripId: t.id, ref: t.ref, at: now().toISOString(), recipient: to, channel: t.passengerPhone ? 'sms' : 'email',
-        body: `${c.name}: please add a card for ride ${t.ref}, ${fmtLocal(t.pickupAt, c, true)}. Nothing is charged until ${ph} hours before pickup: ${cardUrl(t)}` });
+        body: `${c.name}: please add a card for ride ${t.ref}, ${fmtLocal(t.pickupAt, c, true)}. ${chargeNote(c)}: ${cardUrl(t)}` });
       log(t, 'card_link', ctx.user.name, `Card link sent to ${to}`);
       return tripView(t);
     });
@@ -2660,7 +2663,7 @@
         id: q.id, number: q.number, status, statusLabel: QUOTE_LABELS[status], company: pubCompany(c), contact: clone(q.contact), eventType: q.eventType, eventName: q.eventName, eventDate: q.lines.length ? q.lines.map((l) => l.pickupAt).sort()[0] : null,
         notes: q.notes, message: q.message, depositPct: q.depositPct, validUntil: q.validUntil, createdAt: q.createdAt, sentAt: q.sentAt || null, decidedAt: q.decidedAt || null, declineReason: q.declineReason || '',
         depositPaid: q.depositPaid ? clone(q.depositPaid) : null, ...quoteTotals(q), source: q.source,
-        card: pubCard(q.card), cards: cardsOn(c), chargeHours: pcfg(c).chargeHours, needsCard: status === 'accepted' && cardsOn(c) && !q.card && (q.tripIds || []).some((tid) => { const t = db.trips.find((x) => x.id === tid); return t && onFile(t) && !['completed', 'cancelled'].includes(t.status); }),
+        card: pubCard(q.card), cards: cardsOn(c), chargeWhen: atBooking(c) ? 'booking' : 'before', chargeHours: pcfg(c).chargeHours, needsCard: status === 'accepted' && cardsOn(c) && !q.card && (q.tripIds || []).some((tid) => { const t = db.trips.find((x) => x.id === tid); return t && onFile(t) && !['completed', 'cancelled'].includes(t.status); }),
         lines: q.lines.map((l) => ({ ...clone(l), serviceLabel: SERVICES[l.service], lineTotal: round2((l.unitPrice || 0) * l.count) })),
         trips: (q.tripIds || []).map((tid) => db.trips.find((t) => t.id === tid)).filter(Boolean).map((t) => ({ id: t.id, ref: t.ref, pickupAt: t.pickupAt, vehicleType: t.vehicleType, status: t.status, statusLabel: STATUS_LABELS[t.status] })),
       };
@@ -2727,7 +2730,7 @@
       const first = made.map((t) => t.pickupAt).sort()[0];
       const refs = made.map((t) => t.ref).join(', ');
       const ph = pcfg(c).chargeHours, onCard = made.some(onFile);
-      const cardLine = !onCard ? '' : q.card ? ` Nothing is charged now; each ride goes on your card ending ${q.card.last4} ${ph} hours before pickup.` : ` Please add a card for the rides: ${quoteUrl(q)}`;
+      const cardLine = !onCard ? '' : q.card ? (atBooking(c) ? ` The rides are charged to your card ending ${q.card.last4} now.` : ` Nothing is charged now; each ride goes on your card ending ${q.card.last4} ${ph} hours before pickup.`) : ` Please add a card for the rides: ${quoteUrl(q)}`;
       quoteSay(q, `${c.name}: quote ${q.number} is booked. ${made.length} vehicle${made.length === 1 ? '' : 's'} from ${fmtLocal(first, c, true)}.${cardLine}`,
         `${c.name}: thank you, your ${label || 'event'} is booked. Quote ${q.number}, total $${money(total)}. Trips: ${refs}. First pickup ${fmtLocal(first, c, true)}.${cardLine} We'll send each chauffeur's details on the day.${c.phone ? ` Questions? Call ${c.phone}.` : ''}`);
       for (const t of made) payStep(t);
@@ -2765,7 +2768,7 @@
       const c = findCompany(t.companyId), pv = payView(t);
       return { company: pubCompany(c), ref: t.ref, pickupAt: t.pickupAt, pickupLabel: fmtLocal(t.pickupAt, c, true), pickup: t.pickup, dropoff: t.dropoff, service: SERVICES[t.service], vehicleType: t.vehicleType, passengerName: t.passengerName, total: t.price.total,
         status: t.status, statusLabel: t.noShow ? 'No-show' : STATUS_LABELS[t.status], card: pubCard(t.card), closed: t.status === 'cancelled' || (t.status === 'completed' && t.payment.status === 'paid'),
-        chargeAt: pv.chargeAt, chargeLabel: fmtLocal(pv.chargeAt, c, true), chargeHours: pv.chargeHours, paid: pv.paid, balance: pv.balance, failed: pv.failed, fareCharged: pv.fareCharged };
+        chargeAt: pv.chargeAt, chargeLabel: fmtLocal(pv.chargeAt, c, true), chargeWhen: pv.chargeWhen, chargeHours: pv.chargeHours, paid: pv.paid, balance: pv.balance, failed: pv.failed, fareCharged: pv.fareCharged };
     }
     def('public.cardInfo', 'public', false, (ctx, a) => cardPage(tripByCardToken(a.token)));
     def('public.saveCard', 'public', true, (ctx, a) => {
@@ -2847,7 +2850,7 @@
       const { total } = quoteTotals(q);
       const what = [q.eventType, q.eventName].filter(Boolean).join(': ') || 'your event';
       quoteSay(q, `${c.name}: your quote ${q.number} for ${what} is ready: $${money(total)}. Review and book: ${quoteUrl(q)}`,
-        `${c.name}: here is your quote ${q.number} for ${what}. Total $${money(total)}${cardsOn(c) ? `. No deposit: you save a card when you book, and each ride is charged ${pcfg(c).chargeHours} hours before pickup` : ''}. Valid until ${q.validUntil}.${q.message ? ` ${q.message}` : ''} Review and book online: ${quoteUrl(q)}`);
+        `${c.name}: here is your quote ${q.number} for ${what}. Total $${money(total)}${cardsOn(c) ? (atBooking(c) ? '. No deposit: you save a card when you book and the rides are charged then' : `. No deposit: you save a card when you book, and each ride is charged ${pcfg(c).chargeHours} hours before pickup`) : ''}. Valid until ${q.validUntil}.${q.message ? ` ${q.message}` : ''} Review and book online: ${quoteUrl(q)}`);
       qlog(q, resend ? 'Sent again' : 'Sent to the customer', ctx.user.name);
       return quoteView(q, true);
     });
@@ -3689,6 +3692,7 @@
         whole('cancelHours', 168, 'free cancellation hours'); whole('cancelFeePct', 100, 'late cancellation fee');
         whole('waitAirport', 180, 'free waiting at airports'); whole('waitOther', 120, 'free waiting elsewhere'); whole('noShowFeePct', 100, 'no-show fee');
         whole('chargeHours', 168, 'hours before pickup to charge the card');
+        if ('chargeWhen' in pa) pol.chargeWhen = pa.chargeWhen === 'before' ? 'before' : 'booking';
         c.policy = pol;
       }
       return { company: pubCompany(c), rates: clone(c.rates), policy: pcfg(c) };
