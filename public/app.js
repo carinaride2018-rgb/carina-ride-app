@@ -1213,7 +1213,7 @@
     const accts = opts.accounts || [];
     if (init.service === 'airport') init.service = 'transfer';
     const pr = init.prefs || {};
-    const state = { bags: 0, signName: '', retOn: false, landOn: false, landDest: '', landDrop: '', retDate: init.date, retTime: '', retFlight: '', prefTemp: pr.temp || '', prefMusic: pr.music || '', prefQuiet: !!pr.quiet, ...init };
+    const state = { bags: 0, signName: '', repOn: false, repUntil: '', retOn: false, landOn: false, landDest: '', landDrop: '', retDate: init.date, retTime: '', retFlight: '', prefTemp: pr.temp || '', prefMusic: pr.music || '', prefQuiet: !!pr.quiet, ...init };
     let stopList = Array.isArray(init.stopList) ? init.stopList.slice() : [];
     const defWait = ad.stopWait == null ? 10 : ad.stopWait;
     let stopWaits = stopList.map((x, i) => (Array.isArray(init.stopWaits) && init.stopWaits[i] != null ? init.stopWaits[i] : defWait));
@@ -1295,6 +1295,11 @@
               <label class="field"><span>Return pickup time</span><input id="bk-rtime" name="retTime" type="time" step="300" value="${esc(state.retTime)}"></label>
               <label class="field" id="bk-rflightf"><span>Return flight <span class="faint">(airport pickup)</span></span><input id="bk-rflight" name="retFlight" class="mono" placeholder="AS 330" value="${esc(state.retFlight)}" autocomplete="off"></label>
             </div><p class="small faint" id="bk-ret-hint" hidden></p></fieldset>
+          <fieldset class="fs repfs"><legend><label class="switch"><input type="checkbox" id="bk-rep" name="repOn" ${state.repOn ? 'checked' : ''}><span>Repeat this ride</span></label></legend>
+            <div class="stack" id="bk-repf" style="gap:10px" hidden>
+              <div class="field"><span>Every</span><div class="repdays">${C.DAYS.map((k) => `<label class="switch"><input type="checkbox" data-rday="${k}"><span>${k[0].toUpperCase() + k.slice(1, 3)}</span></label>`).join('')}</div></div>
+              <label class="field"><span>Last date</span><input id="bk-runtil" name="repUntil" type="date" value="${esc(state.repUntil || '')}"></label>
+              <p class="small muted" id="bk-rep-hint"></p></div></fieldset>
           <fieldset class="fs"><legend>Ride preferences <span class="faint small">(optional${dispatch ? '' : ', saved for next time'})</span></legend>
             <div class="grid3">
               <label class="field"><span>Temperature</span><select id="bk-temp" name="prefTemp">${Object.entries(C.TEMPS).map(([k, l]) => `<option value="${k}" ${state.prefTemp === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
@@ -1339,6 +1344,13 @@
       $('#bk-addstop', form).hidden = stopList.length >= C.MAX_STOPS;
       $('#bk-signf', form).hidden = !state.meetGreet;
       $('#bk-retf', form).hidden = !state.retOn;
+      $('#bk-repf', form).hidden = !state.repOn;
+      if (state.repOn) {
+        if (!$$('[data-rday]:checked', form).length && state.date) { const wd = C.DAYS[(new Date(state.date + 'T12:00:00').getDay() + 6) % 7]; const x = $(`[data-rday="${wd}"]`, form); if (x) x.checked = true; }
+        if (!state.repUntil && state.date) { const u = new Date(state.date + 'T12:00:00'); u.setDate(u.getDate() + 28); state.repUntil = toLocalInput(u).slice(0, 10); $('#bk-runtil', form).value = state.repUntil; }
+        const n = repeatCount();
+        $('#bk-rep-hint', form).textContent = n ? `${n + 1} rides in all, the first one plus ${n} more at the same time${state.retOn ? ', each with its return' : ''}. The first ride is charged now and each later one 24 hours before its pickup. You can cancel the rest of the series at any time.` : 'Pick the days and a last date after the first ride.';
+      }
       $('#bk-landf', form).hidden = !state.landOn;
       $('#bk-rflightf', form).hidden = !C.isAirport(state.dropoff);
       const rh = $('#bk-ret-hint', form); rh.hidden = !state.retOn; rh.textContent = state.dropoff ? `Picks up at ${state.dropoff.split(',')[0]} and goes back to ${(state.pickup || 'the pickup').split(',')[0]}${stopList.filter(Boolean).length ? ', with the same stops in reverse' : ''}.` : '';
@@ -1346,6 +1358,14 @@
       const bh = $('#bk-bags-hint', form); if (bh) bh.textContent = vt0 && vt0.bags != null ? `${/^(SUV|[AEIOU])/.test(vt0.type) ? "An" : "A"} ${vt0.type} takes up to ${vt0.bags}.` : '';
       drawPolicy(); drawCard();
     };
+    // Later dates the ride repeats on (the server makes the same list).
+    function repeatCount() {
+      const days = $$('[data-rday]:checked', form).map((x) => x.dataset.rday);
+      if (!days.length || !state.date || !state.repUntil || state.repUntil <= state.date) return 0;
+      let n = 0; const d = new Date(state.date + 'T12:00:00'), end = new Date(state.repUntil + 'T12:00:00');
+      for (d.setDate(d.getDate() + 1); d <= end && n < 400; d.setDate(d.getDate() + 1)) if (days.includes(C.DAYS[(d.getDay() + 6) % 7])) n++;
+      return n;
+    }
     function drawStops() {
       const box = $('#bk-stops', form);
       const waits = (i) => { const w = stopWaits[i] == null ? defWait : stopWaits[i]; return [...new Set([...C.STOP_WAITS, w])].sort((a, b) => a - b).map((m) => `<option value="${m}" ${m === w ? 'selected' : ''}>${m} min</option>`).join(''); };
@@ -1402,13 +1422,14 @@
     $$('[data-vehicle]', form).forEach((b) => { b.onclick = () => { state.vehicleType = b.dataset.vehicle; $$('[data-vehicle]', form).forEach((x) => x.setAttribute('aria-pressed', x === b)); requote(); }; });
     let qt = null, qn = 0;
     const booking = () => {
-      const { date, time, retOn, retDate, retTime, retFlight, prefTemp, prefMusic, prefQuiet, stops, landOn, landDest, landDrop, ...rest } = state;
+      const { date, time, retOn, retDate, retTime, retFlight, prefTemp, prefMusic, prefQuiet, stops, landOn, landDest, landDrop, repOn, repUntil, ...rest } = state;
       const when = date && time ? new Date(`${date}T${time}`) : null;
       const rwhen = retOn && retDate && retTime ? new Date(`${retDate}T${retTime}`) : null;
       const keep = stopList.map((x, i) => i).filter((i) => stopList[i].trim());
       const out = { ...rest, stopList: state.service === 'hourly' ? [] : keep.map((i) => stopList[i]), stopWaits: state.service === 'hourly' ? [] : keep.map((i) => stopWaits[i] == null ? defWait : stopWaits[i]), prefs: { temp: prefTemp, music: prefMusic, quiet: prefQuiet }, pickupAt: when && !isNaN(when) ? when.toISOString() : '' };
       const smsBox = $('#bk-sms', host); if (smsBox) out.smsOk = !!smsBox.checked && !!String(out.passengerPhone || '').trim();
       if (landDest || landOn) out.landing = { on: !!landOn && !$('#bk-land', host).hidden, dest: state.flight === landFlight ? landDest : '', dropoff: landDrop };
+      if (repOn) out.repeat = { on: true, days: $$('[data-rday]:checked', host).map((x) => x.dataset.rday), until: repUntil };
       if (retOn && state.service !== 'hourly') { out.returnAt = rwhen && !isNaN(rwhen) ? rwhen.toISOString() : 'missing'; out.returnFlight = retFlight; }
       delete out.cardNo; delete out.cardExp; delete out.payDriver;
       if (!agent) delete out.payBy;
@@ -1452,6 +1473,7 @@
             <div class="small muted">${esc(C.SERVICES[q.service])} · ${esc(q.vehicleType)}${q.miles ? ` · about ${q.miles} mi, ${q.minutes} min` : ''}${stopList.filter(Boolean).length ? ` · ${stopList.filter(Boolean).length} stop${stopList.filter(Boolean).length > 1 ? 's' : ''}` : ''}</div>
             ${rq ? `<div class="qline"><span>First ride</span><span class="num">${money(q.total)}</span></div><div class="qline"><span>Return ride${rq.miles ? `, about ${rq.miles} mi` : ''}</span><span class="num">${money(rq.total)}</span></div><details class="small"><summary>First ride details</summary>${quoteLines(q)}</details>` : `<div>${quoteLines(q)}</div>`}
             ${lpOn ? `<div class="qline"><span>${dispatch ? 'Pickup' : 'Ride'} when ${dispatch ? 'they land' : 'you land'} in ${esc(lp.dest.city)}${lp.estimate ? ' (estimate)' : ''}</span><span class="num">${money(lp.price)}</span></div>` : ''}
+            ${state.repOn && repeatCount() ? `<div class="qline"><span>Repeats ${repeatCount()} more time${repeatCount() === 1 ? '' : 's'} (about ${money(q.total + (rq ? rq.total : 0))} each, charged 24 hours before each ride)</span><span class="num">${money((q.total + (rq ? rq.total : 0)) * repeatCount())}</span></div>` : ''}
             ${q.promoError ? `<div class="err small">${esc(q.promoError)}</div>` : ''}`;
           fbox.innerHTML = flightBox(q.flight, { note: q.flight && q.flight.kind === 'arrival' && q.flight.delayMin ? 'This flight is running late today. If it still is on the day, we move your pickup to match.' : '' });
         } catch (e) { out.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
@@ -1743,6 +1765,7 @@
           ${t.agent ? `<div class="small forline">For <b>${esc(t.passengerName || 'client')}</b>${t.passengerPhone ? ` · ${esc(t.passengerPhone)}` : ''}${t.agent.payBy === 'passenger' ? ' · client pays' : ''}${t.agent.pct ? ` · ${t.agent.pct}% commission` : ''}</div>` : ''}
           ${routeHtml(t)}
           ${t.pair ? `<div class="small muted">${t.pair.kind === 'return' ? `Return trip booked: ${esc(t.pair.ref)}, ${esc(fmtDT(t.pair.pickupAt))}` : `Return of ${esc(t.pair.ref)}`}</div>` : ''}
+          ${t.series ? `<div class="small muted">Repeating ride ${t.series.n} of ${t.series.of}, every ${esc(t.series.days.map((d) => d[0].toUpperCase() + d.slice(1, 3)).join(', '))} until ${esc(fmtDay(t.series.until))}</div>` : ''}
           ${t.landing ? `<div class="small landtag">${t.landing.kind === 'landing' ? `Ride when you land${t.landing.city ? ` in ${esc(t.landing.city)}` : ''}: ${esc(t.landing.ref)}` : `Your ride when you land, after ${esc(t.landing.ref)}`}${t.awayTime ? ` · ${esc(t.awayTime)}` : ''}${t.outOfTown && t.outOfTown.partnerName ? ` · driven by ${esc(t.outOfTown.partnerName)}` : t.outOfTown ? ' · we are booking a local car' : ''}</div>` : ''}
           ${extrasList(t).length ? `<div class="small muted">${esc(extrasList(t).join(' · '))}</div>` : ''}
           ${!['cancelled', 'completed'].includes(t.status) ? `<div><div class="steps">${[0, 1, 2, 3, 4, 5].map((i) => `<div class="${i <= step ? 'on' : ''}"></div>`).join('')}</div>
@@ -1761,6 +1784,7 @@
             ${!t.pay && t.status !== 'cancelled' && t.payment.status !== 'paid' && !t.account && session.company.cards !== false ? `<button class="btn brand sm" type="button" data-act="pay" data-id="${t.id}">Pay ${money(t.price.total - (t.payment.deposit || 0))}${t.payment.deposit ? ' balance' : ''}</button>` : ''}
             ${t.payment.status === 'paid' || t.status === 'completed' ? `<button class="btn sm" type="button" data-act="receipt" data-id="${t.id}">Receipt</button>` : ''}
             ${canCancel ? `<button class="btn sm danger" type="button" data-act="cancel" data-id="${t.id}">Cancel ride</button>` : ''}
+            ${canCancel && t.series && !t.returnOf ? `<button class="btn sm" type="button" data-act="cancelseries" data-id="${t.id}">Cancel this and later rides</button>` : ''}
           </div>
           ${t.pay && cardLine(t, 'customer') ? `<div class="small ${t.pay.failed ? 'err-text' : 'muted'}">${cardLine(t, 'customer')}</div>` : ''}
           ${canCancel && t.cancelTerms ? `<div class="small faint">${t.cancelTerms.fee ? `Free cancellation ended ${esc(fmtDT(t.cancelTerms.freeUntil))}. Cancelling now costs ${money(t.cancelTerms.fee)}.` : `Free cancellation until ${esc(fmtDT(t.cancelTerms.freeUntil))}.`}</div>` : ''}
@@ -1772,6 +1796,15 @@
           const fee = t.cancelTerms && t.cancelTerms.fee;
           if (!btn.dataset.armed) { btn.dataset.armed = '1'; btn.textContent = fee ? `Tap again to cancel (${money(fee)} fee)` : 'Tap again to cancel'; setTimeout(() => { if (btn.isConnected) { delete btn.dataset.armed; btn.textContent = 'Cancel ride'; } }, 5000); return; }
           await busy(btn, async () => { try { await api('customer.cancel', { id: t.id, acceptFee: !!fee }); toast(fee ? `${t.ref} cancelled. Late cancellation fee ${money(fee)}.` : `${t.ref} cancelled.`); last = ''; refresh(); } catch (e) { toast(e.message, true); } });
+        }
+        if (kind === 'cancelseries') {
+          if (!btn.dataset.armed) { btn.dataset.armed = '1'; btn.textContent = 'Tap again to cancel the rest'; setTimeout(() => { if (btn.isConnected) { delete btn.dataset.armed; btn.textContent = 'Cancel this and later rides'; } }, 5000); return; }
+          await busy(btn, async () => {
+            const go = (acceptFee) => api('customer.cancelSeries', { id: t.id, acceptFee });
+            try { const n = await go(false); toast(`Cancelled ${n} ride${n === 1 ? '' : 's'} from ${t.ref} on.`); }
+            catch (e) { if (e.status === 409 && confirm(e.message + ' Cancel anyway?')) { try { const n = await go(true); toast(`Cancelled ${n} ride${n === 1 ? '' : 's'}.`); } catch (e2) { toast(e2.message, true); } } else if (e.status !== 409) toast(e.message, true); }
+            last = ''; refresh();
+          });
         }
         if (kind === 'pay') payModal(t, () => { last = ''; refresh(); });
         if (kind === 'receipt') receiptModal(t);
@@ -2065,7 +2098,7 @@
       location.href = r.url; await new Promise(() => {});
     }
   }
-  const bookedMsg = (t) => (t.returnTrip ? `Booked ${t.ref} and the return ${t.returnTrip.ref}.` : `Booked. Reference ${t.ref}.`) + (t.landingTrip ? ` Your ride when you land is ${t.landingTrip.ref}.` : '');
+  const bookedMsg = (t) => (t.returnTrip ? `Booked ${t.ref} and the return ${t.returnTrip.ref}.` : `Booked. Reference ${t.ref}.`) + (t.landingTrip ? ` Your ride when you land is ${t.landingTrip.ref}.` : '') + (t.repeats ? ` It repeats ${t.repeats} more time${t.repeats === 1 ? '' : 's'}.` : '');
 
   // ---- Dispatch -------------------------------------------------------------
   const todayStr = () => toLocalInput(new Date()).slice(0, 10);
@@ -2450,6 +2483,7 @@
             ${t.rating ? `<div class="sidebox"><span class="label">Customer rating</span><span class="stars">${stars(t.rating.stars)}</span>${t.rating.comment ? `<p class="small">${esc(t.rating.comment)}</p>` : ''}</div>` : ''}
             ${!closed && t.pay && t.cancelTerms && t.cancelTerms.fee ? `<label class="check small"><input type="checkbox" id="te-keepfee"> <span>Keep the ${money(t.cancelTerms.fee)} late-cancellation fee (free cancellation ended ${esc(fmtDT(t.cancelTerms.freeUntil))}). Otherwise the card is refunded in full.</span></label>` : ''}
             ${!closed ? '<button class="btn danger" type="button" id="te-cancel">Cancel this trip</button>' : ''}
+            ${t.series ? `<div class="sidebox"><span class="label">Repeating ride</span><p class="small">Ride ${t.series.n} of ${t.series.of}, every ${esc(t.series.days.map((d) => d[0].toUpperCase() + d.slice(1, 3)).join(', '))} until ${esc(fmtDay(t.series.until))}.</p>${!closed ? '<button class="btn sm" type="button" id="te-cancelseries">Cancel this and all later rides</button>' : ''}</div>` : ''}
           </div></div>`,
       });
       const reopen = () => { m._onClose = null; closeModal(); tripModal(id, done); };
@@ -2525,6 +2559,11 @@
       $$('[data-pay]', m).forEach((b) => { b.onclick = () => busy(b, async () => {
         try { await api('dispatch.markPaid', b.dataset.pay === 'unpaid' ? { id, unpaid: true } : { id, method: b.dataset.pay }); toast('Payment updated.'); reopen(); } catch (err) { toast(err.message, true); }
       }); });
+      const cs = $('#te-cancelseries', m);
+      if (cs) cs.onclick = () => {
+        if (!cs.dataset.armed) { cs.dataset.armed = '1'; cs.textContent = 'Click again to cancel the rest of the series'; return; }
+        busy(cs, async () => { try { const n = await api('dispatch.cancelSeries', { id, keepFee: !!($('#te-keepfee', m) || {}).checked }); toast(`Cancelled ${n} ride${n === 1 ? '' : 's'}. The passenger has been told.`); closeModal(); } catch (err) { toast(err.message, true); } });
+      };
       const cx = $('#te-cancel', m);
       if (cx) cx.onclick = () => {
         if (!cx.dataset.armed) { cx.dataset.armed = '1'; cx.textContent = 'Click again to cancel the trip'; return; }

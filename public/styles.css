@@ -797,3 +797,6 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 .vphoto { display: flex; align-items: center; gap: 16px; }
 .vphoto .vpic { width: 200px; flex: none; margin: 0; }
 @media (max-width: 520px) { .vphoto { flex-direction: column; align-items: stretch; } .vphoto .vpic { width: 100%; } }
+/* Repeating rides */
+.repdays { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.fs:has(> #bk-repf[hidden]) { border-color: transparent; padding: 0; }

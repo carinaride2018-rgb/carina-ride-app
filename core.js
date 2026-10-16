@@ -881,6 +881,63 @@
       if (new Date(r.pickupAt) <= new Date(b.pickupAt)) fail('Return trip: the return pickup must be after the first pickup.');
       return [b, r];
     }
+    // ---- Repeating rides ----------------------------------------------------------
+    // "Every Mon, Wed and Fri until Dec 18": the first ride is booked as usual and
+    // each later date gets its own trip (and return), all made up front and
+    // linked by series.id so the office and customer can cancel the rest at once.
+    const MAX_REPEAT = 60, REPEAT_DAYS_AHEAD = 183;
+    const clock12 = (p) => `${p.hour % 12 || 12}:${String(p.minute).padStart(2, '0')} ${p.hour < 12 ? 'AM' : 'PM'}`;
+    const addDays = (date, n) => new Date(Date.parse(date + 'T12:00:00Z') + n * 864e5).toISOString().slice(0, 10);
+    const dayDiff = (a, b) => Math.round((Date.parse(b + 'T12:00:00Z') - Date.parse(a + 'T12:00:00Z')) / 864e5);
+    function repeatPlan(company, b, raw) {
+      const rep = raw.repeat;
+      if (!rep || !rep.on) return null;
+      const days = (Array.isArray(rep.days) ? rep.days : []).filter((d) => DAYS.includes(d));
+      if (!days.length) fail('Repeat: pick the days the ride repeats.');
+      if (!dateOk(rep.until)) fail('Repeat: choose the last date.');
+      const tz = company.timezone, first = localParts(b.pickupAt, tz);
+      if (rep.until <= first.date) fail('Repeat: the last date must be after the first ride.');
+      if (dayDiff(first.date, rep.until) > REPEAT_DAYS_AHEAD) fail('Repeat: rides can be booked up to 6 months ahead.');
+      const hm = (p) => `${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`;
+      const ret = raw.returnAt && raw.returnAt !== 'missing' ? localParts(raw.returnAt, tz) : null;
+      const out = [];
+      for (let date = addDays(first.date, 1); date <= rep.until; date = addDays(date, 1)) {
+        if (!days.includes(localParts(localToIso(date, '12:00', company), tz).day)) continue;
+        out.push({ pickupAt: localToIso(date, hm(first), company), returnAt: ret ? localToIso(addDays(date, dayDiff(first.date, ret.date)), hm(ret), company) : undefined });
+        if (out.length > MAX_REPEAT) fail(`Repeat: that makes more than ${MAX_REPEAT} rides. Pick an earlier last date.`);
+      }
+      if (!out.length) fail('Repeat: no ride dates fall on those days before the last date.');
+      return { days, until: rep.until, dates: out };
+    }
+    // Checks every later ride before any is made, then makes them quietly and
+    // sends the passenger one message for the whole series.
+    function bookRepeats(company, raw, plan, t, r, customer, source, by, o) {
+      if (!plan) return [];
+      const pairs = plan.dates.map((d, i) => {
+        try { return bookingPair(company, { ...raw, pickupAt: d.pickupAt, returnAt: d.returnAt, promoCode: '', repeat: undefined }, o); }
+        catch (e) { if (e instanceof ApiError) e.message = `Repeat ride ${i + 2}: ` + e.message.replace(/^Return trip: /, 'return: '); throw e; }
+      });
+      const sid = id('ser'), total = pairs.length + 1;
+      const tag = (x, n) => { x.series = { id: sid, n, of: total, days: plan.days, until: plan.until }; };
+      tag(t, 1); if (r) tag(r, 1);
+      const made = [];
+      pairs.forEach(([b2, rb2], i) => {
+        const t2 = newTrip(company, b2, customer, source, by, '', true); tag(t2, i + 2);
+        if (t.termsAgreed) t2.termsAgreed = t.termsAgreed;
+        let r2 = null;
+        if (rb2) { r2 = newTrip(company, rb2, customer, source, by, '', true); tag(r2, i + 2); linkReturn(t2, r2); if (t.termsAgreed) r2.termsAgreed = t.termsAgreed; }
+        made.push(t2); if (r2) made.push(r2);
+      });
+      const to = t.passengerPhone || t.passengerEmail;
+      if (to) {
+        const dn = plan.days.map((d) => d[0].toUpperCase() + d.slice(1)).join(', ');
+        db.messages.unshift({ id: id('msg'), companyId: company.id, tripId: t.id, ref: t.ref, at: now().toISOString(), recipient: to, channel: t.passengerPhone ? 'sms' : 'email', kind: 'series',
+          body: `${company.name}: your repeating ride is booked. ${total} rides, every ${dn} at ${clock12(localParts(t.pickupAt, company.timezone))}, from ${t.pickup}${t.dropoff ? ` to ${t.dropoff}` : ''}${r ? ', with the return' : ''}, until ${plan.until}. First ride ${t.ref}.` });
+      }
+      return made;
+    }
+    // Later rides in the series from this one on that haven't started.
+    const seriesRest = (t) => t.series ? db.trips.filter((x) => x.series && x.series.id === t.series.id && x.pickupAt >= t.pickupAt && ['confirmed', 'assigned', 'accepted'].includes(x.status)).sort((a, b) => a.pickupAt.localeCompare(b.pickupAt)) : [];
     function linkReturn(t, r) { t.returnId = r.id; r.returnOf = t.id; log(r, 'confirmed', 'System', `Return of ${t.ref}`); }
     // The company's own booking terms. Customers tick a box to agree when
     // booking online; the trip keeps which version they agreed to.
@@ -942,7 +999,7 @@
       return { brand: { 4: 'Visa', 5: 'Mastercard', 3: 'Amex', 6: 'Discover' }[digits[0]] || 'Card', last4: digits.slice(-4), exp: exp.replace(/\s/g, ''), savedAt: now().toISOString(), by: str(by, 80) };
     }
     const atBooking = (c) => pcfg(c).chargeWhen !== 'before';
-    const chargeAt = (t) => { const c = findCompany(t.companyId); return atBooking(c) ? (t.createdAt || now().toISOString()) : new Date(new Date(t.pickupAt).getTime() - pcfg(c).chargeHours * 3600e3).toISOString(); };
+    const chargeAt = (t) => { const c = findCompany(t.companyId); return atBooking(c) && !(t.series && t.series.n > 1) ? (t.createdAt || now().toISOString()) : new Date(new Date(t.pickupAt).getTime() - pcfg(c).chargeHours * 3600e3).toISOString(); };
     // How the fare timing reads in texts and errors.
     const chargeNote = (c) => atBooking(c) ? 'The fare is charged when the card is saved' : `Nothing is charged until ${pcfg(c).chargeHours} hours before pickup`;
     const refundedOf = (t, cid) => (t.payment.charges || []).filter((r) => r.kind === 'refund' && r.of === cid && r.status !== 'failed').reduce((n, r) => n + r.amount, 0);
@@ -1033,9 +1090,10 @@
       if (!s.fare && s.balance > 0.004 && n >= new Date(chargeAt(t)).getTime()) { queueCharge(t, 'fare', s.balance); return true; }
       return false;
     }
-    // A new card for a trip (and its return). A failed charge is retried on it.
+    // A new card for a trip (its return, and the rest of a repeating series that
+    // has no card yet). A failed charge is retried on it.
     function attachCard(t, card) {
-      const both = [t, ...db.trips.filter((x) => x.id === t.returnId || x.id === t.returnOf)];
+      const both = [t, ...db.trips.filter((x) => x.id !== t.id && (x.id === t.returnId || x.id === t.returnOf || (t.series && x.series && x.series.id === t.series.id && !x.card && !['completed', 'cancelled'].includes(x.status))))];
       for (const x of both) {
         if (!onFile(x) || x.status === 'completed' && x.payment.status === 'paid') continue;
         x.card = clone(card);
@@ -1570,7 +1628,7 @@
     };
     const PERM_OF = {};
     for (const [perm, names] of Object.entries({
-      bookings: ['dispatch.createTrip', 'dispatch.updateTrip', 'dispatch.setStatus', 'dispatch.noShow', 'dispatch.importTrips', 'dispatch.applyFlight', 'dispatch.sendCardLink', 'dispatch.saveQuote', 'dispatch.sendQuote', 'dispatch.quoteAction'],
+      bookings: ['dispatch.createTrip', 'dispatch.updateTrip', 'dispatch.setStatus', 'dispatch.cancelSeries', 'dispatch.noShow', 'dispatch.importTrips', 'dispatch.applyFlight', 'dispatch.sendCardLink', 'dispatch.saveQuote', 'dispatch.sendQuote', 'dispatch.quoteAction'],
       assign: ['dispatch.assign', 'dispatch.autoAssign', 'network.offer', 'network.respond', 'network.cancelOffer', 'network.handBack'],
       payments: ['dispatch.chargeCard', 'dispatch.markPaid', 'network.settle'],
       customers: ['dispatch.saveCustomer', 'dispatch.saveAccount', 'dispatch.accountBooker', 'dispatch.createInvoice', 'dispatch.invoiceAction', 'dispatch.invoices', 'dispatch.invoice'],
@@ -1996,6 +2054,7 @@
       }
       const [b, rb] = bookingPair(ctx.company, a.booking || {});
       checkNotice(ctx.company, b.pickupAt);
+      const plan = repeatPlan(ctx.company, b, a.booking || {});
       const agreed = agreeTerms(ctx.company, a.booking || {}, ctx.user.name);
       if (agreed) { b.termsAgreed = agreed; if (rb) rb.termsAgreed = agreed; }
       if (b.accountId && b.accountId !== ctx.user.accountId) fail("You can't bill that company account.");
@@ -2010,11 +2069,12 @@
       if (rb) { r = newTrip(ctx.company, rb, ctx.user, 'online', ctx.user.name, ''); linkReturn(t, r); }
       const lt = wantsLanding ? landingTrip(ctx.company, t, a.booking, ctx.user, 'online', ctx.user.name) : null;
       if (lt) notify(t, 'booked');
-      if (agent) agentBooked(ctx, [t, r, lt].filter(Boolean), payByPassenger);
-      payStep(t); if (r) payStep(r); if (lt) payStep(lt);
+      const reps = bookRepeats(ctx.company, a.booking || {}, plan, t, r, ctx.user, 'online', ctx.user.name);
+      if (agent) agentBooked(ctx, [t, r, lt, ...reps].filter(Boolean), payByPassenger);
+      payStep(t); if (r) payStep(r); if (lt) payStep(lt); reps.forEach(payStep);
       // Remember how they like to ride for next time (an agent's clients differ).
       if (!agent) ctx.user.prefs = { ...b.prefs, signName: b.signName || (ctx.user.prefs && ctx.user.prefs.signName) || '' };
-      return { ...tripView(t), returnTrip: r ? tripView(r) : null, landingTrip: lt ? tripView(lt) : null };
+      return { ...tripView(t), returnTrip: r ? tripView(r) : null, landingTrip: lt ? tripView(lt) : null, repeats: reps.filter((x) => !x.returnOf).length };
     });
     // A travel agent's booking: the ride carries who booked it and the
     // commission rate at the time. The passenger gets the usual texts; the
@@ -2026,6 +2086,7 @@
         t.agent = { id: u.id, name: u.name, agency: u.agent.agency, pct: agentPct(u), payBy: payByPassenger ? 'passenger' : 'agent' };
         if (payByPassenger && onFile(t)) {
           delete t.card;
+          if (t.series && t.series.n > 1) continue; // the first ride's link covers the series
           const to = t.passengerPhone || t.passengerEmail;
           db.messages.unshift({ id: id('msg'), companyId: c.id, tripId: t.id, ref: t.ref, at: now().toISOString(), recipient: to, channel: t.passengerPhone ? 'sms' : 'email',
             body: `${c.name}: ${u.name} of ${u.agent.agency} booked ride ${t.ref} for you, ${fmtLocal(t.pickupAt, c, true)}. Please add a card for it. ${chargeNote(c)}: ${cardUrl(t)}` });
@@ -2123,6 +2184,35 @@
       notify(t, 'cancelled');
       payStep(t);
       return tripView(t);
+    });
+    // Cancel this ride and the rest of its repeating series. Late rides (inside
+    // the free cancellation time) carry the usual fee once accepted.
+    function cancelSeries(t, by, fees, quietName) {
+      const rest = seriesRest(t);
+      if (!rest.length) fail('There are no upcoming rides left in this series.');
+      for (const x of rest) {
+        const ct = cancelTerms(x);
+        if (fees && ct.fee > 0) x.cancelFee = ct.fee;
+        x.status = 'cancelled'; x.offer = null; x.needsDriver = null;
+        log(x, 'cancelled', by, `Repeating ride cancelled from ${t.ref} on${x.cancelFee ? `. Late cancellation, fee $${money(x.cancelFee)}` : ''}`);
+        payStep(x);
+      }
+      const c = findCompany(t.companyId), to = t.passengerPhone || t.passengerEmail, n = rest.filter((x) => !x.returnOf).length;
+      if (to) db.messages.unshift({ id: id('msg'), companyId: c.id, tripId: t.id, ref: t.ref, at: now().toISOString(), recipient: to, channel: t.passengerPhone ? 'sms' : 'email', kind: 'series',
+        body: `${c.name}: your repeating ride is cancelled from ${fmtLocal(t.pickupAt, c, true)} on (${n} ride${n === 1 ? '' : 's'}).` });
+      return rest;
+    }
+    def('customer.cancelSeries', ['customer'], true, (ctx, a) => {
+      const t = db.trips.find((x) => x.id === a.id && x.customerId === ctx.user.id);
+      if (!t || !t.series) fail('Trip not found.', 404);
+      const fee = seriesRest(t).reduce((n, x) => n + cancelTerms(x).fee, 0);
+      if (fee > 0 && !a.acceptFee) fail(`Some of these rides are inside the free cancellation time. Cancelling them has $${money(fee)} in fees.`, 409);
+      return cancelSeries(t, ctx.user.name, true).map(tripView).length;
+    });
+    def('dispatch.cancelSeries', STAFF, true, (ctx, a) => {
+      const t = ownTrip(ctx, a.id);
+      if (!t.series) fail('This ride does not repeat.');
+      return cancelSeries(t, ctx.user.name, !!a.keepFee).length;
     });
     // Demo payment. In production this becomes a Stripe Checkout session on
     // the company's connected account; the webhook then marks the trip paid.
@@ -2257,6 +2347,7 @@
     def('dispatch.createTrip', STAFF, true, async (ctx, a) => {
       const [b, rb] = bookingPair(ctx.company, a.booking || {}, { allowPast: true });
       if (!b.passengerName) fail('Enter the passenger name.');
+      const plan = repeatPlan(ctx.company, b, a.booking || {});
       let customer = null;
       if (b.passengerEmail) {
         if (!emailOk(b.passengerEmail)) fail('Enter a valid passenger email or leave it blank.');
@@ -2274,8 +2365,9 @@
       if (rb) { r = newTrip(ctx.company, rb, customer, 'phone', ctx.user.name, ''); linkReturn(t, r); }
       const lt = wantsLanding ? landingTrip(ctx.company, t, a.booking, customer, 'phone', ctx.user.name) : null;
       if (lt) notify(t, 'booked');
+      const reps = bookRepeats(ctx.company, a.booking || {}, plan, t, r, customer, 'phone', ctx.user.name, { allowPast: true });
       sweepDispatch(ctx.company, true);
-      return { ...tripView(t), returnTrip: r ? tripView(r) : null, landingTrip: lt ? tripView(lt) : null };
+      return { ...tripView(t), returnTrip: r ? tripView(r) : null, landingTrip: lt ? tripView(lt) : null, repeats: reps.filter((x) => !x.returnOf).length };
     });
     def('dispatch.updateTrip', STAFF, true, (ctx, a) => {
       const t = ownTrip(ctx, a.id);
