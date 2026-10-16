@@ -1208,9 +1208,15 @@
     const agent = opts.mode === 'agent';
     const clients = opts.clients || [];
     if (agent && !state.payBy) state.payBy = 'agent';
+    // Passengers and agents book in two steps: the quote (when and where), then
+    // the details and payment. The office keeps the one-page form.
+    const twoStep = !dispatch;
+    let step = twoStep ? 1 : 2;
     host.innerHTML = `
-      <div class="booking">
+      <div class="booking${twoStep ? ' step1' : ''}">
         <form class="panel stack" id="bk-form" novalidate>
+          ${twoStep ? `<div class="bkstep-head" id="bk-head1"><span class="stepno">1</span><div><h2>Get a quote</h2><p class="small muted">Where and when. You'll see the price before you add any details.</p></div></div>` : ''}
+          <div class="stack bkstep" id="bk-step1">
           <div class="row"><div class="seg" role="group" aria-label="Type of booking">
             <button type="button" data-service="transfer" aria-pressed="${state.service !== 'hourly'}">Transfer</button>
             <button type="button" data-service="hourly" aria-pressed="${state.service === 'hourly'}">By the hour</button>
@@ -1224,11 +1230,16 @@
           <div class="stack stops" data-hide="hourly" style="gap:8px"><div id="bk-stops"></div>
             <div><button class="linkbtn" type="button" id="bk-addstop">+ Add a stop on the way <span class="faint">(priced by the extra miles and the wait${opts.info.rates && opts.info.rates.waitPerMin ? `, ${money(opts.info.rates.waitPerMin)}/min` : ''})</span></button></div></div>
           <label class="field"><span id="bk-drop-label">Drop-off address</span><input id="bk-dropoff" name="dropoff" autocomplete="off" placeholder="Where are you going?" value="${esc(state.dropoff)}"></label>
-          <div class="grid2">
+          <div class="grid2" id="bk-flightf">
             <label class="field"><span>Flight number <span class="faint">(required for airport pickups)</span></span><input id="bk-flight" name="flight" class="mono" placeholder="AA 1342" value="${esc(state.flight)}" autocomplete="off">
               <span class="hint" id="bk-flight-hint">For pickups at the airport, set the pickup time to when the flight lands. We track the flight and move the pickup if it's late.</span></label>
             <div></div>
           </div>
+          ${twoStep ? `<div id="bk-err1"></div><button class="btn brand big" type="button" id="bk-next">Get my quote</button>` : ''}
+          </div>
+          ${twoStep ? `<div class="bkstep-sum" id="bk-sum" hidden><div class="stack" style="gap:2px"><span class="label">Your ride</span><span id="bk-sumtext"></span></div><button class="btn sm" type="button" id="bk-back">Change</button></div>
+          <div class="bkstep-head" id="bk-head2" hidden><span class="stepno">2</span><div><h2>Your details and payment</h2><p class="small muted">Pick a vehicle, tell us who's riding and add a card. Nothing is charged now.</p></div></div>` : ''}
+          <div class="stack bkstep" id="bk-step2"${twoStep ? ' hidden' : ''}>
           <fieldset class="fs landfs" id="bk-land" hidden><legend><label class="switch"><input type="checkbox" id="bk-land-on" name="landOn" ${state.landOn ? 'checked' : ''}><span id="bk-land-title">${dispatch ? 'Add a pickup when they land' : 'Add a ride when you land'}</span></label></legend>
             <p class="small muted" id="bk-land-info"></p>
             <div class="grid2" id="bk-landf" hidden>
@@ -1236,7 +1247,7 @@
               <label class="field"><span id="bk-land-droplabel">Where to</span><input id="bk-land-drop" name="landDrop" autocomplete="off" placeholder="Hotel or street address" value="${esc(state.landDrop || '')}"></label>
             </div></fieldset>
           <div class="field"><span>Vehicle</span>
-            <div class="vehicles">${vt.map((v) => `<button type="button" class="vcard" data-vehicle="${esc(v.type)}" aria-pressed="${state.vehicleType === v.type}"><b>${esc(v.type)}</b><span>${v.capacity} passengers${v.bags != null ? ` · ${v.bags} suitcase${v.bags === 1 ? '' : 's'}` : ''}</span>${v.models ? `<span class="vmodel">${esc(v.models)}</span>` : ''}</button>`).join('') || '<p class="faint small">No vehicles yet. Add vehicles in the dispatch office first.</p>'}</div>
+            <div class="vehicles">${vt.map((v) => `<button type="button" class="vcard" data-vehicle="${esc(v.type)}" aria-pressed="${state.vehicleType === v.type}"><b>${esc(v.type)}</b><span>${v.capacity} passengers${v.bags != null ? ` · ${v.bags} suitcase${v.bags === 1 ? '' : 's'}` : ''}</span>${v.models ? `<span class="vmodel">${esc(v.models)}</span>` : ''}<span class="vprice" data-vprice="${esc(v.type)}"></span></button>`).join('') || '<p class="faint small">No vehicles yet. Add vehicles in the dispatch office first.</p>'}</div>
           </div>
           <div class="grid2">
             <label class="field"><span>Passengers</span><input id="bk-pax" name="passengers" type="number" min="1" max="60" value="${esc(state.passengers)}"></label>
@@ -1282,8 +1293,9 @@
           </div>
           <label class="field"><span>Notes for the chauffeur</span><textarea id="bk-notes" name="notes" placeholder="Accessibility needs, a special occasion, anything else">${esc(state.notes)}</textarea></label>
           <div id="bk-err"></div>
+          </div>
         </form>
-        <aside class="panel stack quote" aria-live="polite">
+        <aside class="panel stack quote" id="bk-aside" aria-live="polite"${twoStep ? ' hidden' : ''}>
           <span class="label">Your quote</span>
           <div id="bk-quote"><p class="faint small">Enter pickup and drop-off to see the price.</p></div>
           <div id="bk-flightinfo"></div>
@@ -1305,6 +1317,9 @@
       const pol = $('#bk-po-label', form); if (pol) pol.innerHTML = acc && acc.requirePo ? 'PO number <span class="faint">(required)</span>' : 'PO number <span class="faint">(optional)</span>';
       const airport = C.isAirport(state.pickup) || C.isAirport(state.dropoff);
       $('#bk-service-hint', form).textContent = state.service !== 'hourly' && airport ? 'Airport flat rate applies' : '';
+      // Step 1 asks the flight only for an airport pickup (it times the ride);
+      // a flight out (drop-off at the airport) is asked in step 2.
+      if (twoStep) $('#bk-flightf', form).hidden = step === 1 ? !C.isAirport(state.pickup) : !airport && !state.flight;
       stopList = $$('[data-stop]', form).map((i) => i.value);
       stopWaits = $$('[data-swait]', form).map((i) => Number(i.value));
       $('#bk-addstop', form).hidden = stopList.length >= C.MAX_STOPS;
@@ -1445,6 +1460,42 @@
       if (tc) b.agreeTerms = tc.checked;
       try { await opts.onSubmit(b); } catch (err) { showErr($('#bk-err', host), err); $('#bk-err', host).scrollIntoView({ block: 'nearest' }); }
     });
+    // Two steps: check the quote first, then open the rest of the form.
+    let vpKey = '';
+    // The PO number is asked in step 2, so a required one can't block the quote.
+    const quoteOnly = () => { const b = booking(); if (b.accountId && !b.poNumber) b.poNumber = 'quote'; return b; };
+    async function priceVehicles() {
+      const b = quoteOnly(), key = JSON.stringify([b.service, b.pickup, b.dropoff, b.stopList, b.stopWaits, b.pickupAt, b.hours, b.passengers]);
+      if (key === vpKey) return; vpKey = key;
+      await Promise.all(vt.map(async (v) => {
+        const el = $(`[data-vprice="${CSS.escape(v.type)}"]`, form); if (!el) return;
+        try { const q = await opts.quoteFn({ ...b, vehicleType: v.type, childSeats: 0, meetGreet: false, promoCode: '', returnAt: undefined, landing: undefined }); if (vpKey === key) el.textContent = money(q.total); } catch (e) { if (vpKey === key) el.textContent = ''; }
+      }));
+    }
+    function showStep(n) {
+      step = n;
+      $('#bk-step1', host).hidden = n !== 1; $('#bk-head1', host).hidden = n !== 1;
+      $('#bk-step2', host).hidden = n !== 2; $('#bk-head2', host).hidden = n !== 2;
+      $('#bk-sum', host).hidden = n !== 2; $('#bk-aside', host).hidden = n !== 2;
+      $('.booking', host).classList.toggle('step1', n === 1);
+      const ff = $('#bk-flightf', host);
+      if (n === 2 && !C.isAirport(state.pickup)) $('#bk-step2', host).prepend(ff); else if (n === 1) $('#bk-err1', host).before(ff);
+      sync();
+      if (n === 2) {
+        const b = booking(), stops = (b.stopList || []).length;
+        $('#bk-sumtext', host).innerHTML = `<b>${esc(fmtDT(b.pickupAt))}</b>${b.service === 'hourly' ? ` · ${esc(b.hours)} hours` : ''}<br><span class="small">${esc(b.pickup)}${stops ? ` · ${stops} stop${stops > 1 ? 's' : ''}` : ''}${b.dropoff ? ` to ${esc(b.dropoff)}` : ''}</span>`;
+        priceVehicles();
+      }
+      host.style.scrollMarginTop = '90px'; host.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
+    if (twoStep) {
+      $('#bk-next', host).onclick = (e) => busy(e.currentTarget, async () => {
+        sync(); const err = $('#bk-err1', host); err.innerHTML = '';
+        const miss = !state.date || !state.time ? 'Choose the pickup date and time.' : !state.pickup.trim() ? 'Enter the pickup address.' : state.service !== 'hourly' && !state.dropoff.trim() ? 'Enter the drop-off address.' : C.isAirport(state.pickup) && !String(state.flight || '').trim() ? 'Pickups at the airport need the flight number, for example AS 331, so we can follow the landing.' : '';
+        try { if (miss) throw new Error(miss); await opts.quoteFn(quoteOnly()); showStep(2); } catch (x) { showErr(err, x); }
+      });
+      $('#bk-back', host).onclick = () => showStep(1);
+    }
     const to = $('#bk-terms-open', host);
     if (to) to.onclick = (e) => { e.preventDefault(); termsModal(opts.info.terms, (opts.info.company && opts.info.company.name) || ''); };
     sync(); requote();

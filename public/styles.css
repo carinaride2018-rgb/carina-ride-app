@@ -782,3 +782,12 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 @media (max-width: 640px) { .wordmark.brandlogo img { height: 28px; } }
 .check.smsok { font-size: 13px; color: var(--ink-2); align-items: flex-start; line-height: 1.45; }
 .check.smsok input { margin-top: 3px; }
+/* Two-step booking: quote first, then details and payment */
+.booking.step1 { grid-template-columns: minmax(0, 680px); }
+.bkstep-head { display: flex; gap: 12px; align-items: flex-start; }
+.bkstep-head h2 { margin: 0; font-size: 20px; }
+.bkstep-head p { margin: 2px 0 0; }
+.stepno { flex: none; width: 30px; height: 30px; border-radius: 50%; background: var(--brand); color: #fff; display: grid; place-items: center; font-weight: 700; }
+.bkstep-sum { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r); background: color-mix(in srgb, var(--brand) 5%, var(--surface)); }
+.vcard .vprice { font-size: 14px; font-weight: 650; color: var(--ink); font-variant-numeric: tabular-nums; }
+.vcard .vprice:empty { display: none; }
