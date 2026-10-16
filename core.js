@@ -1064,6 +1064,8 @@
         notes: str(b.notes, 500),
         passengerName: str(b.passengerName, 80),
         passengerPhone: str(b.passengerPhone, 30),
+        // Ride texts only with the passenger's OK (booking page checkbox). Left out = not asked here.
+        ...('smsOk' in b ? { smsOk: b.smsOk === true || b.smsOk === 'on' || b.smsOk === 'true' } : {}),
         passengerEmail: str(b.passengerEmail, 120).toLowerCase(),
         childSeats: Math.max(0, Math.min(4, Math.round(num(b.childSeats, 0)))),
         meetGreet: !!b.meetGreet && b.meetGreet !== 'false',
@@ -1689,7 +1691,7 @@
       const lb = cleanBooking(c, {
         service: 'transfer', pickup: `${ap.name}, ${ap.address}`, dropoff: drop, pickupAt: lp.arrivesAt, flight: t.flight, vehicleType: t.vehicleType, passengers: t.passengers,
         passengerName: t.passengerName, passengerPhone: t.passengerPhone, passengerEmail: t.passengerEmail, meetGreet: !!raw.landing.meetGreet, signName: t.signName,
-        accountId: t.accountId, poNumber: t.poNumber, costCenter: t.costCenter, prefs: t.prefs, notes: `Pickup when they land in ${ap.city} after ${t.ref}.`,
+        accountId: t.accountId, poNumber: t.poNumber, costCenter: t.costCenter, prefs: t.prefs, notes: `Pickup when they land in ${ap.city} after ${t.ref}.`, ...('smsOk' in t ? { smsOk: t.smsOk } : {}),
       }, { allowPast: true });
       const lt = newTrip(c, lb, customer, source, by, '', true);
       t.landingId = lt.id; lt.landingOf = t.id;
@@ -2984,6 +2986,15 @@
         if (m.channel !== 'sms') continue;
         const c = findCompany(m.companyId);
         if (!c) continue;
+        // No text consent from the passenger: email instead, or don't send.
+        const tc = m.tripId && db.trips.find((x) => x.id === m.tripId);
+        if (tc && tc.smsOk === false && m.recipient === tc.passengerPhone) {
+          const em = tc.passengerEmail;
+          const dup = em && db.messages.some((o) => o !== m && o.channel === 'email' && o.recipient === em && o.tripId === m.tripId && Math.abs(new Date(o.at) - new Date(m.at)) < 60e3);
+          if (em && !dup) { m.channel = 'email'; m.recipient = em; m.noTexts = 'email'; }
+          else { m.noTexts = dup ? 'emailed' : 'held'; m.delivery = { status: 'optout', error: dup ? 'No text consent. The same message went by email.' : 'No text consent from the passenger. Not sent.' }; }
+          continue;
+        }
         touched.add(c);
         const n = segments(m.body);
         if (spendTexts(c, n)) { m.texts = n; continue; }

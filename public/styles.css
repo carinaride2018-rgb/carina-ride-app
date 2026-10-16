@@ -780,3 +780,5 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 :root[data-theme="dark"] .wordmark.brandlogo .logo-l { display: none; }
 :root[data-theme="dark"] .wordmark.brandlogo .logo-d { display: block; }
 @media (max-width: 640px) { .wordmark.brandlogo img { height: 28px; } }
+.check.smsok { font-size: 13px; color: var(--ink-2); align-items: flex-start; line-height: 1.45; }
+.check.smsok input { margin-top: 3px; }

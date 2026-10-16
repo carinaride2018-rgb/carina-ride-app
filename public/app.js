@@ -397,7 +397,8 @@
   }
 
   // Privacy policy and account links. The policy page lives on the real site.
-  const privacyLink = () => (DEMO ? '<span class="faint">Privacy policy (on your live site)</span>' : '<a href="privacy.html" target="_blank" rel="noopener">Privacy policy</a>');
+  const privacyLink = () => (DEMO ? '<span class="faint">Privacy Policy (on your live site)</span>' : '<a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a>');
+  const termsLink = () => (DEMO ? '<span class="faint">Terms (on your live site)</span>' : '<a href="terms.html" target="_blank" rel="noopener">Terms &amp; Conditions</a>');
   const footLinks = () => `<p class="small footlinks"><a href="#account">My account</a> · ${privacyLink()}</p>`;
   // iPhone app: Apple doesn't allow buying the software itself in the app.
   const IOS_APP = !!(window.LiveryNative && window.LiveryNative.platform === 'ios');
@@ -878,7 +879,7 @@
         <div class="lp-faq">${LP_FAQ.map(([q, a]) => `<details><summary>${esc(q)}</summary><p class="small muted">${esc(a)}</p></details>`).join('')}</div>
         <p class="muted lp-contact">Something else? Email us at ${mailLink()} and we’ll get back to you.</p>
       </section>
-      <footer class="lp-foot small"><span>© ${new Date().getFullYear()} ${PLATFORM}. Limo booking and dispatch software.</span><span>${mailLink()} · ${privacyLink()} · <button class="linkbtn" type="button" data-scroll="signin-form">Sign in</button></span></footer>
+      <footer class="lp-foot small"><span>© ${new Date().getFullYear()} ${PLATFORM}. Limo booking and dispatch software.</span><span>${mailLink()} · ${privacyLink()} · ${termsLink()} · <button class="linkbtn" type="button" data-scroll="signin-form">Sign in</button></span></footer>
     </div>`;
     $$('[data-demo]', v).forEach((b) => { b.onclick = () => demoLogin(b.dataset.demo); });
     $$('[data-scroll]', v).forEach((b) => { b.onclick = () => { const t = document.getElementById(b.dataset.scroll); if (t) { t.scrollIntoView({ behavior: 'smooth', block: 'start' }); const f = t.querySelector('input'); if (f) setTimeout(() => f.focus({ preventScroll: true }), 400); } }; });
@@ -1194,7 +1195,7 @@
     const vt = opts.info.vehicleTypes;
     const ad = opts.info.addons || { childSeat: 15, meetGreet: 25, extraStop: 20 };
     const dflt = defaultPickup();
-    const init = Object.assign({ service: 'transfer', date: dflt.slice(0, 10), time: dflt.slice(11, 16), pickup: '', dropoff: '', hours: opts.info.rates.minHours, passengers: 1, vehicleType: (vt[0] || {}).type, flight: '', notes: '', passengerName: '', passengerPhone: '', passengerEmail: '', childSeats: 0, meetGreet: false, stops: 0, promoCode: '', accountId: '', poNumber: '', costCenter: '' }, opts.initial || {});
+    const init = Object.assign({ service: 'transfer', date: dflt.slice(0, 10), time: dflt.slice(11, 16), pickup: '', dropoff: '', hours: opts.info.rates.minHours, passengers: 1, vehicleType: (vt[0] || {}).type, flight: '', notes: '', passengerName: '', passengerPhone: '', passengerEmail: '', smsOk: opts.mode === 'dispatch', childSeats: 0, meetGreet: false, stops: 0, promoCode: '', accountId: '', poNumber: '', costCenter: '' }, opts.initial || {});
     const accts = opts.accounts || [];
     if (init.service === 'airport') init.service = 'transfer';
     const pr = init.prefs || {};
@@ -1246,6 +1247,7 @@
             <label class="field"><span>${agent ? "Client's name" : 'Passenger name'}</span><input id="bk-name" name="passengerName" value="${esc(state.passengerName)}" ${dispatch || agent ? 'required' : ''}>${dispatch || agent ? '' : '<span class="hint">Booking for someone else? Put their name and mobile.</span>'}</label>
             <label class="field"><span>${agent ? "Client's mobile" : 'Passenger mobile'}</span><input id="bk-phone" name="passengerPhone" type="tel" value="${esc(state.passengerPhone)}"><span class="hint">The chauffeur texts this number.</span></label>
           </div>
+          <label class="check smsok"><input type="checkbox" id="bk-sms" ${state.smsOk ? 'checked' : ''}> <span>${dispatch ? 'The passenger agreed to get ride texts at this number. Untick if they did not; they then get emails only.' : `${agent ? 'My client agrees' : 'I agree'} to receive ride texts (confirmations, reminders and chauffeur updates) from ${esc((opts.info.company && opts.info.company.name) || 'us')} via ${PLATFORM}. Optional. Message frequency varies. Message and data rates may apply. Reply STOP to opt out, HELP for help. See our ${privacyLink()} and ${termsLink()}.`}</span></label>
           ${agent ? `<label class="field"><span>Client's email <span class="faint">(optional)</span></span><input id="bk-email" name="passengerEmail" type="email" value="${esc(state.passengerEmail)}"><span class="hint">Your client gets the confirmation and chauffeur details. You get a copy by email.</span></label>
             <div class="field"><span>Who pays</span><div class="seg" role="radiogroup">
               <label class="switch"><input type="radio" name="payBy" value="agent" id="bk-payby-agent" ${state.payBy !== 'passenger' ? 'checked' : ''}><span>My card on file</span></label>
@@ -1376,6 +1378,7 @@
       const rwhen = retOn && retDate && retTime ? new Date(`${retDate}T${retTime}`) : null;
       const keep = stopList.map((x, i) => i).filter((i) => stopList[i].trim());
       const out = { ...rest, stopList: state.service === 'hourly' ? [] : keep.map((i) => stopList[i]), stopWaits: state.service === 'hourly' ? [] : keep.map((i) => stopWaits[i] == null ? defWait : stopWaits[i]), prefs: { temp: prefTemp, music: prefMusic, quiet: prefQuiet }, pickupAt: when && !isNaN(when) ? when.toISOString() : '' };
+      const smsBox = $('#bk-sms', host); if (smsBox) out.smsOk = !!smsBox.checked && !!String(out.passengerPhone || '').trim();
       if (landDest || landOn) out.landing = { on: !!landOn && !$('#bk-land', host).hidden, dest: state.flight === landFlight ? landDest : '', dropoff: landDrop };
       if (retOn && state.service !== 'hourly') { out.returnAt = rwhen && !isNaN(rwhen) ? rwhen.toISOString() : 'missing'; out.returnFlight = retFlight; }
       delete out.cardNo; delete out.cardExp; delete out.payDriver;
@@ -3654,7 +3657,7 @@
       }
     }
 
-    const DELIVERY = { sent: ['Delivered', 'ok'], failed: ['Not delivered', 'bad'], skipped: ['No phone or email', 'bad'], simulated: ['Logged only', ''], sending: ['Sending', ''], held: ['Not sent: out of texts', 'bad'] };
+    const DELIVERY = { sent: ['Delivered', 'ok'], failed: ['Not delivered', 'bad'], skipped: ['No phone or email', 'bad'], optout: ['Not sent: no text consent', ''], simulated: ['Logged only', ''], sending: ['Sending', ''], held: ['Not sent: out of texts', 'bad'] };
     const deliveryTag = (m) => (m.outOfTexts === 'email' ? ' · <span class="dtag">Sent by email: out of texts</span>' : '') + _deliveryTag(m);
     const _deliveryTag = (m) => { const d = m.delivery && DELIVERY[m.delivery.status]; return d ? ` · <span class="dtag ${d[1]}" ${m.delivery.error ? `title="${esc(m.delivery.error)}"` : ''}>${d[0]}${m.delivery.error && m.delivery.status === 'failed' ? ': ' + esc(m.delivery.error) : ''}</span>` : ''; };
     // This month's texts: what's used, what's left, and buying more.
