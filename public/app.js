@@ -33,16 +33,30 @@
   const carLine = (v) => v ? [v.color, v.year, v.name].filter(Boolean).join(' ') : '';
   // What a passenger sees once a chauffeur is set: face, name, car and plate.
   const chauffeurCard = (d, v, note = '') => `<div class="chauffeur">${face(d.name, d.photo)}<div class="stack" style="gap:2px"><span class="small muted">Your chauffeur${d.partner ? ` · ${esc(d.partner)}` : ''}</span><b>${esc(d.name)}</b>${v ? `<span class="small">${esc(carLine(v))}${v.plate ? ` · <span class="mono">${esc(v.plate)}</span>` : ''}</span>` : ''}${note ? `<span class="small muted">${note}</span>` : ''}</div></div>`;
-  // A chosen picture, cropped square and shrunk in the browser so only a small
-  // JPEG is sent and stored.
-  function photoFrom(file) {
+  // Drawn side views of each vehicle type, used until the company adds a photo.
+  const CAR_ART = {
+    Sedan: { body: 'M10 62L14 50Q16 46 24 45L58 42L78 28Q82 25 90 25L128 25Q136 25 142 31L154 43L182 47Q192 49 192 57L192 64Q192 68 186 68L14 68Q10 68 10 62Z', win: ['M80 42L88 31Q90 29 94 29L110 29L110 42Z', 'M115 29L128 29Q133 29 137 33L146 42L115 42Z'], wheels: [50, 152], r: 13 },
+    SUV: { body: 'M10 64L10 44Q10 38 18 37L40 36L52 18Q54 15 60 15L140 15Q146 15 150 20L164 36L184 39Q192 40 192 48L192 64Q192 68 186 68L16 68Q10 68 10 64Z', win: ['M56 20L86 20L86 35L46 35Z', 'M90 20L118 20L118 35L90 35Z', 'M122 20L142 20Q146 20 149 24L157 35L122 35Z'], wheels: [48, 156], r: 14 },
+    'Business Van': { body: 'M10 66L10 14Q10 8 18 8L142 8Q150 8 154 14L168 36L186 40Q192 42 192 50L192 64Q192 68 186 68L14 68Q10 68 10 66Z', win: ['M22 16H52V34H22Z', 'M58 16H88V34H58Z', 'M94 16H124V34H94Z', 'M130 14L144 14Q148 14 151 19L161 34L130 34Z'], wheels: [46, 158], r: 13 },
+    'Sprinter Van': { body: 'M8 66L8 10Q8 4 16 4L150 4Q158 4 162 10L176 34L188 38Q194 40 194 48L194 64Q194 68 188 68L12 68Q8 68 8 66Z', win: ['M18 12H44V32H18Z', 'M50 12H76V32H50Z', 'M82 12H108V32H82Z', 'M114 12H140V32H114Z', 'M146 10L154 10Q158 10 161 15L170 32L146 32Z'], wheels: [44, 164], r: 13 },
+    'Party Bus': { body: 'M6 66L6 12Q6 6 14 6L184 6Q194 6 194 16L194 64Q194 68 188 68L10 68Q6 68 6 66Z', win: ['M14 14H38V34H14Z', 'M44 14H68V34H44Z', 'M74 14H98V34H74Z', 'M104 14H128V34H104Z', 'M134 14H158V34H134Z', 'M172 12H190V40H172Z'], wheels: [40, 160], r: 13 },
+  };
+  function carArt(type) {
+    const a = CAR_ART[type] || CAR_ART.Sedan;
+    return `<svg class="carart" viewBox="0 0 200 90" role="img" aria-label="${esc(type)}"><ellipse cx="100" cy="82" rx="92" ry="4" fill="rgba(0,0,0,.12)"/><path d="${a.body}" fill="#1f2430"/>${a.win.map((w) => `<path d="${w}" fill="#a9bccf"/>`).join('')}<path d="M16 54H188" stroke="var(--brand)" stroke-width="3"/>${a.wheels.map((x) => `<circle cx="${x}" cy="68" r="${a.r}" fill="#111"/><circle cx="${x}" cy="68" r="${Math.round(a.r / 2.2)}" fill="#9aa3ad"/>`).join('')}</svg>`;
+  }
+  // A vehicle's picture: the company's photo, or the drawing of its type.
+  const carPic = (type, photo) => `<span class="vpic">${photo ? `<img src="${esc(photo)}" alt="${esc(type)}">` : carArt(type)}</span>`;
+  // A chosen picture, cropped (square unless a width and height are given) and
+  // shrunk in the browser so only a small JPEG is sent and stored.
+  function photoFrom(file, w = 240, h = w) {
     return new Promise((resolve, reject) => {
       if (!file || !/^image\//.test(file.type)) return reject(new Error('Choose a photo (JPEG or PNG).'));
       const url = URL.createObjectURL(file), img = new Image();
       img.onload = () => {
-        const n = Math.min(img.naturalWidth, img.naturalHeight), size = 240, c = document.createElement('canvas');
-        c.width = c.height = size;
-        c.getContext('2d').drawImage(img, (img.naturalWidth - n) / 2, (img.naturalHeight - n) / 2, n, n, 0, 0, size, size);
+        const iw = img.naturalWidth, ih = img.naturalHeight, k = Math.min(iw / w, ih / h), sw = w * k, sh = h * k, c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        c.getContext('2d').drawImage(img, (iw - sw) / 2, (ih - sh) / 2, sw, sh, 0, 0, w, h);
         URL.revokeObjectURL(url); resolve(c.toDataURL('image/jpeg', 0.85));
       };
       img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('That file couldn\'t be read as a photo.')); };
@@ -1247,7 +1261,7 @@
               <label class="field"><span id="bk-land-droplabel">Where to</span><input id="bk-land-drop" name="landDrop" autocomplete="off" placeholder="Hotel or street address" value="${esc(state.landDrop || '')}"></label>
             </div></fieldset>
           <div class="field"><span>Vehicle</span>
-            <div class="vehicles">${vt.map((v) => `<button type="button" class="vcard" data-vehicle="${esc(v.type)}" aria-pressed="${state.vehicleType === v.type}"><b>${esc(v.type)}</b><span>${v.capacity} passengers${v.bags != null ? ` · ${v.bags} suitcase${v.bags === 1 ? '' : 's'}` : ''}</span>${v.models ? `<span class="vmodel">${esc(v.models)}</span>` : ''}<span class="vprice" data-vprice="${esc(v.type)}"></span></button>`).join('') || '<p class="faint small">No vehicles yet. Add vehicles in the dispatch office first.</p>'}</div>
+            <div class="vehicles">${vt.map((v) => `<button type="button" class="vcard" data-vehicle="${esc(v.type)}" aria-pressed="${state.vehicleType === v.type}">${carPic(v.type, v.photo)}<b>${esc(v.type)}</b><span>${v.capacity} passengers${v.bags != null ? ` · ${v.bags} suitcase${v.bags === 1 ? '' : 's'}` : ''}</span>${v.models ? `<span class="vmodel">${esc(v.models)}</span>` : ''}<span class="vprice" data-vprice="${esc(v.type)}"></span></button>`).join('') || '<p class="faint small">No vehicles yet. Add vehicles in the dispatch office first.</p>'}</div>
           </div>
           <div class="grid2">
             <label class="field"><span>Passengers</span><input id="bk-pax" name="passengers" type="number" min="1" max="60" value="${esc(state.passengers)}"></label>
@@ -3105,6 +3119,8 @@
         body: `${id ? `<div class="tiles">
             <div class="tile"><span class="label">This month</span><b>${p.tripsMonth} trips</b><span class="small faint">${money0(p.revenueMonth)} billed</span></div></div>` : ''}
           <form id="vf" class="stack" novalidate>
+            <div class="vphoto">${carPic(p.type, p.photo)}<div class="stack" style="gap:6px"><span class="small muted">${id ? `Customers see this picture with the ${esc(p.type)} on your booking page. A side or three-quarter view works best; it's cropped wide.` : 'Save the vehicle first, then add its photo. Until then customers see this drawing.'}</span>
+              ${id ? `<div class="row"><label class="btn sm"><input type="file" id="vf-photo" accept="image/*" hidden>${p.photo ? 'Change photo' : 'Add photo'}</label>${p.photo ? '<button class="btn sm" type="button" id="vf-photo-rm">Remove photo</button>' : ''}</div>` : ''}</div></div>
             <div class="grid3"><label class="field" style="grid-column:span 2"><span>Name</span><input id="vf-name" name="name" placeholder="Lincoln Navigator" value="${esc(p.name)}"></label>
               <label class="field"><span>Status</span><select id="vf-status" name="status">${Object.entries(C.VEHICLE_STATUS).map(([k, l]) => `<option value="${k}" ${p.status === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label></div>
             <div class="grid3"><label class="field"><span>Type</span><select id="vf-type" name="type">${C.VEHICLE_TYPES.map((t) => `<option ${p.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
@@ -3122,6 +3138,9 @@
             ${id && data.upcoming.length ? `<div class="stack"><h3>Booked trips</h3><div class="tablewrap"><table><tbody>${data.upcoming.map((t) => `<tr><td class="mono small">${esc(fmtDT(t.pickupAt))}</td><td class="mono small">${esc(t.ref)}</td><td class="small">${esc(t.passengerName)}</td><td class="small">${t.driver ? esc(t.driver.name) : ''}</td><td>${pill(t)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}`,
       });
       const reopen = () => { m._onClose = null; closeModal(); vehicleModal(id, done); };
+      const setPhoto = async (photo) => { try { await api('dispatch.setVehiclePhoto', { id, photo }); toast(photo ? 'Photo saved.' : 'Photo removed.'); reopen(); } catch (err) { toast(err.message, true); } };
+      const vfp = $('#vf-photo', m); if (vfp) vfp.onchange = async () => { try { await setPhoto(await photoFrom(vfp.files[0], 480, 270)); } catch (err) { toast(err.message, true); } };
+      const vfr = $('#vf-photo-rm', m); if (vfr) vfr.onclick = () => setPhoto('');
       $('#vf', m).onsubmit = async (e) => {
         e.preventDefault();
         await busy($('button[type=submit]', e.target), async () => {

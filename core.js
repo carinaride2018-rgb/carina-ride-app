@@ -636,6 +636,7 @@
       d.quotes = d.quotes || [];
       d.incidents = d.incidents || [];
       d.timeEntries = d.timeEntries || [];
+      d.vehiclePhotos = d.vehiclePhotos || {};
       if (d.sample === undefined) d.sample = d.users.some((u) => u.email === 'owner@demo.com');
       for (const m of d.messages || []) if (m.metered === undefined) m.metered = true;
       // The single $45 Membership became Founding / Standard / Fleet (v37).
@@ -1570,7 +1571,7 @@
       assign: ['dispatch.assign', 'dispatch.autoAssign', 'network.offer', 'network.respond', 'network.cancelOffer', 'network.handBack'],
       payments: ['dispatch.chargeCard', 'dispatch.markPaid', 'network.settle'],
       customers: ['dispatch.saveCustomer', 'dispatch.saveAccount', 'dispatch.accountBooker', 'dispatch.createInvoice', 'dispatch.invoiceAction', 'dispatch.invoices', 'dispatch.invoice'],
-      drivers: ['dispatch.saveDriver', 'dispatch.setDriverPhoto', 'dispatch.saveVehicle', 'dispatch.addMaintenance', 'dispatch.deleteMaintenance'],
+      drivers: ['dispatch.saveDriver', 'dispatch.setDriverPhoto', 'dispatch.saveVehicle', 'dispatch.setVehiclePhoto', 'dispatch.addMaintenance', 'dispatch.deleteMaintenance'],
       pay: ['dispatch.payroll', 'dispatch.markPayout'],
       reports: ['dispatch.reports'],
     })) for (const n of names) PERM_OF[n] = perm;
@@ -1611,7 +1612,10 @@
         (names[v.type] = names[v.type] || []).includes(v.name) || names[v.type].push(v.name);
       }
       const bags = bagsCfg(c);
-      return VEHICLE_TYPES.filter((t) => out[t]).map((t) => ({ type: t, capacity: out[t], bags: bags[t], models: names[t].slice(0, 2).join(' or ') + ' or similar', multiplier: c.rates.multipliers[t] || 1 }));
+      // The picture on the booking card: the first active car of the type with
+      // a photo. Without one the page draws a picture of the type.
+      const vp = db.vehiclePhotos || {}, photoOf = (t) => { const v = db.vehicles.find((x) => x.companyId === c.id && x.status === 'active' && x.type === t && vp[x.id]); return v ? vp[v.id] : ''; };
+      return VEHICLE_TYPES.filter((t) => out[t]).map((t) => ({ type: t, capacity: out[t], bags: bags[t], models: names[t].slice(0, 2).join(' or ') + ' or similar', multiplier: c.rates.multipliers[t] || 1, photo: photoOf(t) }));
     }
     function quoteFor(company, raw, customer) {
       const b = { ...raw, vehicleType: VEHICLE_TYPES.includes(raw.vehicleType) ? raw.vehicleType : 'Sedan' };
@@ -3594,8 +3598,15 @@
     def('dispatch.vehicles', STAFF, false, (ctx) => db.vehicles.filter((v) => v.companyId === ctx.company.id).map((v) => ({ ...clone(v), ...vehicleStats(v) })));
     def('dispatch.vehicle', STAFF, false, (ctx, a) => {
       const v = ownVehicle(ctx, a.id);
-      return { vehicle: { ...clone(v), ...vehicleStats(v) }, log: db.maintenance.filter((x) => x.vehicleId === v.id).sort((x, y) => y.date.localeCompare(x.date)).map(clone),
+      return { vehicle: { ...clone(v), ...vehicleStats(v), photo: (db.vehiclePhotos || {})[v.id] || '' }, log: db.maintenance.filter((x) => x.vehicleId === v.id).sort((x, y) => y.date.localeCompare(x.date)).map(clone),
         upcoming: db.trips.filter((t) => t.vehicleId === v.id && !['completed', 'cancelled'].includes(t.status)).sort((x, y) => x.pickupAt.localeCompare(y.pickupAt)).slice(0, 6).map(tripView) };
+    });
+    // Vehicle photos live apart from the vehicles so the board and lists stay small.
+    def('dispatch.setVehiclePhoto', STAFF, true, (ctx, a) => {
+      const v = ownVehicle(ctx, a.id), photo = cleanPhoto(a.photo);
+      db.vehiclePhotos = db.vehiclePhotos || {};
+      if (photo) db.vehiclePhotos[v.id] = photo; else delete db.vehiclePhotos[v.id];
+      return { id: v.id, photo };
     });
     def('dispatch.saveVehicle', STAFF, true, (ctx, a) => {
       const name = str(a.name, 60), plate = str(a.plate, 15).toUpperCase();

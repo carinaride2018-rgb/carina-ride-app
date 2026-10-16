@@ -790,3 +790,10 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 .bkstep-sum { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r); background: color-mix(in srgb, var(--brand) 5%, var(--surface)); }
 .vcard .vprice { font-size: 14px; font-weight: 650; color: var(--ink); font-variant-numeric: tabular-nums; }
 .vcard .vprice:empty { display: none; }
+/* Vehicle pictures: booking cards and the vehicle form */
+.vpic { display: block; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; background: color-mix(in srgb, var(--brand) 6%, var(--surface-2, #f3f4f6)); margin-bottom: 6px; }
+.vpic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.vpic .carart { width: 100%; height: 100%; display: block; padding: 8% 6% 4%; box-sizing: border-box; }
+.vphoto { display: flex; align-items: center; gap: 16px; }
+.vphoto .vpic { width: 200px; flex: none; margin: 0; }
+@media (max-width: 520px) { .vphoto { flex-direction: column; align-items: stretch; } .vphoto .vpic { width: 100%; } }
