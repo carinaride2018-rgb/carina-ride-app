@@ -301,6 +301,25 @@ async function runCharges() {
   flushOutbox();
 }
 
+// ---- Texts coming in (Twilio) ---------------------------------------------------
+// In Twilio, set the number's "A message comes in" webhook to <PUBLIC_URL>twilio/sms
+// (HTTP POST). Replies land in each company's Inbox. Requests must carry
+// Twilio's signature; on the sample-data site without Twilio they're accepted
+// unsigned so the Inbox can be tried out.
+async function twilioRoute(req, res, url, raw) {
+  const xml = (s) => send(res, 200, `<?xml version="1.0" encoding="UTF-8"?><Response>${s || ''}</Response>`, 'text/xml; charset=utf-8');
+  if (url.pathname !== '/twilio/sms' || req.method !== 'POST') return send(res, 404, 'Not found', 'text/plain');
+  const params = Object.fromEntries(new URLSearchParams(raw));
+  const href = base + 'twilio/sms' + url.search;
+  if (live.on.sms ? !live.verifyTwilio(req.headers['x-twilio-signature'], href, params) : BLANK) return send(res, 403, 'Forbidden', 'text/plain');
+  try {
+    const r = await core.inboundSms({ from: params.From, body: params.Body, sid: params.MessageSid || params.SmsSid, media: Number(params.NumMedia) || 0 });
+    if (!r.routed && r.ok) console.log(`text from an unknown number ${String(params.From || '').slice(0, -4)}•••• was not matched to a company`);
+    xml();
+    flushOutbox();
+  } catch (e) { console.error('incoming text', e); xml(); }
+}
+
 // The owner's Connections screen: which services are real. Never shows keys.
 async function connections(token) {
   const me = await core.call(token, 'auth.me', {});
@@ -315,6 +334,12 @@ const server = http.createServer((req, res) => {
     const chunks = []; let size = 0;
     req.on('data', (c) => { size += c.length; if (size > 1e6) req.destroy(); else chunks.push(c); });
     req.on('end', () => payRoute(req, res, url, Buffer.concat(chunks).toString('utf8')));
+    return;
+  }
+  if (url.pathname.startsWith('/twilio/')) {
+    const chunks = []; let size = 0;
+    req.on('data', (c) => { size += c.length; if (size > 1e5) req.destroy(); else chunks.push(c); });
+    req.on('end', () => twilioRoute(req, res, url, Buffer.concat(chunks).toString('utf8')));
     return;
   }
   if (!url.pathname.startsWith('/api/')) {

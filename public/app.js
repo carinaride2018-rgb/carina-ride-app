@@ -2112,12 +2112,14 @@
   const docPill = (label, d) => { const s = docState(d); return `<span class="pill ${s.cls}" title="${esc(label)}">${esc(label)}: ${esc(s.label)}</span>`; };
   const pct = (n) => n == null ? '—' : n + '%';
 
+  let inboxTimer = null;
+  const STAFF_ROLES = ['admin', 'dispatcher'];
   function viewDispatch() {
     const isAdmin = session.user.role === 'admin';
     // What this office login may do (admins: everything). The server checks too.
     const P = isAdmin ? new Proxy({}, { get: () => true }) : (session.user.perms || {});
     const tabs = [
-      { key: 'board', label: 'Board' }, { key: 'trips', label: 'Trips' }, { key: 'calendar', label: 'Calendar' }, { key: 'quotes', label: 'Quotes' }, { key: 'flights', label: 'Flights' },
+      { key: 'board', label: 'Board' }, { key: 'inbox', label: 'Inbox' }, { key: 'trips', label: 'Trips' }, { key: 'calendar', label: 'Calendar' }, { key: 'quotes', label: 'Quotes' }, { key: 'flights', label: 'Flights' },
       { key: 'drivers', label: 'Drivers' }, { key: 'fleet', label: 'Fleet' }, { key: 'incidents', label: 'Incidents' }, { key: 'customers', label: 'Customers' }, ...(P.reports ? [{ key: 'reports', label: 'Reports' }] : []),
       { key: 'network', label: 'Network' }, { key: 'pricing', label: 'Pricing' }, { key: 'messages', label: 'Texts & emails' },
       { key: 'settings', label: 'Rates & brand' }, ...(isAdmin ? [{ key: 'team', label: 'Team' }] : []),
@@ -2126,15 +2128,91 @@
     let tab = store.get(tabKey) || 'board';
     if (!tabs.some((t) => t.key === tab)) tab = 'board';
     let day = new Date(); day.setHours(0, 0, 0, 0);
+    let inboxOpen = null; // the open conversation: { key } or { tripId }
+    clearInterval(inboxTimer);
+    inboxTimer = setInterval(() => { if (!document.hidden && session && session.user && STAFF_ROLES.includes(session.user.role) && $('[data-tab="inbox"]', app) && tab !== 'inbox') inboxBadge(); }, 20000);
     const go2 = (t) => { tab = t; store.set(tabKey, t); draw(); };
     const draw = () => {
       const v = shell({ tabs, active: tab, onTab: go2, wide: tab === 'board' });
-      ({ board: drawBoard, trips: drawTrips, calendar: drawCalendar, quotes: drawQuotes, flights: drawFlights, drivers: drawDrivers, fleet: drawFleet, incidents: drawIncidents, customers: drawCustomers, reports: drawReports, network: drawNetwork, pricing: drawPricing, messages: drawMessages, settings: drawSettings, team: drawTeam })[tab](v);
+      if (tab !== 'inbox') inboxBadge();
+      ({ board: drawBoard, inbox: drawInbox, trips: drawTrips, calendar: drawCalendar, quotes: drawQuotes, flights: drawFlights, drivers: drawDrivers, fleet: drawFleet, incidents: drawIncidents, customers: drawCustomers, reports: drawReports, network: drawNetwork, pricing: drawPricing, messages: drawMessages, settings: drawSettings, team: drawTeam })[tab](v);
     };
     const warnToast = (r, okText) => {
       if (r.warnings && r.warnings.length) toast(`${okText} Check: ${r.warnings.join(' ')}`, true, 7000);
       else toast(okText);
     };
+
+    // Inbox -------------------------------------------------------------------
+    // Texts passengers and drivers send back, and the office's answers.
+    async function drawInbox(v) {
+      let last = '', lastTh = '', openSig = '';
+      v.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Inbox</h1><p class="muted" id="ib-sub">Replies to your texts land here. Answer them and the passenger gets a text from ${esc(session.company.name)}.</p></div></div>
+        <div class="inbox${inboxOpen ? ' open' : ''}" id="ib"><div class="panel ib-list" id="ib-list"><p class="faint">Loading…</p></div><div class="panel ib-thread" id="ib-thread"><p class="faint ib-pick">Pick a conversation to read it and reply.</p></div></div>`;
+      const ib = $('#ib', v);
+      const who = (c) => esc(c.name || c.phone || 'Unknown number');
+      async function refresh(silent) {
+        let d;
+        try { d = await api('dispatch.inbox'); } catch (e) { if (!silent) showErr($('#ib-list', v), e); return; }
+        const sig = JSON.stringify(d);
+        if (sig !== last) {
+          last = sig;
+          if (!d.live) $('#ib-sub', v).textContent = DEMO ? 'Replies to your texts land here. In this demo, two sample conversations show how it works.' : 'Replies to your texts land here once Twilio is connected and its incoming-text webhook is set.';
+          $('#ib-list', v).innerHTML = d.conversations.length ? d.conversations.map((c) => `<button type="button" class="ib-conv${c.unread ? ' unread' : ''}" data-key="${esc(c.key)}" aria-current="${!!(inboxOpen && inboxOpen.key === c.key)}">
+              <span class="spread"><b>${who(c)}</b><span class="small faint nowrap">${esc(fmtDT(c.last.at))}</span></span>
+              <span class="small muted">${c.who ? esc(c.who) : ''}${c.trip ? `${c.who ? ' · ' : ''}${esc(c.trip.ref)}, ${esc(fmtDT(c.trip.pickupAt))}` : ''}</span>
+              <span class="ib-last small">${c.last.dir === 'out' ? 'You: ' : ''}${esc(c.last.body)}</span>${c.unread ? `<span class="pill s-assigned count">${c.unread} new</span>` : ''}</button>`).join('')
+            : '<p class="faint">No texts yet. When a passenger or driver answers one of your texts, it shows up here.</p>';
+          $$('[data-key]', $('#ib-list', v)).forEach((b) => { b.onclick = () => { inboxOpen = { key: b.dataset.key }; lastTh = ''; openThread(); }; });
+          inboxBadge(d.unread);
+        }
+        if (inboxOpen) await openThread(silent);
+      }
+      async function openThread(silent) {
+        const box = $('#ib-thread', v);
+        let th;
+        try { th = await api('dispatch.inboxThread', inboxOpen); } catch (e) { if (!silent) showErr(box, e); return; }
+        ib.classList.add('open');
+        $$('[data-key]', $('#ib-list', v)).forEach((b) => b.setAttribute('aria-current', String(b.dataset.key === th.key)));
+        const sig = JSON.stringify(th); if (sig === lastTh) return; lastTh = sig;
+        const head = `${esc(th.key)}|${inboxOpen.tripId || ''}`;
+        const blocked = !P.bookings ? "Your access level can't send texts. Ask your company admin." : th.optedOut ? 'They texted STOP, so texts to this number are off until they text START. Call or email them instead.' : th.noConsent ? "This passenger didn't agree to texts when they booked. Call or email them instead." : '';
+        if (head !== openSig || !$('#ib-form', box)) {
+          openSig = head;
+          box.innerHTML = `<div class="ib-head"><button class="btn sm ib-back" type="button" id="ib-back" aria-label="All conversations">‹</button>
+              <div class="grow"><b>${who(th)}</b>${th.who ? ` <span class="pill">${esc(th.who)}</span>` : ''}
+              <div class="small muted">${th.phone ? `<a href="tel:${esc(th.phone)}">${esc(th.phone)}</a>` : ''}${th.trip ? ` · <button type="button" class="linkbtn" id="ib-trip">${esc(th.trip.ref)}, ${esc(fmtDT(th.trip.pickupAt))}</button>` : ''}</div></div></div>
+            <div class="ib-msgs" id="ib-msgs"></div>
+            <form class="ib-form" id="ib-form" novalidate><textarea class="input" id="ib-text" rows="2" maxlength="560" placeholder="Type a reply…" aria-label="Reply" ${blocked ? 'disabled' : ''}></textarea><button class="btn primary" type="submit" ${blocked ? 'disabled' : ''}>Send</button></form>
+            <p class="small faint" id="ib-note"></p>`;
+          $('#ib-back', box).onclick = () => { inboxOpen = null; ib.classList.remove('open'); openSig = ''; lastTh = ''; box.innerHTML = '<p class="faint ib-pick">Pick a conversation to read it and reply.</p>'; last = ''; refresh(); };
+          const tb = $('#ib-trip', box); if (tb) tb.onclick = () => tripModal(th.trip.id, () => { lastTh = ''; refresh(); });
+          const f = $('#ib-form', box), ta = $('#ib-text', box);
+          ta.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); f.requestSubmit(); } };
+          f.onsubmit = (e) => {
+            e.preventDefault();
+            if (!ta.value.trim()) return ta.focus();
+            busy($('button[type=submit]', f), async () => {
+              try { await api('dispatch.inboxSend', { ...inboxOpen, body: ta.value }); ta.value = ''; last = ''; lastTh = ''; await refresh(); ta.focus(); } catch (err) { toast(err.message, true); }
+            });
+          };
+        }
+        $('#ib-note', box).textContent = blocked || `Sent as a text that starts with “${session.company.name}:”. Enter sends; Shift+Enter starts a new line.`;
+        const msgs = $('#ib-msgs', box);
+        msgs.innerHTML = th.items.length ? th.items.map((x) => `<div class="bub ${x.dir}${x.auto ? ' auto' : ''}"><div class="bt">${esc(x.body)}</div>
+            <div class="bm">${x.auto ? 'Automatic text · ' : x.by ? `${esc(x.by)} · ` : ''}${esc(fmtDT(x.at))}${x.dir === 'out' && x.delivery ? deliveryTag(x) : ''}</div>
+            ${x.stop ? `<div class="bstop small">They texted ${esc(x.body.trim().toUpperCase())}, which turns texts to this number off.${/cancel/i.test(x.body) ? ' If they meant to cancel the ride, call them.' : ''}</div>` : ''}</div>`).join('')
+          : '<p class="faint">No texts with this number yet. Write the first one below.</p>';
+        msgs.scrollTop = msgs.scrollHeight;
+        inboxBadge();
+      }
+      current = { poll: true, refresh };
+      refresh();
+    }
+    // The unread count on the Inbox tab.
+    async function inboxBadge(n) {
+      if (n == null) { try { n = (await api('dispatch.inboxCount')).unread; } catch (e) { return; } }
+      for (const b of $$('[data-tab="inbox"], [data-go="inbox"]', app)) b.textContent = n ? `Inbox (${n})` : 'Inbox';
+    }
 
     // Board ------------------------------------------------------------------
     function drawBoard(v0) {
@@ -2175,7 +2253,7 @@
             ${P.bookings ? '<button class="btn primary" type="button" id="d-new">New booking</button>' : ''}
           </div>
           ${serious.length ? `<details class="alerts" id="d-alerts" ${alertsOpen ? 'open' : ''}><summary><b>${serious.length} thing${serious.length === 1 ? '' : 's'} need${serious.length === 1 ? 's' : ''} attention</b> <span class="small faint">dispatch, flights, fleet, drivers and partners</span></summary>
-            <ul>${serious.map((a) => `<li class="al-${a.level}"><span class="pill ${a.level === 'bad' ? 's-cancelled' : 's-assigned'}">${a.area === 'flights' ? 'Flight' : a.area === 'fleet' ? 'Fleet' : a.area === 'network' ? 'Network' : a.area === 'dispatch' ? 'Dispatch' : a.area === 'billing' ? 'Billing' : a.area === 'quotes' ? 'Quotes' : 'Driver'}</span>
+            <ul>${serious.map((a) => `<li class="al-${a.level}"><span class="pill ${a.level === 'bad' ? 's-cancelled' : 's-assigned'}">${a.area === 'flights' ? 'Flight' : a.area === 'fleet' ? 'Fleet' : a.area === 'network' ? 'Network' : a.area === 'dispatch' ? 'Dispatch' : a.area === 'billing' ? 'Billing' : a.area === 'quotes' ? 'Quotes' : a.area === 'inbox' ? 'Texts' : 'Driver'}</span>
               ${a.tripId ? `<button type="button" class="linkbtn" data-trip="${a.tripId}">${esc(a.text)}</button>` : `<button type="button" class="linkbtn" data-goto="${a.area}">${esc(a.text)}</button>`}</li>`).join('')}</ul></details>` : ''}
           <div class="board">
             <section class="lane unassigned" data-driver="">
@@ -2467,6 +2545,7 @@
               <button class="btn sm" type="button" id="te-setstatus">Update status</button>
               ${['accepted', 'en_route', 'arrived'].includes(t.status) && !t.farmout ? '<button class="btn sm danger" type="button" id="te-noshow">Passenger no-show</button>' : ''}
               <button class="btn sm" type="button" id="te-sheet">Print trip sheet</button>
+              ${t.passengerPhone ? '<button class="btn sm" type="button" id="te-text">Text passenger</button>' : ''}
               ${canFarm ? '<button class="btn sm" type="button" id="te-farm">Send to a partner company</button>' : ''}
             </div>` : ''}
             ${t.live ? `<div class="sidebox"><span class="label">Live tracking</span><div id="te-live">${trackMap(t.live, t.pickup)}</div>${t.trackToken ? `<p class="small faint">Passenger link: <span class="mono">#track.${esc(t.trackToken)}</span></p>` : ''}</div>` : ''}
@@ -2544,6 +2623,7 @@
         if (!hb.dataset.armed) { hb.dataset.armed = '1'; hb.textContent = 'Click again to hand back'; return; }
         busy(hb, async () => { try { await api('network.handBack', { tripId: id, reason: $('#te-hbreason', m).value }); toast(`Handed back to ${t.farmIn.fromName}.`); closeModal(); } catch (err) { toast(err.message, true); } });
       };
+      const tx = $('#te-text', m); if (tx) tx.onclick = () => { inboxOpen = { tripId: t.id }; m._onClose = null; closeModal(); go2('inbox'); };
       const mp = $('#te-msgpartner', m); if (mp) mp.onclick = () => { netState.sub = 'messages'; netState.partner = mp.dataset.partner; m._onClose = null; closeModal(); go2('network'); };
       const shb = $('#te-sheet', m); if (shb) shb.onclick = () => printSheets([t], `${t.ref}, ${fmtDate(t.pickupAt)}`);
       const nsb = $('#te-noshow', m); if (nsb) nsb.onclick = () => noShowModal(t, 'dispatch.noShow', reopen);
@@ -3938,7 +4018,7 @@
       if (DEMO) st = { demo: true, sms: { service: 'Twilio' }, email: { service: 'Resend' }, cards: { service: 'Stripe' }, maps: { service: 'Google Maps' }, flights: { service: 'FlightAware AeroAPI' } };
       else { try { st = await api('owner.connections'); } catch (e) { return showErr(v, e); } }
       const rows = [
-        ['sms', 'Texts to passengers and drivers', 'TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM', (x) => x.from ? `From ${esc(x.from)}` : ''],
+        ['sms', 'Texts to passengers and drivers, and their replies (Inbox)', 'TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM', (x) => [x.from ? `From ${esc(x.from)}` : '', st.publicUrl ? `For replies, set the number’s “A message comes in” webhook (HTTP POST) to <span class="mono">${esc(st.publicUrl)}twilio/sms</span>` : ''].filter(Boolean).join('<br>')],
         ['email', 'Emails: confirmations, receipts, quotes, invoices', 'RESEND_API_KEY, EMAIL_FROM', (x) => x.from ? `From ${esc(x.from)}` : ''],
         ['cards', 'Card payments (cards on file)', 'STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET', (x) => x.mode ? `${x.mode === 'live' ? 'Live mode, real charges' : 'Test mode, no real charges'}${x.webhook ? ' · webhook on' : ''}` : ''],
         ['maps', 'Real distances, drive times and address search', 'GOOGLE_MAPS_API_KEY', (x) => x.on ? `${x.routes} routes saved` : ''],

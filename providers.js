@@ -89,6 +89,16 @@ function createProviders(env, opts) {
     return r && r.id;
   }
 
+  // Twilio signs each incoming-text request: HMAC-SHA1 of the full URL plus
+  // every form field (sorted by name), keyed with the auth token.
+  function verifyTwilio(signature, href, params) {
+    if (!on.sms || !signature) return false;
+    const data = href + Object.keys(params).sort().map((k) => k + params[k]).join('');
+    const want = crypto.createHmac('sha1', String(env.TWILIO_AUTH_TOKEN)).update(data, 'utf8').digest('base64');
+    const a = Buffer.from(want), b = Buffer.from(String(signature));
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  }
+
   // One outbox message -> { id, status: sent | failed | simulated | skipped, via, error }.
   // The address decides the channel: a driver with no phone gets an email.
   async function deliver(m) {
@@ -355,7 +365,7 @@ function createProviders(env, opts) {
   };
 
   return {
-    on, deliver, e164,
+    on, deliver, e164, verifyTwilio,
     route, warmRoutes, geo, warmGeo, places, loadRoutes, saveRoutes,
     // A browser key (restricted to your site) for drawing Google maps; never the server key.
     mapsKey: env.GOOGLE_MAPS_BROWSER_KEY || '',

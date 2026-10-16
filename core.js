@@ -637,6 +637,8 @@
       d.incidents = d.incidents || [];
       d.timeEntries = d.timeEntries || [];
       d.vehiclePhotos = d.vehiclePhotos || {};
+      d.inbox = d.inbox || [];
+      d.smsOptOut = d.smsOptOut || {};
       if (d.sample === undefined) d.sample = d.users.some((u) => u.email === 'owner@demo.com');
       for (const m of d.messages || []) if (m.metered === undefined) m.metered = true;
       // The single $45 Membership became Founding / Standard / Fleet (v37).
@@ -1355,6 +1357,8 @@
           out.push({ level: 'bad', area: 'dispatch', text: `${t.ref}: ${d.name} hasn't set off yet. Pickup ${nowMs >= pickMs ? 'was' : 'is'} at ${at}.`, tripId: t.id });
         }
       }
+      const unread = unreadTexts(company);
+      if (unread) out.push({ level: 'warn', area: 'inbox', text: `${unread} unread text${unread === 1 ? '' : 's'} from passengers or drivers. Open Inbox to answer.` });
       for (const inv of db.clientInvoices) {
         if (inv.companyId !== company.id || inv.status !== 'open') continue;
         const late = Math.floor((nowMs - new Date(inv.dueAt).getTime()) / 86400e3);
@@ -1628,7 +1632,7 @@
     };
     const PERM_OF = {};
     for (const [perm, names] of Object.entries({
-      bookings: ['dispatch.createTrip', 'dispatch.updateTrip', 'dispatch.setStatus', 'dispatch.cancelSeries', 'dispatch.noShow', 'dispatch.importTrips', 'dispatch.applyFlight', 'dispatch.sendCardLink', 'dispatch.saveQuote', 'dispatch.sendQuote', 'dispatch.quoteAction'],
+      bookings: ['dispatch.createTrip', 'dispatch.updateTrip', 'dispatch.setStatus', 'dispatch.cancelSeries', 'dispatch.noShow', 'dispatch.importTrips', 'dispatch.applyFlight', 'dispatch.sendCardLink', 'dispatch.inboxSend', 'dispatch.saveQuote', 'dispatch.sendQuote', 'dispatch.quoteAction'],
       assign: ['dispatch.assign', 'dispatch.autoAssign', 'network.offer', 'network.respond', 'network.cancelOffer', 'network.handBack'],
       payments: ['dispatch.chargeCard', 'dispatch.markPaid', 'network.settle'],
       customers: ['dispatch.saveCustomer', 'dispatch.saveAccount', 'dispatch.accountBooker', 'dispatch.createInvoice', 'dispatch.invoiceAction', 'dispatch.invoices', 'dispatch.invoice'],
@@ -1902,6 +1906,11 @@
           if (q.status === 'accepted' && recent(q.decidedAt, 24)) add(`qacc:${q.id}`, `Quote ${q.number} accepted`, `${q.contact.name} booked ${q.tripIds.length} vehicle${q.tripIds.length === 1 ? '' : 's'}.`, '#dispatch', q.decidedAt);
           if (q.status === 'declined' && recent(q.decidedAt, 24)) add(`qdec:${q.id}`, `Quote ${q.number} declined`, q.declineReason || q.contact.name, '#dispatch', q.decidedAt);
         }
+        for (const x of db.inbox || []) {
+          if (x.companyId !== c.id || x.dir !== 'in' || x.read || x.key === 'deleted' || !recent(x.at, 24)) continue;
+          const p = personForPhone(c.id, x.key);
+          add(`sms:${x.id}`, `Text from ${p.name || x.phone}${x.ref ? ` (${x.ref})` : ''}`, String(x.body).slice(0, 140), '#dispatch', x.at);
+        }
         const ts = u.role === 'admin' ? textStatus(c) : {};
         if (ts.out) add(`textsout:${ts.month}:${ts.packs.length}`, 'Out of texts this month', 'Passenger messages go by email until you buy more. Open Texts & emails.', '#dispatch');
         else if (ts.low) add(`textslow:${ts.month}:${ts.packs.length}`, 'Running low on texts', `${ts.left} left this month. Buy more in Texts & emails.`, '#dispatch');
@@ -2025,6 +2034,8 @@
         if (t.affiliate && t.affiliate.driver && t.driverId === u.id) t.affiliate.driver = { name: label, phone: '' };
       }
       for (const m of db.messages) if (contacts.includes(m.recipient)) { m.recipient = label; m.body = '[Removed when the account was deleted]'; }
+      const gone = u.phone && phoneKey(u.phone);
+      if (gone) for (const x of db.inbox || []) if (x.key === gone) { x.key = 'deleted'; x.phone = ''; x.body = '[Removed when the account was deleted]'; }
       for (const q of db.quotes || []) if (q.customerId === u.id || (q.contact && q.contact.email && q.contact.email === u.email)) { q.customerId = null; q.contact = { ...q.contact, name: label, phone: '', email: '' }; }
       for (const [tok, x] of Object.entries(db.sessions)) if (x.userId === u.id) delete db.sessions[tok];
       db.pushSubs = (db.pushSubs || []).filter((x) => x.userId !== u.id);
@@ -2966,6 +2977,136 @@
 
     def('dispatch.messages', STAFF, false, (ctx) => db.messages.filter((m) => m.companyId === ctx.company.id).slice(0, 150).map(hideLink));
 
+    // ---- Two-way texting ------------------------------------------------------
+    // Passengers (and drivers) can answer any text. Every company sends from the
+    // platform's one Twilio number, so a reply goes to the company that last
+    // texted that number, or else the one with that passenger's next ride. The
+    // office reads and answers it in the Inbox.
+    function phoneKey(s) {
+      const d = String(s || '').replace(/\D/g, '');
+      return d.length === 11 && d[0] === '1' ? d.slice(1) : d.length >= 7 ? d : '';
+    }
+    const inboxOf = () => db.inbox || (db.inbox = []);
+    const STOP_WORDS = /^(stop|stopall|unsubscribe|cancel|end|quit|optout|revoke)$/i;
+    const START_WORDS = /^(start|unstop|yes)$/i;
+    const LIVE_STATUS = ['confirmed', 'assigned', 'accepted', 'en_route', 'arrived', 'on_board'];
+    // The ride a conversation is most likely about: in progress or next, else the latest.
+    function tripForPhone(companyId, key) {
+      const mine = db.trips.filter((t) => t.companyId === companyId && phoneKey(t.passengerPhone) === key);
+      const live = mine.filter((t) => LIVE_STATUS.includes(t.status)).sort((a, b) => a.pickupAt.localeCompare(b.pickupAt));
+      return live[0] || mine.sort((a, b) => b.pickupAt.localeCompare(a.pickupAt))[0] || null;
+    }
+    function personForPhone(companyId, key) {
+      const t = tripForPhone(companyId, key);
+      const u = db.users.find((x) => x.companyId === companyId && x.active !== false && ['driver', 'customer'].includes(x.role) && phoneKey(x.phone) === key);
+      if (u && u.role === 'driver') return { name: u.name, who: 'Driver', trip: null };
+      return { name: (t && t.passengerName) || (u && u.name) || '', who: t || u ? 'Passenger' : '', trip: t };
+    }
+    function routeInbound(key) {
+      const m = db.messages.find((x) => x.channel === 'sms' && x.companyId && phoneKey(x.recipient) === key);
+      const ib = inboxOf().find((x) => x.companyId && x.key === key);
+      const last = m && ib ? (m.at > ib.at ? m : ib) : m || ib;
+      if (last && findCompany(last.companyId)) return last.companyId;
+      const t = db.trips.filter((x) => phoneKey(x.passengerPhone) === key).sort((a, b) => (LIVE_STATUS.includes(b.status) - LIVE_STATUS.includes(a.status)) || b.pickupAt.localeCompare(a.pickupAt))[0];
+      if (t) return t.companyId;
+      const u = db.users.find((x) => x.companyId && x.active !== false && phoneKey(x.phone) === key);
+      return u ? u.companyId : null;
+    }
+    const tripBrief = (t) => t ? { id: t.id, ref: t.ref, pickupAt: t.pickupAt, pickup: t.pickup, status: t.status } : null;
+    function conversations(c) {
+      const by = new Map();
+      for (const x of inboxOf()) {
+        if (x.companyId !== c.id || x.key === 'deleted') continue;
+        const k = by.get(x.key) || { key: x.key, phone: '', last: null, unread: 0, count: 0 };
+        if (!k.last) k.last = { body: x.body, at: x.at, dir: x.dir };
+        if (!k.phone && x.phone) k.phone = x.phone;
+        if (x.dir === 'in' && !x.read) k.unread++;
+        k.count++;
+        by.set(x.key, k);
+      }
+      return [...by.values()].map((k) => { const p = personForPhone(c.id, k.key); return { ...k, name: p.name, who: p.who, trip: tripBrief(p.trip) }; })
+        .sort((a, b) => b.last.at.localeCompare(a.last.at));
+    }
+    const unreadTexts = (c) => inboxOf().filter((x) => x.companyId === c.id && x.dir === 'in' && !x.read && x.key !== 'deleted').length;
+    // One conversation: what they texted, what the office answered, and the
+    // automatic texts the system sent that number, oldest first.
+    function threadView(c, key, tripId) {
+      const p = personForPhone(c.id, key);
+      const t = (tripId && db.trips.find((x) => x.id === tripId && x.companyId === c.id)) || p.trip;
+      const mine = inboxOf().filter((x) => x.companyId === c.id && x.key === key);
+      const linked = new Set(mine.map((x) => x.msgId).filter(Boolean));
+      const auto = db.messages.filter((m) => m.companyId === c.id && m.channel === 'sms' && !linked.has(m.id) && phoneKey(m.recipient) === key)
+        .map((m) => ({ id: m.id, dir: 'out', auto: true, body: hideLink(m).body, at: m.at, ref: m.ref, delivery: m.delivery || null }));
+      const status = new Map(db.messages.filter((m) => linked.has(m.id)).map((m) => [m.id, m.delivery || null]));
+      // Only the latest few automatic texts, for context. Both lists are newest
+      // first; reversed, a tie on time keeps the order they happened.
+      auto.length = Math.min(auto.length, 6); auto.reverse();
+      const items = [...mine.slice().reverse().map((x) => ({ id: x.id, dir: x.dir, body: x.body, at: x.at, by: x.by || '', ref: x.ref || '', stop: !!x.stop, delivery: x.msgId ? status.get(x.msgId) || null : null })), ...auto]
+        .sort((a, b) => a.at.localeCompare(b.at)).slice(-120);
+      const phone = (mine.find((x) => x.phone) || {}).phone || (t && t.passengerPhone) || '';
+      const texted = mine.some((x) => x.dir === 'in');
+      return { key, phone, name: p.name || (t && t.passengerName) || '', who: p.who || (t ? 'Passenger' : ''), trip: tripBrief(t), items,
+        optedOut: !!(db.smsOptOut || {})[key], noConsent: !texted && !!t && t.smsOk === false && phoneKey(t.passengerPhone) === key };
+    }
+    function threadKey(ctx, a) {
+      if (a.tripId) {
+        const t = ownTrip(ctx, str(a.tripId, 40));
+        const key = phoneKey(t.passengerPhone);
+        if (!key) fail('This ride has no passenger phone number.');
+        return { key, tripId: t.id };
+      }
+      const key = phoneKey(a.key);
+      if (!key) fail('Conversation not found.', 404);
+      return { key, tripId: null };
+    }
+    def('dispatch.inbox', STAFF, false, (ctx) => ({ conversations: conversations(ctx.company).slice(0, 200), unread: unreadTexts(ctx.company), live: !!(opts.live && opts.live.sms) }));
+    def('dispatch.inboxCount', STAFF, false, (ctx) => ({ unread: unreadTexts(ctx.company) }));
+    // Opening a conversation marks it read.
+    def('dispatch.inboxThread', STAFF, false, (ctx, a) => {
+      const { key, tripId } = threadKey(ctx, a);
+      for (const x of inboxOf()) if (x.companyId === ctx.company.id && x.key === key && x.dir === 'in' && !x.read) { x.read = true; x.readBy = ctx.user.name; ctx.dirty = true; }
+      return threadView(ctx.company, key, tripId);
+    });
+    def('dispatch.inboxSend', STAFF, true, (ctx, a) => {
+      const c = ctx.company;
+      const { key, tripId } = threadKey(ctx, a);
+      const text = str(a.body, 600).trim();
+      if (!text) fail('Type a message first.');
+      const th = threadView(c, key, tripId);
+      if (th.optedOut) fail('They texted STOP, so texts to this number are off until they text START. Call or email them instead.');
+      if (th.noConsent) fail("This passenger didn't agree to texts when they booked. Call or email them instead.");
+      if (!th.phone) fail('No phone number for this conversation.');
+      const t = th.trip && db.trips.find((x) => x.id === th.trip.id);
+      // One number serves every company, so each text says who it's from.
+      const body = text.toLowerCase().startsWith(c.name.toLowerCase()) ? text : `${c.name}: ${text}`;
+      const at = now().toISOString();
+      const msgId = id('msg');
+      db.messages.unshift({ id: msgId, companyId: c.id, tripId: t ? t.id : null, ref: t ? t.ref : 'Inbox', at, recipient: th.phone, channel: 'sms', body, kind: 'chat', reply: true });
+      if (db.messages.length > 600) db.messages.length = 600;
+      inboxOf().unshift({ id: id('sms'), companyId: c.id, key, phone: th.phone, dir: 'out', body, at, by: ctx.user.name, tripId: t ? t.id : null, ref: t ? t.ref : '', msgId });
+      for (const x of inboxOf()) if (x.companyId === c.id && x.key === key && x.dir === 'in' && !x.read) x.read = true;
+      if (db.inbox.length > 3000) db.inbox.length = 3000;
+      meterTexts();
+      return threadView(c, key, tripId);
+    });
+    // A text that came in (from the server's Twilio webhook, or the sample data).
+    function takeInbound({ from, body, sid, media, at }) {
+      const key = phoneKey(from);
+      if (!key) return { ok: false };
+      if (sid && inboxOf().some((x) => x.sid === sid)) return { ok: true, duplicate: true };
+      const words = String(body || '').trim();
+      const stop = STOP_WORDS.test(words), start = START_WORDS.test(words);
+      db.smsOptOut = db.smsOptOut || {};
+      if (stop) db.smsOptOut[key] = now().toISOString();
+      if (start) delete db.smsOptOut[key];
+      const companyId = routeInbound(key);
+      const p = companyId ? personForPhone(companyId, key) : { trip: null };
+      inboxOf().unshift({ id: id('sms'), companyId, key, phone: str(from, 30), dir: 'in', body: str(words, 1600) + (media ? `${words ? ' ' : ''}[${media === 1 ? 'a picture' : media + ' pictures'}]` : ''), at: at || now().toISOString(), read: false,
+        tripId: p.trip ? p.trip.id : null, ref: p.trip ? p.trip.ref : '', sid: str(sid, 64), ...(stop ? { stop: true } : {}), ...(start ? { start: true } : {}) });
+      if (db.inbox.length > 3000) db.inbox.length = 3000;
+      return { ok: true, routed: !!companyId };
+    }
+
     // ---- Text allowance -----------------------------------------------------
     // Each company gets textPlan().included texts a month (the owner can set a
     // different number per company). Bought packs top it up and never expire.
@@ -3018,12 +3159,14 @@
         const c = findCompany(m.companyId);
         if (!c) continue;
         // No text consent from the passenger: email instead, or don't send.
+        // A reply to someone who texted in is fine; a number that texted STOP is not.
         const tc = m.tripId && db.trips.find((x) => x.id === m.tripId);
-        if (tc && tc.smsOk === false && m.recipient === tc.passengerPhone) {
-          const em = tc.passengerEmail;
+        const stopped = (db.smsOptOut || {})[phoneKey(m.recipient)];
+        if ((tc && tc.smsOk === false && m.recipient === tc.passengerPhone && !m.reply) || stopped) {
+          const em = tc && m.recipient === tc.passengerPhone ? tc.passengerEmail : '';
           const dup = em && db.messages.some((o) => o !== m && o.channel === 'email' && o.recipient === em && o.tripId === m.tripId && Math.abs(new Date(o.at) - new Date(m.at)) < 60e3);
           if (em && !dup) { m.channel = 'email'; m.recipient = em; m.noTexts = 'email'; }
-          else { m.noTexts = dup ? 'emailed' : 'held'; m.delivery = { status: 'optout', error: dup ? 'No text consent. The same message went by email.' : 'No text consent from the passenger. Not sent.' }; }
+          else { m.noTexts = dup ? 'emailed' : 'held'; m.delivery = { status: 'optout', error: stopped ? 'They texted STOP, so texts to this number are off.' : dup ? 'No text consent. The same message went by email.' : 'No text consent from the passenger. Not sent.' }; }
           continue;
         }
         touched.add(c);
@@ -4484,6 +4627,19 @@
         const pp = ag(trip(cap, sofia, { pickup: 'Hotel Sorrento, 900 Madison St, Seattle, WA', dropoff: 'Seattle-Tacoma International Airport (SEA)', pickupAt: at(60 * 24 * 6 + 300), vehicleType: 'Sedan', passengers: 1, passengerName: 'Lucas Moreau', passengerPhone: '(917) 555-0136', passengerEmail: 'lucas@example.com' }, { createdMin: -60 * 26 }), 'passenger');
         delete pp.card;
       }
+      // Sample text conversations in Carina's inbox.
+      {
+        const live = db.trips.filter((t) => t.companyId === cap.id && t.passengerPhone && LIVE_STATUS.includes(t.status)).sort((x, y) => x.pickupAt.localeCompare(y.pickupAt));
+        const [t1, t2] = [...new Map(live.map((t) => [phoneKey(t.passengerPhone), t])).values()];
+        if (t2) {
+          takeInbound({ from: t2.passengerPhone, body: 'Hi, could we bring one more suitcase? We have 3 now.', at: at(-185) }); inboxOf()[0].read = true;
+          const body = `Carina Ride: No problem, ${String(t2.passengerName).split(' ')[0]}. The car has room for 3 suitcases. See you then!`, msgId = id('msg');
+          db.messages.unshift({ id: msgId, companyId: cap.id, tripId: t2.id, ref: t2.ref, at: at(-178), recipient: t2.passengerPhone, channel: 'sms', body, kind: 'chat', reply: true });
+          inboxOf().unshift({ id: id('sms'), companyId: cap.id, key: phoneKey(t2.passengerPhone), phone: t2.passengerPhone, dir: 'out', body, at: at(-178), by: 'Nadia Hassan', tripId: t2.id, ref: t2.ref, msgId });
+          takeInbound({ from: t2.passengerPhone, body: 'Perfect, thank you!', at: at(-176) }); inboxOf()[0].read = true;
+        }
+        if (t1) takeInbound({ from: t1.passengerPhone, body: 'Hello, is it ok if the driver picks us up at the side entrance instead? The front is under construction.', at: new Date(now().getTime() + 1000).toISOString() });
+      }
       // Sample messages are history, never sent out.
       for (const m of db.messages) { m.delivery = { status: 'logged' }; m.metered = true; }
       // Sample text usage: Carina is close to its monthly allowance.
@@ -4671,6 +4827,13 @@
     return {
       call,
       pay,
+      // A text someone sent to the platform's Twilio number.
+      async inboundSms(msg) {
+        await ensure();
+        const r = takeInbound(msg || {});
+        if (r.ok && !r.duplicate) save(db);
+        return r;
+      },
       // Texts and emails waiting to go out, marked as sending. Anything older
       // than olderThanMin is only logged (old data, or a restart mid-send).
       async outbox(olderThanMin) {
