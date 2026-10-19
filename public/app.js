@@ -789,6 +789,18 @@
     ['Reports and team access', 'Sales, drivers, vehicles and customers at a glance, QuickBooks export, and access levels for every dispatcher.'],
   ];
   const KEEP_PCT = 100 - ((C.DEFAULT_AUTOFARM && C.DEFAULT_AUTOFARM.ratePct) || 87.5);
+  // The outcomes for an operator, in plain words (the features list says how).
+  const LP_BENEFITS = [
+    ['Never turn a client away', 'When your cars are booked, a partner covers the ride. Your client gets picked up, still books through you, and comes back to you next time.'],
+    ['Extra income without extra cars', `Every ride you send to a partner earns you a commission (${KEEP_PCT}% of the fare by default), and partners send rides your way on slow days.`],
+    ['More bookings, day and night', 'Clients book and get a price on your own page at any hour, even while you sleep or drive. Bookings land on your dispatch board.'],
+    ['Get paid on time, every time', 'The card is charged when the client books. Waiting time and extra stops go on the same card after the ride. No chasing payments, no cash.'],
+    ['Fewer phone calls', 'Passengers get their confirmation, a reminder, the chauffeur’s name and a live tracking link automatically, and can text back when they need you.'],
+    ['Fewer missed pickups', 'Airport pickups follow the flight, delays move the pickup time, and you’re alerted when a ride has no driver or a chauffeur hasn’t set off.'],
+    ['Look like a big company', 'Your name, logo and colors on the booking page, every text and email, and the phone app your clients install.'],
+    ['Less time on paperwork', 'Corporate invoices, travel agent commissions, driver pay and reports are worked out for you, with a QuickBooks export.'],
+    ['Partners in other cities', 'Your clients travel. With member companies in other cities, you can book their pickup wherever they land and keep them as your client.'],
+  ];
   const CONTACT_EMAIL = C.PLATFORM_EMAIL || 'info@limorelay.com';
   const mailLink = (cls = '') => `<a${cls ? ` class="${cls}"` : ''} href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>`;
   const LP_FAQ = [
@@ -863,6 +875,10 @@
           <dl class="lp-earn-math"><dt>JFK to Manhattan fare</dt><dd>$150.00</dd><dt>Paid to the New York company</dt><dd>$${(150 * (100 - KEEP_PCT) / 100).toFixed(2)}</dd><dt class="em">Your commission</dt><dd class="em">$${(150 * KEEP_PCT / 100).toFixed(2)}</dd></dl>
           <p class="small faint">The same works for any ride you send to a partner when your own cars are busy.</p>
         </div>
+      </section>
+      <section class="lp-sec" id="lp-benefits">
+        <div class="lp-head"><h2>What you get out of it</h2><p class="muted">What changes for your company once you join.</p></div>
+        <div class="lp-grid lp-grid3">${LP_BENEFITS.map(([t, d]) => `<div class="lp-card lp-benefit"><h3>${esc(t)}</h3><p class="small muted">${esc(d)}</p></div>`).join('')}</div>
       </section>
       <section class="lp-sec" id="lp-features">
         <div class="lp-head"><h2>The tools we run our own company on</h2><p class="muted">Every member gets the same software Carina Ride uses every day, for airport transfers, hourly charters, weddings, corporate travel and group events.</p></div>
