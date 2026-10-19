@@ -241,6 +241,7 @@
   const HOME = { customer: 'customer', driver: 'driver', admin: 'dispatch', dispatcher: 'dispatch', owner: 'owner' };
   const DEMO_LOGINS = [
     { key: 'customer', label: 'Customer', email: 'jane@demo.com', who: 'Jane Porter', what: 'Books rides with Carina Ride, pays and follows her trips.' },
+    { key: 'business', label: 'Business booker', email: 'owen@northlake.demo', who: 'Owen Park, Northlake Architects', what: 'Books business rides on his company’s account and saves 6% as credit for his own rides.' },
     { key: 'driver', label: 'Driver', email: 'marcus@carina.demo', who: 'Marcus Bell', what: 'Accepts trips and moves them from pickup to drop-off on his phone.' },
     { key: 'dispatch', label: 'Dispatch', email: 'dispatch@carina.demo', who: 'Nadia Hassan, Carina Ride', what: 'Runs the board, assigns drivers and vehicles, takes phone bookings.' },
     { key: 'agent', label: 'Travel agent', email: 'sofia@travel.demo', who: 'Sofia Reyes, Emerald City Travel', what: 'Books rides for her clients, picks who pays, and tracks her commission.' },
@@ -258,7 +259,7 @@
     setAppIdentity(co, session && session.user);
     const u = session && session.user;
     const roleName = u ? ({ customer: 'Customer', driver: 'Driver', admin: 'Company admin', dispatcher: 'Dispatcher', owner: 'Platform owner' }[u.role]) : '';
-    const demoKey = u ? (u.role === 'admin' || u.role === 'dispatcher' ? 'dispatch' : u.role) : '';
+    const demoKey = u ? (u.role === 'admin' || u.role === 'dispatcher' ? 'dispatch' : (DEMO_LOGINS.find((d) => d.email === u.email) || {}).key || u.role) : '';
     app.innerHTML = `
       <header class="topbar">
         ${co ? `<div class="wordmark"><span class="seal">${esc(initials(co.name))}</span>
@@ -960,7 +961,7 @@
       ${opts && opts.note ? `<p class="small faint">${esc(opts.note)}</p>` : ''}</div>`;
   }
   function quoteLines(q) {
-    return q.lines.map((l) => `<div class="qline ${l.kind === 'discount' ? 'disc' : ''}"><span>${esc(l.label)}</span><span class="num">${l.amount == null ? '' : (l.amount < 0 ? '−' + money(-l.amount) : money(l.amount))}</span></div>`).join('');
+    return q.lines.map((l) => `<div class="qline ${l.kind === 'discount' || l.kind === 'credit' ? 'disc' : ''}"><span>${esc(l.label)}</span><span class="num">${l.amount == null ? '' : (l.amount < 0 ? '−' + money(-l.amount) : money(l.amount))}</span></div>`).join('');
   }
   // Address autofill. Suggestions come from places.suggest (simulated today,
   // Google Places later). Picking one fills the field and fires 'input'.
@@ -1235,6 +1236,7 @@
     const dflt = defaultPickup();
     const init = Object.assign({ service: 'transfer', date: dflt.slice(0, 10), time: dflt.slice(11, 16), pickup: '', dropoff: '', hours: opts.info.rates.minHours, passengers: 1, vehicleType: (vt[0] || {}).type, flight: '', notes: '', passengerName: '', passengerPhone: '', passengerEmail: '', smsOk: opts.mode === 'dispatch', childSeats: 0, meetGreet: false, stops: 0, promoCode: '', accountId: '', poNumber: '', costCenter: '' }, opts.initial || {});
     const accts = opts.accounts || [];
+    const creditBal = opts.mode === 'customer' ? (opts.credit || 0) : 0;
     if (init.service === 'airport') init.service = 'transfer';
     const pr = init.prefs || {};
     const state = { bags: 0, signName: '', repOn: false, repUntil: '', retOn: false, landOn: false, landDest: '', landDrop: '', retDate: init.date, retTime: '', retFlight: '', prefTemp: pr.temp || '', prefMusic: pr.music || '', prefQuiet: !!pr.quiet, ...init };
@@ -1307,6 +1309,7 @@
             <label class="field" data-acct><span id="bk-po-label">PO number</span><input id="bk-po" name="poNumber" value="${esc(state.poNumber)}" autocomplete="off"></label>
             <label class="field" data-acct><span>Cost center <span class="faint">(optional)</span></span><input id="bk-cc" name="costCenter" value="${esc(state.costCenter)}" autocomplete="off"></label>
           </div>` : ''}
+          ${creditBal > 0 ? `<label class="switch creditsw" id="bk-creditf"><input type="checkbox" id="bk-credit" ${state.useCredit !== false ? 'checked' : ''}><span>Use my business ride credit (<b>${money(creditBal)}</b> available) on this ride</span></label>` : ''}
           <div class="field"><span>Extras</span>
             <div class="grid3">
               <label class="field"><span class="small muted">Child seats (${money(ad.childSeat)} each)</span><input id="bk-child" name="childSeats" type="number" min="0" max="4" value="${esc(state.childSeats)}"></label>
@@ -1357,6 +1360,7 @@
       $('#bk-drop-label', form).textContent = state.service === 'hourly' ? 'Drop-off address (optional)' : 'Drop-off address';
       const acc = accts.find((a) => a.id === state.accountId);
       $$('[data-acct]', form).forEach((el) => { el.hidden = !acc; });
+      const crf = $('#bk-creditf', form); if (crf) crf.hidden = !!acc;
       const pol = $('#bk-po-label', form); if (pol) pol.innerHTML = acc && acc.requirePo ? 'PO number <span class="faint">(required)</span>' : 'PO number <span class="faint">(optional)</span>';
       const airport = C.isAirport(state.pickup) || C.isAirport(state.dropoff);
       $('#bk-service-hint', form).textContent = state.service !== 'hourly' && airport ? 'Airport flat rate applies' : '';
@@ -1457,6 +1461,7 @@
       if (retOn && state.service !== 'hourly') { out.returnAt = rwhen && !isNaN(rwhen) ? rwhen.toISOString() : 'missing'; out.returnFlight = retFlight; }
       delete out.cardNo; delete out.cardExp; delete out.payDriver;
       if (!agent) delete out.payBy;
+      const crb = $('#bk-credit', host); out.useCredit = !!(crb && crb.checked && !out.accountId);
       if ($('#bk-cardno', host) && !(agent && state.payBy === 'passenger')) out.card = { number: state.cardNo || $('#bk-cardno', host).value, exp: state.cardExp || $('#bk-cardexp', host).value };
       return out;
     };
@@ -1498,6 +1503,7 @@
             ${rq ? `<div class="qline"><span>First ride</span><span class="num">${money(q.total)}</span></div><div class="qline"><span>Return ride${rq.miles ? `, about ${rq.miles} mi` : ''}</span><span class="num">${money(rq.total)}</span></div><details class="small"><summary>First ride details</summary>${quoteLines(q)}</details>` : `<div>${quoteLines(q)}</div>`}
             ${lpOn ? `<div class="qline"><span>${dispatch ? 'Pickup' : 'Ride'} when ${dispatch ? 'they land' : 'you land'} in ${esc(lp.dest.city)}${lp.estimate ? ' (estimate)' : ''}</span><span class="num">${money(lp.price)}</span></div>` : ''}
             ${state.repOn && repeatCount() ? `<div class="qline"><span>Repeats ${repeatCount()} more time${repeatCount() === 1 ? '' : 's'} (about ${money(q.total + (rq ? rq.total : 0))} each, charged 24 hours before each ride)</span><span class="num">${money((q.total + (rq ? rq.total : 0)) * repeatCount())}</span></div>` : ''}
+            ${(() => { const ac = accts.find((a) => a.id === state.accountId); return ac && ac.reward === 'credit' && ac.pct ? `<p class="small note ok" id="bk-earns">This business ride saves you <b>${money(Math.round(q.subtotal * ac.pct) / 100)}</b> credit (${ac.pct}%) for your own personal rides, once it's done.</p>` : ''; })()}
             ${q.promoError ? `<div class="err small">${esc(q.promoError)}</div>` : ''}`;
           fbox.innerHTML = flightBox(q.flight, { note: q.flight && q.flight.kind === 'arrival' && q.flight.delayMin ? 'This flight is running late today. If it still is on the day, we move your pickup to match.' : '' });
         } catch (e) { out.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
@@ -1732,11 +1738,13 @@
       v.innerHTML = '<p class="faint">Loading…</p>';
       let accounts = [];
       let clients = [];
-      try { ui.info = ui.info || await api('public.company', { slug: session.company.slug }); accounts = await api('customer.accounts'); if (AG) clients = await api('customer.clients'); } catch (e) { return showErr(v, e); }
+      let credit = 0;
+      const personal = ui.personal; ui.personal = false;
+      try { ui.info = ui.info || await api('public.company', { slug: session.company.slug }); accounts = await api('customer.accounts'); if (AG) clients = await api('customer.clients'); else credit = (await api('customer.credit')).balance; } catch (e) { return showErr(v, e); }
       v.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Book a ride</h1>${AG ? `<p class="muted">For a client of ${esc(AG.agency)}. They get the texts from the chauffeur; you get a copy of the confirmation.</p>` : ''}</div></div><div id="bk"></div>`;
       bookingForm($('#bk', v), {
-        info: ui.info, mode: AG ? 'agent' : 'customer', accounts, clients,
-        initial: AG ? { accountId: accounts[0] ? accounts[0].id : '' } : { passengerName: session.user.name, passengerPhone: session.user.phone, accountId: accounts[0] ? accounts[0].id : '', prefs: session.user.prefs || null, signName: (session.user.prefs && session.user.prefs.signName) || '' },
+        info: ui.info, mode: AG ? 'agent' : 'customer', accounts, clients, credit,
+        initial: AG ? { accountId: accounts[0] ? accounts[0].id : '' } : { passengerName: session.user.name, passengerPhone: session.user.phone, accountId: accounts[0] && !personal ? accounts[0].id : '', prefs: session.user.prefs || null, signName: (session.user.prefs && session.user.prefs.signName) || '' },
         quoteFn: (b) => api('customer.quote', { booking: b }),
         onSubmit: async (b) => { const t = await api('customer.book', { booking: b }); await afterBook(t, b); if (AG) { toast(bookedMsg(t) + (b.payBy === 'passenger' ? ` We texted ${b.passengerName.split(' ')[0]} a link to add a card.` : '')); tab = 'trips'; draw(); return; } if (b.prefs) setSession({ ...session, user: { ...session.user, prefs: { ...b.prefs, signName: b.signName || '' } } }); toast(bookedMsg(t)); tab = 'trips'; draw(); },
       });
@@ -1744,9 +1752,9 @@
     async function drawTrips(v) {
       let last = '', showAll = false;
       const refresh = async (silent) => {
-        let trips, quotes;
-        try { [trips, quotes] = await Promise.all([api('customer.trips'), api('customer.quotes')]); } catch (e) { if (!silent) showErr(v, e); return; }
-        const sig = JSON.stringify([trips, quotes]);
+        let trips, quotes, cr = null;
+        try { [trips, quotes, cr] = await Promise.all([api('customer.trips'), api('customer.quotes'), AG ? null : api('customer.credit')]); } catch (e) { if (!silent) showErr(v, e); return; }
+        const sig = JSON.stringify([trips, quotes, cr]);
         const openQuotes = quotes.filter((q) => ['new', 'sent'].includes(q.status) || (q.status === 'accepted' && q.trips.some((t) => !['completed', 'cancelled'].includes(t.status))));
         if (sig === last) return; last = sig;
         const upcoming = trips.filter((t) => !['completed', 'cancelled'].includes(t.status)).reverse();
@@ -1754,6 +1762,10 @@
         v.innerHTML = `
           <div class="pagehead"><div class="stack" style="gap:4px"><h1>${AG ? 'Bookings' : 'My trips'}</h1><p class="muted">Hello ${esc(session.user.name.split(' ')[0])}. ${AG ? `Rides you booked for ${esc(AG.agency)} clients with ${esc(session.company.name)}.` : `Your rides with ${esc(session.company.name)}.`}</p></div>
             <div class="row"><a class="btn" href="#request.${esc(session.company.slug)}">Request an event quote</a><button class="btn brand" type="button" id="new-trip">Book a ride</button></div></div>
+          ${cr && (cr.balance > 0 || cr.account || cr.log.length) ? `<div class="panel creditbox" id="cr-box"><div class="spread"><div class="stack" style="gap:2px"><span class="label">Business ride credit</span><b class="num" style="font-size:24px">${money(cr.balance)}</b></div>
+              ${cr.balance > 0 ? '<button class="btn sm" type="button" id="cr-book">Use it on a ride</button>' : ''}</div>
+            <p class="small muted">${cr.account ? `Every business ride you book for ${esc(cr.account.name)} saves ${cr.account.pct}% as credit. ` : ''}Use it on your own personal rides: it comes off the price when you book.</p>
+            ${cr.log.length ? `<details class="small"><summary>History</summary>${cr.log.map((x) => `<div class="qline"><span>${esc(fmtDay(x.at))} · ${esc(x.note || x.kind)}</span><span class="num">${x.amount < 0 ? '−' + money(-x.amount) : '+' + money(x.amount)}</span></div>`).join('')}</details>` : ''}</div>` : ''}
           <div class="stack">
             ${openQuotes.length ? `<span class="label">Event quotes</span>${openQuotes.map((q) => `<a class="trip quotecard" href="#quote.${esc(q.token)}"><div class="spread"><div class="row"><b>${esc(q.eventName || q.eventType)}</b><span class="mono faint small">${esc(q.number)}</span></div>${qPill(q)}</div>
               <div class="spread small"><span class="muted">${q.eventDate ? esc(fmtDT(q.eventDate)) : ''} · ${((n) => `${n} vehicle${n === 1 ? '' : 's'}`)(q.lines.reduce((s2, l) => s2 + l.count, 0))}</span><span>${q.status === 'sent' ? `<b>${money(q.total)}</b> · Review and book →` : q.status === 'new' ? 'Being priced' : 'View →'}</span></div></a>`).join('')}` : ''}
@@ -1764,6 +1776,7 @@
           </div>`;
         const more = $('#past-more', v); if (more) more.onclick = () => { showAll = true; last = ''; refresh(); };
         $('#new-trip', v).onclick = () => { tab = 'book'; draw(); };
+        const crb = $('#cr-book', v); if (crb) crb.onclick = () => { ui.personal = true; tab = 'book'; draw(); };
         $$('[data-act]', v).forEach((b) => { b.onclick = () => act(b.dataset.act, trips.find((t) => t.id === b.dataset.id), b); });
       };
       current = { poll: true, refresh };
@@ -3558,16 +3571,19 @@
       const owed = list.reduce((s2, a) => s2 + a.openBalance, 0), late = list.reduce((s2, a) => s2 + a.overdueBalance, 0), ub = list.reduce((s2, a) => s2 + a.unbilledTotal, 0);
       host.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Company accounts</h1><p class="muted">Businesses that book on account and pay by monthly invoice. Their bookers' trips are billed to the account, with an optional PO number and cost center.</p></div><button class="btn primary" type="button" id="ac-add">Add account</button></div>
         <div class="tiles" style="margin-bottom:14px"><div class="tile"><span class="label">Not invoiced yet</span><b class="num">${money(ub)}</b></div><div class="tile"><span class="label">Invoiced, unpaid</span><b class="num">${money(owed)}</b></div><div class="tile"><span class="label">Overdue</span><b class="num ${late ? 'bad' : ''}">${money(late)}</b></div></div>
-        <div class="tablewrap"><table><thead><tr><th>Company</th><th>Terms</th><th class="r">Discount</th><th class="r">Bookers</th><th class="r">Upcoming</th><th class="r">Not invoiced</th><th class="r">Unpaid</th><th></th></tr></thead><tbody>
+        <div class="tablewrap"><table><thead><tr><th>Company</th><th>Terms</th><th class="r">Reward</th><th class="r">Bookers</th><th class="r">Upcoming</th><th class="r">Not invoiced</th><th class="r">Unpaid</th><th></th></tr></thead><tbody>
         ${list.map((a) => `<tr class="click" data-id="${a.id}"><td><b>${esc(a.name)}</b>${a.active ? '' : ' <span class="pill off">Inactive</span>'}${a.requirePo ? ' <span class="pill">PO required</span>' : ''}<br><span class="small faint">${esc(a.billingEmail || 'No billing email')}</span></td>
-          <td class="small">${TERMS[a.terms]}</td><td class="r num">${a.discountPct ? a.discountPct + '%' : '—'}</td><td class="r num">${a.bookers}</td><td class="r num">${a.upcoming}</td>
+          <td class="small">${TERMS[a.terms]}</td><td class="r num">${rewardText(a, true)}</td><td class="r num">${a.bookers}</td><td class="r num">${a.upcoming}</td>
           <td class="r num">${a.unbilledCount ? `${money(a.unbilledTotal)}<br><span class="small faint">${a.unbilledCount} trip${a.unbilledCount === 1 ? '' : 's'}</span>` : '—'}</td><td class="r num">${a.openBalance ? money(a.openBalance) : '—'}</td><td>${a.overdueBalance ? '<span class="pill s-cancelled">Overdue</span>' : ''}</td></tr>`).join('') || '<tr><td colspan="8" class="faint">No company accounts yet.</td></tr>'}
         </tbody></table></div>`;
       $('#ac-add', host).onclick = () => accountForm(null, redraw);
       $$('tr[data-id]', host).forEach((r) => { r.onclick = () => accountModal(r.dataset.id, redraw); });
     }
+    // Business reward: a % off each business ride, or the same % saved as
+    // credit the booker spends on their own personal rides.
+    const rewardText = (a, short) => !a.discountPct ? (short ? '—' : 'No discount') : a.reward === 'credit' ? `${a.discountPct}% ${short ? 'credit' : 'saved as credit for bookers’ personal rides'}` : `${a.discountPct}% ${short ? 'off' : 'discount'}`;
     function accountForm(a, done) {
-      a = a || { terms: 30, discountPct: 0, active: true };
+      a = a || { terms: 30, discountPct: 6, reward: 'discount', active: true };
       const m = openModal({
         title: a.id ? `Edit ${a.name}` : 'New company account',
         body: `<form id="af" class="stack" novalidate>
@@ -3576,8 +3592,9 @@
             <label class="field"><span>Billing email</span><input name="billingEmail" type="email" value="${esc(a.billingEmail || '')}"><span class="hint">Invoices are emailed here.</span></label></div>
           <div class="grid2"><label class="field"><span>Phone</span><input name="phone" value="${esc(a.phone || '')}"></label>
             <label class="field"><span>Billing address</span><input name="address" value="${esc(a.address || '')}"></label></div>
-          <div class="grid2"><label class="field"><span>Payment terms</span><select name="terms">${Object.entries(TERMS).map(([k, l]) => `<option value="${k}" ${Number(k) === a.terms ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-            <label class="field"><span>Account discount (%)</span><input name="discountPct" type="number" min="0" max="50" step="0.5" value="${a.discountPct || 0}"><span class="hint">Taken off every trip billed to this account.</span></label></div>
+          <label class="field" style="max-width:260px"><span>Payment terms</span><select name="terms">${Object.entries(TERMS).map(([k, l]) => `<option value="${k}" ${Number(k) === a.terms ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <div class="grid2"><label class="field"><span>Business reward</span><select name="reward" id="af-reward"><option value="discount" ${a.reward !== 'credit' ? 'selected' : ''}>Discount on business rides</option><option value="credit" ${a.reward === 'credit' ? 'selected' : ''}>Credit for the booker’s personal rides</option></select></label>
+            <label class="field"><span>Reward (%)</span><input name="discountPct" type="number" min="0" max="50" step="0.5" value="${a.discountPct || 0}"><span class="hint" id="af-rhint"></span></label></div>
           <label class="switch"><input type="checkbox" name="requirePo" ${a.requirePo ? 'checked' : ''}><span>Require a PO number on every booking</span></label>
           <label class="switch"><input type="checkbox" name="active" ${a.active !== false ? 'checked' : ''}><span>Active (bookers can bill this account)</span></label>
           <label class="field"><span>Notes</span><textarea name="notes">${esc(a.notes || '')}</textarea></label>
@@ -3585,6 +3602,8 @@
         footer: '<button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="af-save">Save</button>',
       });
       $('[data-close]', m).onclick = closeModal;
+      const rh = () => { $('#af-rhint', m).textContent = $('#af-reward', m).value === 'credit' ? 'Business rides are billed at full price; this % of each completed ride goes to the booker as credit for their own rides.' : 'Taken off every trip billed to this account.'; };
+      $('#af-reward', m).onchange = rh; rh();
       $('#af-save', m).onclick = (e) => busy(e.currentTarget, async () => {
         try { const r = await api('dispatch.saveAccount', { ...formData($('#af', m)), id: a.id }); closeModal(); toast(`${r.name} saved.`); done && done(r); } catch (err) { showErr($('#af-err', m), err); }
       });
@@ -3598,7 +3617,7 @@
       const m = openModal({
         title: a.name, wide: true, onClose: done,
         body: `<div class="stack">
-          <div class="spread"><div class="small muted">${esc(TERMS[a.terms])} · ${a.discountPct ? a.discountPct + '% discount' : 'No discount'}${a.requirePo ? ' · PO required' : ''} · ${esc(a.billingEmail || 'no billing email')}${a.contact ? ' · ' + esc(a.contact) : ''}</div><button class="btn sm" type="button" id="am-edit">Edit account</button></div>
+          <div class="spread"><div class="small muted">${esc(TERMS[a.terms])} · ${esc(rewardText(a))}${a.requirePo ? ' · PO required' : ''} · ${esc(a.billingEmail || 'no billing email')}${a.contact ? ' · ' + esc(a.contact) : ''}</div><button class="btn sm" type="button" id="am-edit">Edit account</button></div>
           <div class="tiles"><div class="tile"><span class="label">Not invoiced yet</span><b class="num">${money(a.unbilledTotal)}</b></div><div class="tile"><span class="label">Invoiced, unpaid</span><b class="num">${money(a.openBalance)}</b></div><div class="tile"><span class="label">Overdue</span><b class="num ${a.overdueBalance ? 'bad' : ''}">${money(a.overdueBalance)}</b></div></div>
           <div class="panel stack"><div class="spread"><h2>Completed trips not invoiced</h2>
             ${d.unbilled.length ? `<div class="row"><label class="small muted" for="am-thru">Up to</label><input class="input" style="width:auto" type="date" id="am-thru" value="${today}"><label class="switch small"><input type="checkbox" id="am-send" checked><span>Email it</span></label><button class="btn primary sm" type="button" id="am-inv">Create invoice</button></div>` : ''}</div>
@@ -3607,7 +3626,7 @@
             ${d.invoices.length ? `<div class="tablewrap"><table><thead><tr><th>Number</th><th>Issued</th><th>Due</th><th class="r">Trips</th><th class="r">Total</th><th>Status</th></tr></thead><tbody>${d.invoices.map((i) => `<tr class="click" data-inv="${i.id}"><td class="mono">${esc(i.number)}</td><td class="small">${esc(fmtDate(i.issuedAt))}</td><td class="small">${esc(fmtDate(i.dueAt))}</td><td class="r num">${i.lines.length}</td><td class="r num">${money(i.total)}</td><td>${invPill(i)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="small faint">No invoices yet.</p>'}</div>
           <div class="grid2">
             <div class="panel stack"><h2>Bookers</h2><p class="small muted">People who can bill this account when they book online. Phone bookings can bill it from the booking form.</p>
-              ${d.bookers.map((u) => `<div class="spread small"><span><b>${esc(u.name)}</b> · <span class="mono">${esc(u.email)}</span>${u.hasLogin ? '' : ' <span class="faint">(no login yet)</span>'}</span><button class="linkbtn small" type="button" data-rmb="${u.id}">Remove</button></div>`).join('') || '<p class="small faint">No bookers yet.</p>'}
+              ${d.bookers.map((u) => `<div class="spread small"><span><b>${esc(u.name)}</b> · <span class="mono">${esc(u.email)}</span>${u.hasLogin ? '' : ' <span class="faint">(no login yet)</span>'}${u.credit ? ` · <span class="pill paid">${money(u.credit)} credit</span>` : ''}</span><button class="linkbtn small" type="button" data-rmb="${u.id}">Remove</button></div>`).join('') || '<p class="small faint">No bookers yet.</p>'}
               <form class="row" id="am-addb" novalidate><input class="input grow" name="name" placeholder="Name" style="min-width:110px"><input class="input grow" name="email" type="email" placeholder="Email" style="min-width:150px"><button class="btn sm" type="submit">Add booker</button></form><div id="am-err"></div></div>
             <div class="panel stack"><h2>Upcoming trips</h2>${d.upcoming.length ? d.upcoming.map((t) => `<div class="spread small"><span>${esc(fmtDT(t.pickupAt))} · ${esc(t.passengerName)}</span><span class="mono faint">${esc(t.ref)}</span></div>`).join('') : '<p class="small faint">None booked.</p>'}</div>
           </div></div>`,

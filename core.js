@@ -555,7 +555,10 @@
       total = round2(num(b.priceOverride, total));
       lines.push({ label: b.quoteNumber ? `Price from quote ${b.quoteNumber}` : 'Fixed price set by dispatch', amount: null, kind: 'override' });
     }
-    return { service, vehicleType: type, miles, minutes: route.minutes, lines, fare, surcharges: round2(surcharges), addons: round2(addons), discounts: round2(discounts), subtotal, gratuity, tax, extras, adjustment: adj, total, promoError: ctx.promoError || null };
+    // Credit saved from business rides, spent on a personal ride.
+    let credit = 0;
+    if (ctx.creditMax > 0 && total > 0) { credit = round2(Math.min(total, ctx.creditMax)); total = round2(total - credit); lines.push({ label: 'Your business ride credit', amount: -credit, kind: 'credit' }); }
+    return { service, vehicleType: type, miles, minutes: route.minutes, lines, fare, surcharges: round2(surcharges), addons: round2(addons), discounts: round2(discounts), subtotal, gratuity, tax, extras, adjustment: adj, credit, total, promoError: ctx.promoError || null };
   }
 
   // ---- Factory --------------------------------------------------------------
@@ -669,7 +672,7 @@
     const findCompany = (cid) => db.companies.find((c) => c.id === cid);
     const findVehicle = (vid) => db.vehicles.find((v) => v.id === vid);
     const findAccount = (c, aid) => aid ? (db.accounts || []).find((x) => x.id === aid && x.companyId === c.id) : null;
-    const pubUser = (u) => u && ({ id: u.id, name: u.name, email: u.email, phone: u.phone, role: u.role, companyId: u.companyId, active: u.active !== false, vehicleId: u.vehicleId || null, available: !!u.available, ...(u.role === 'customer' ? { prefs: pubUserPrefs(u), card: pubCard(u.card), agent: u.agent ? { agency: u.agent.agency, commissionPct: agentPct(u), commissionOn: u.agent.commissionOn !== false } : null } : {}), ...(u.role === 'driver' ? { photo: u.photo || '' } : {}), ...(u.role === 'admin' || u.role === 'dispatcher' ? { perms: staffPerms(u) } : {}) });
+    const pubUser = (u) => u && ({ id: u.id, name: u.name, email: u.email, phone: u.phone, role: u.role, companyId: u.companyId, active: u.active !== false, vehicleId: u.vehicleId || null, available: !!u.available, ...(u.role === 'customer' ? { prefs: pubUserPrefs(u), card: pubCard(u.card), agent: u.agent ? { agency: u.agent.agency, commissionPct: agentPct(u), commissionOn: u.agent.commissionOn !== false } : null, credit: u.credit ? u.credit.balance : 0 } : {}), ...(u.role === 'driver' ? { photo: u.photo || '' } : {}), ...(u.role === 'admin' || u.role === 'dispatcher' ? { perms: staffPerms(u) } : {}) });
     const bagsCfg = (c) => ({ ...DEFAULT_BAGS, ...((c.rates && c.rates.bags) || {}) });
     const pcfg = (c) => ({ ...DEFAULT_POLICY, ...(c.policy || {}) });
     const agentCfg = (c) => ({ ...DEFAULT_AGENTS, ...((c && c.agents) || {}) });
@@ -1130,6 +1133,7 @@
         passengerPhone: str(b.passengerPhone, 30),
         // Ride texts only with the passenger's OK (booking page checkbox). Left out = not asked here.
         ...('smsOk' in b ? { smsOk: b.smsOk === true || b.smsOk === 'on' || b.smsOk === 'true' } : {}),
+        ...(b.useCredit === true || b.useCredit === 'true' ? { useCredit: true } : {}),
         passengerEmail: str(b.passengerEmail, 120).toLowerCase(),
         childSeats: Math.max(0, Math.min(4, Math.round(num(b.childSeats, 0)))),
         meetGreet: !!b.meetGreet && b.meetGreet !== 'false',
@@ -1218,16 +1222,59 @@
 
     function priceCtx(company, b, customer, promoCode, excludeId) {
       const ctx = { busy: isBusy(company, b, excludeId), discountPct: discountFor(company, customer, b.accountId) };
+      const bal = creditOf(customer);
+      if (bal > 0 && !b.accountId && b.useCredit && b.useCredit !== 'false' && !customer.agent) ctx.creditMax = bal;
       const pr = findPromo(company, promoCode);
       if (pr.error) ctx.promoError = pr.error;
       if (pr.promo) ctx.promo = { code: pr.promo.code, type: pr.promo.type, value: pr.promo.value };
       return ctx;
     }
 
-    // The better of the customer's own discount and the billed account's.
+    // The better of the customer's own discount and the billed account's. An
+    // account that saves credit instead gives no discount on the ride itself.
     function discountFor(company, customer, accountId) {
       const acc = findAccount(company, accountId);
-      return Math.max(customer && customer.discountPct ? customer.discountPct : 0, acc && acc.discountPct ? acc.discountPct : 0);
+      return Math.max(customer && customer.discountPct ? customer.discountPct : 0, acc && acc.discountPct && acc.reward !== 'credit' ? acc.discountPct : 0);
+    }
+
+    // ---- Business ride credit ---------------------------------------------------
+    // A company account can save its discount as credit instead: each completed
+    // business ride adds that % of the ride (before gratuity and tax) to the
+    // booker's credit, and the booker spends it on their own personal rides.
+    const creditOf = (u) => (u && u.credit ? u.credit.balance : 0);
+    function addCredit(u, amount, entry) {
+      u.credit = u.credit || { balance: 0, log: [] };
+      u.credit.balance = round2(u.credit.balance + amount);
+      u.credit.log = [{ at: now().toISOString(), amount: round2(amount), ...entry }, ...u.credit.log].slice(0, 200);
+    }
+    const creditBase = (t) => round2(t.price.subtotal);
+    // Runs before every save: earns credit on newly completed business rides,
+    // gives back credit from a cancelled personal ride (or a price that fell).
+    function syncCredits() {
+      for (const t of db.trips) {
+        if (t.accountId && t.status === 'completed' && !t.creditEarned && t.customerId) {
+          const acc = db.accounts.find((a) => a.id === t.accountId);
+          const done = t.history.filter((h) => h.status === 'completed').pop();
+          if (!acc || acc.reward !== 'credit' || !(acc.discountPct > 0) || !done || (acc.rewardSince && done.at < acc.rewardSince)) continue;
+          const u = findUser(t.customerId);
+          if (!u || u.role !== 'customer') continue;
+          const amount = round2(creditBase(t) * acc.discountPct / 100);
+          if (amount <= 0) continue;
+          t.creditEarned = { amount, userId: u.id, pct: acc.discountPct, at: now().toISOString() };
+          addCredit(u, amount, { kind: 'earned', tripId: t.id, ref: t.ref, note: `${acc.discountPct}% of business ride ${t.ref} (${acc.name})` });
+        }
+        const cu = t.creditUsed;
+        if (cu && !cu.refunded) {
+          const u = findUser(cu.userId);
+          if (!u) continue;
+          if (t.status === 'cancelled') { cu.refunded = now().toISOString(); addCredit(u, cu.amount, { kind: 'refund', tripId: t.id, ref: t.ref, note: `Ride ${t.ref} cancelled` }); }
+          else if (t.price.credit < cu.amount - 0.004) {
+            const back = round2(cu.amount - t.price.credit);
+            cu.amount = round2(t.price.credit); t.priceCtx.creditMax = cu.amount;
+            addCredit(u, back, { kind: 'refund', tripId: t.id, ref: t.ref, note: `Price of ${t.ref} went down` });
+          }
+        }
+      }
     }
     function newTrip(company, booking, customer, source, by, promoCode, quiet) {
       const ctx = priceCtx(company, booking, customer, promoCode);
@@ -1249,6 +1296,12 @@
       };
       if (t.payment.method === 'card_on_file') { t.cardToken = randomId(6); if (customer && customer.card) t.card = clone(customer.card); }
       t.price = quote(company, t, ctx);
+      if (t.price.credit > 0 && customer) {
+        // The credit is taken now; repricing never takes more than this.
+        ctx.creditMax = t.price.credit;
+        t.creditUsed = { amount: t.price.credit, userId: customer.id, at: now().toISOString() };
+        addCredit(customer, -t.price.credit, { kind: 'spent', tripId: t.id, ref: t.ref, note: `Used on ride ${t.ref}` });
+      } else delete ctx.creditMax;
       if (ctx.promo) { const p = company.pricing.promos.find((x) => x.code === ctx.promo.code); if (p) p.uses = (p.uses || 0) + 1; }
       log(t, 'confirmed', by);
       db.trips.push(t);
@@ -2051,7 +2104,13 @@
     // Customer
     def('customer.accounts', ['customer'], false, (ctx) => {
       const acc = findAccount(ctx.company, ctx.user.accountId);
-      return acc && acc.active !== false ? [{ id: acc.id, name: acc.name, requirePo: !!acc.requirePo }] : [];
+      return acc && acc.active !== false ? [{ id: acc.id, name: acc.name, requirePo: !!acc.requirePo, reward: acc.reward === 'credit' ? 'credit' : 'discount', pct: acc.discountPct || 0 }] : [];
+    });
+    // The booker's credit from business rides, and what earned or used it.
+    def('customer.credit', ['customer'], false, (ctx) => {
+      const acc = findAccount(ctx.company, ctx.user.accountId);
+      const c = ctx.user.credit || { balance: 0, log: [] };
+      return { balance: c.balance, log: c.log.slice(0, 50).map(clone), account: acc && acc.active !== false && acc.reward === 'credit' ? { name: acc.name, pct: acc.discountPct || 0 } : null };
     });
     def('customer.quote', ['customer'], false, (ctx, a) => { const b = a.booking || {}; return { ...quoteFor(ctx.company, b, ctx.user), flight: flightPreview(ctx.company, b), landing: landingPreview(ctx.company, b) }; });
     def('customer.book', ['customer'], true, (ctx, a) => {
@@ -3612,8 +3671,11 @@
       const disc = num(a.discountPct, 0);
       if (!(disc >= 0 && disc <= 50)) fail('Discount must be between 0 and 50%.');
       const terms = Number(a.terms);
-      const fields = { name, contact: str(a.contact, 80), billingEmail: email, phone: str(a.phone, 30), address: str(a.address, 200), terms: ACCOUNT_TERMS.includes(terms) ? terms : 30, discountPct: round2(disc), requirePo: !!a.requirePo && a.requirePo !== 'false', notes: str(a.notes, 400), active: a.active !== false && a.active !== 'false' };
+      const fields = { name, contact: str(a.contact, 80), billingEmail: email, phone: str(a.phone, 30), address: str(a.address, 200), terms: ACCOUNT_TERMS.includes(terms) ? terms : 30, discountPct: round2(disc), reward: a.reward === 'credit' ? 'credit' : 'discount', requirePo: !!a.requirePo && a.requirePo !== 'false', notes: str(a.notes, 400), active: a.active !== false && a.active !== 'false' };
       let acc;
+      const was = a.id ? ownAccount(ctx, a.id).reward : null;
+      // Credit counts from when it's switched on, not for rides already done.
+      if (fields.reward === 'credit' && was !== 'credit') fields.rewardSince = now().toISOString();
       if (a.id) { acc = ownAccount(ctx, a.id); Object.assign(acc, fields); }
       else { acc = { id: id('acct'), companyId: ctx.company.id, createdAt: now().toISOString(), ...fields }; db.accounts.push(acc); }
       return accountSummary(acc);
@@ -4267,7 +4329,7 @@
       if (ctx.company && sweepDispatch(ctx.company)) ctx.dirty = true;
       const result = await m.fn(ctx, args || {});
       if (m.write) { if (ctx.company) sweepDispatch(ctx.company, true); syncFarmouts(); }
-      if (m.write || ctx.dirty) { meterTexts(); save(db); }
+      if (m.write || ctx.dirty) { syncCredits(); meterTexts(); save(db); }
       return result;
     }
 
@@ -4550,6 +4612,17 @@
         night.history.push({ at: night.sentAt, what: 'Sent to the customer', by: 'Nadia Hassan' }, { at: night.decidedAt, what: 'Declined by the customer: A bit over budget for us this time.', by: 'Tyler Brooks' });
         // The request texts were for the live flow; keep the log tidy with the ones that matter.
         db.messages = db.messages.filter((m) => !(m.kind === 'quote' && m.quoteId !== corp.id));
+      }
+      // A business account that saves its 6% as credit for the booker's personal rides.
+      {
+        const nl = { id: id('acct'), companyId: cap.id, name: 'Northlake Architects', contact: 'Owen Park', billingEmail: 'accounts@northlake.demo', phone: '(206) 555-0124', address: '3400 Stone Way N, Seattle, WA 98103', terms: 30, discountPct: 6, reward: 'credit', rewardSince: at(-60 * 24 * 60), requirePo: false, notes: 'Owen books client visits; his 6% goes to credit.', active: true, createdAt: at(-60 * 24 * 60) };
+        db.accounts.push(nl);
+        const owen = await mkUser({ role: 'customer', companyId: cap.id, name: 'Owen Park', email: 'owen@northlake.demo', phone: '(206) 555-0124', accountId: nl.id });
+        for (const [d, pu, dr, vt] of [[21, 'Northlake Architects, 3400 Stone Way N, Seattle, WA', 'Seattle-Tacoma International Airport (SEA), main terminal', 'Sedan'], [12, 'Seattle-Tacoma International Airport (SEA), main terminal', 'Northlake Architects, 3400 Stone Way N, Seattle, WA', 'Sedan'], [5, 'Northlake Architects, 3400 Stone Way N, Seattle, WA', 'Bellevue Square, 575 Bellevue Square, Bellevue, WA', 'SUV']]) {
+          const t = trip(cap, owen, { pickup: pu, dropoff: dr, pickupAt: at(-60 * 24 * d), vehicleType: vt, passengers: 1 }, { createdMin: -60 * 24 * (d + 2), driver: marcus, vehicle: sClass, status: 'completed', source: 'online' });
+          t.accountId = nl.id; t.payment = { status: 'unpaid', method: 'account', paidAt: null };
+        }
+        syncCredits();
       }
       // Booked days ahead for tomorrow morning, so the 24-hour reminder goes out.
       trip(cap, null, { pickup: 'Hotel Sorrento, 900 Madison St, Seattle, WA', dropoff: 'Seattle-Tacoma International Airport (SEA), main terminal', pickupAt: at(60 * 22), vehicleType: 'SUV', passengers: 2, passengerName: 'Laura Bennett', passengerPhone: '(206) 555-0148', passengerEmail: 'laura.bennett@example.com', notes: 'Two large suitcases.' }, { createdMin: -60 * 24 * 3, source: 'phone' });
@@ -4907,7 +4980,7 @@
         await ensure();
         let changed = false;
         for (const c of db.companies) if (c.status === 'active' && sweepDispatch(c, true)) changed = true;
-        if (changed) { syncFarmouts(); meterTexts(); save(db); }
+        if (changed) { syncFarmouts(); syncCredits(); meterTexts(); save(db); }
         return changed;
       },
     };
