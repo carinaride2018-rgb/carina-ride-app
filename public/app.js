@@ -815,11 +815,11 @@
     v.innerHTML = `<div class="lp">
       <section class="signin lp-hero">
         <div class="stack" style="gap:18px">
-          <span class="label">Limo booking &amp; dispatch software</span>
-          <h1>Run your limo company from one screen.</h1>
-          <p class="lede">${PLATFORM} gives chauffeured transportation companies an online booking page, a live dispatch board, a driver app and automatic passenger updates. Every ride is booked, assigned, tracked and paid in one place.</p>
-          <div class="row"><button class="btn brand lp-cta" type="button" data-scroll="lp-trial">Start your 30-day free trial</button><button class="btn lp-cta" type="button" data-scroll="lp-pricing">See pricing</button></div>
-          <ul class="lp-ticks small"><li>No card needed for the trial</li><li>Dispatch, driver and passenger apps included</li><li>Your brand on every page and message</li></ul>
+          <span class="label">From one limo operator to another</span>
+          <h1>Let’s help each other grow.</h1>
+          <p class="lede">We run Carina Ride, a chauffeur company in Seattle, and built ${PLATFORM} to run our own rides. Now we’re inviting operators in every city to join us: send each other the rides we can’t cover, look after each other’s clients when they travel, and share the tools that keep our own company running.</p>
+          <div class="row"><button class="btn brand lp-cta" type="button" data-scroll="lp-trial">Join us, free for 30 days</button><button class="btn lp-cta" type="button" data-scroll="lp-help">How it works</button></div>
+          <ul class="lp-ticks small"><li>No card needed to join</li><li>Partners in other cities for your clients</li><li>Booking, dispatch, driver and passenger apps included</li></ul>
         </div>
         <form class="panel stack" id="signin-form" novalidate>
           <h2>Sign in</h2>
@@ -832,6 +832,14 @@
         </form>
       </section>
       <figure class="lp-visual"><img src="${esc(LOGO.hero || 'icons/hero.svg')}" alt="LimoRelay dispatch board, passenger phone app and a chauffeured sedan" width="1200" height="640"></figure>
+      <section class="lp-sec" id="lp-help">
+        <div class="lp-head"><h2>How we help each other</h2><p class="muted">Small operators lose rides every week because the cars are busy or the client is flying somewhere we don’t cover. Together, we don’t have to.</p></div>
+        <div class="lp-grid lp-grid3">
+          <div class="lp-card"><h3>Your cars are full? A partner drives.</h3><p class="small muted">Send the ride to a trusted company nearby instead of turning your client away. Your client stays yours, and you keep a commission.</p></div>
+          <div class="lp-card"><h3>A quiet day? Take their rides.</h3><p class="small muted">Partners send you the rides they can’t cover. Accept the ones that fit, and balances are settled in one place.</p></div>
+          <div class="lp-card"><h3>Your clients travel? We’re there.</h3><p class="small muted">When your client lands in another city, a member company picks them up with the same care you would, booked through your own page.</p></div>
+        </div>
+      </section>
       ${DEMO ? '' : `<section class="lp-sec lp-video" id="lp-video">
         <div class="stack" style="gap:6px"><span class="label">See it in 60 seconds</span><h2>Booking, dispatch, driver and passenger apps in one minute.</h2></div>
         <video controls playsinline preload="none" poster="media/limorelay-promo-poster.jpg" width="1280" height="720"><source src="media/limorelay-promo.mp4" type="video/mp4">Your browser can't play this video. <a href="media/limorelay-promo.mp4">Download it</a>.</video>
@@ -844,10 +852,10 @@
       <section class="lp-sec lp-earn" id="lp-earn">
         <div class="lp-earn-copy stack">
           <span class="lp-kicker">Farm-out commission</span>
-          <h2>Earn on every ride your clients take in another city.</h2>
+          <h2>Helping each other pays, too.</h2>
           <p>Your client flies out of your city and books their pickup at the other end through you. A LimoRelay company there drives the ride, and you keep a commission on it: ${KEEP_PCT}% of the fare by default, set by you.</p>
           <ul class="lp-ticks"><li>Clients book it with their flight on your booking page</li><li>Priced at the local company’s rates</li><li>Your client stays your client</li></ul>
-          <div><button class="btn brand lp-cta" type="button" data-scroll="lp-trial">Start earning on farm-outs</button></div>
+          <div><button class="btn brand lp-cta" type="button" data-scroll="lp-trial">Join the network</button></div>
         </div>
         <div class="lp-earn-card">
           <span class="small faint">Example</span>
@@ -857,11 +865,11 @@
         </div>
       </section>
       <section class="lp-sec" id="lp-features">
-        <div class="lp-head"><h2>Everything a chauffeur business needs</h2><p class="muted">Made for airport transfers, hourly charters, weddings, corporate travel and group events.</p></div>
+        <div class="lp-head"><h2>The tools we run our own company on</h2><p class="muted">Every member gets the same software Carina Ride uses every day, for airport transfers, hourly charters, weddings, corporate travel and group events.</p></div>
         <div class="lp-grid">${LP_FEATURES.map(([t, d]) => `<div class="lp-card"><h3>${esc(t)}</h3><p class="small muted">${esc(d)}</p></div>`).join('')}</div>
       </section>
       <section class="lp-sec">
-        <div class="lp-head"><h2>Up and running in a day</h2></div>
+        <div class="lp-head"><h2>Joining takes a day</h2></div>
         <ol class="lp-steps">
           <li><b>Set up your company</b><span class="small muted">Add your rates, vehicles, logo and colors. We help you import upcoming rides.</span></li>
           <li><b>Add your chauffeurs</b><span class="small muted">Each driver gets their own login and signs in to the driver app on their phone.</span></li>
@@ -869,7 +877,7 @@
         </ol>
       </section>
       <section class="lp-sec" id="lp-pricing">
-        <div class="lp-head"><h2>Simple pricing</h2><p class="muted">Every plan includes the dispatch board, the driver app and the passenger app. Try any plan free for 30 days.</p></div>
+        <div class="lp-head"><h2>Membership</h2><p class="muted">Kept low so every operator can join. Every plan includes the network, the dispatch board, the driver app and the passenger app. Try any plan free for 30 days.</p></div>
         <div class="lp-plans">
           ${plan('founding', `For the first ${P.founding.limit} companies. Price locked for 2 years.`, ['All features', `${P.founding.texts.toLocaleString()} passenger texts a month`, 'No setup fee', 'Unlimited bookings'], true)}
           ${plan('standard', 'For growing companies.', ['All features', `${P.standard.texts.toLocaleString()} passenger texts a month`, `$${P.standard.setup} setup, waived on yearly billing`, 'Unlimited bookings'])}
@@ -878,14 +886,14 @@
         <p class="small faint" style="margin-top:12px">Extra texts are $15 for 500. Card processing is billed by Stripe directly to your company; ${PLATFORM} takes no share of your fares.</p>
       </section>
       <section class="lp-sec lp-trial" id="lp-trial">
-        <div class="stack" style="gap:8px"><h2>Start your 30-day free trial</h2><p class="muted">Tell us about your company and we’ll set up your account, usually the same day. No card needed. Questions first? Email ${mailLink()}.</p></div>
+        <div class="stack" style="gap:8px"><h2>Join us, free for 30 days</h2><p class="muted">Tell us about your company and we’ll set up your account, usually the same day. We’ll also introduce you to the members near you. No card needed. Questions first? Email ${mailLink()}.</p></div>
         <form id="tr-form" class="stack" novalidate>
           <div class="grid2"><label class="field"><span>Your name</span><input id="tr-name" name="name" autocomplete="name"></label><label class="field"><span>Company name</span><input id="tr-company" name="company" autocomplete="organization"></label></div>
           <div class="grid2"><label class="field"><span>Email</span><input id="tr-email" name="email" type="email" autocomplete="email"></label><label class="field"><span>Phone</span><input id="tr-phone" name="phone" type="tel" autocomplete="tel"></label></div>
           <div class="grid2"><label class="field"><span>City</span><input id="tr-city" name="city"></label><label class="field"><span>Vehicles in your fleet</span><select id="tr-fleet" name="fleet"><option value="">Choose</option><option>1-3</option><option>4-10</option><option>11-25</option><option>26+</option></select></label></div>
           <label class="field"><span>Anything we should know? (optional)</span><textarea id="tr-note" name="note" placeholder="The software you use today, when you want to start"></textarea></label>
           <div id="tr-err"></div>
-          <div><button class="btn brand" type="submit" id="tr-go">Request my free trial</button></div>
+          <div><button class="btn brand" type="submit" id="tr-go">Ask to join</button></div>
         </form>
       </section>
       <section class="lp-sec">
