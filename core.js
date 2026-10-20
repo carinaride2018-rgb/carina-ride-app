@@ -597,7 +597,7 @@
     function migrate1to2(d) {
       for (const c of d.companies) { c.pricing = c.pricing || clone(DEFAULT_PRICING); c.flight = c.flight || clone(DEFAULT_FLIGHT); }
       for (const v of d.vehicles) { v.status = v.status || (v.active ? 'active' : 'retired'); v.serviceEvery = v.serviceEvery || 5000; v.odometer = v.odometer || 0; v.lastServiceOdometer = v.lastServiceOdometer || 0; }
-      for (const u of d.users) if (u.role === 'driver') { u.schedule = u.schedule || defaultSchedule(); u.payType = u.payType || 'percent'; u.payRate = u.payRate == null ? 35 : u.payRate; }
+      for (const u of d.users) if (u.role === 'driver') { delete u.schedule; u.payType = u.payType || 'percent'; u.payRate = u.payRate == null ? 35 : u.payRate; }
       for (const t of d.trips) { t.scheduledPickupAt = t.scheduledPickupAt || t.pickupAt; t.priceCtx = t.priceCtx || {}; }
       d.maintenance = d.maintenance || []; d.timeOff = d.timeOff || []; d.payouts = d.payouts || [];
       d.version = 2;
@@ -682,7 +682,6 @@
     const pubUserPrefs = (u) => (u && u.prefs ? clone(u.prefs) : null);
     const cardsOn = (c) => payMode === 'demo' || (payMode === 'stripe' && !!(c.stripe && c.stripe.ready));
     const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), payMode });
-    const defaultSchedule = () => Object.fromEntries(DAYS.map((d) => [d, { on: !['sat', 'sun'].includes(d), start: '07:00', end: '19:00' }]));
 
     async function hashPw(pw, salt) { return hash(String(pw), salt); }
     async function setPassword(u, pw) { u.salt = randomId(8); u.passHash = await hashPw(pw, u.salt); }
@@ -1447,12 +1446,6 @@
       const n = now();
       if (d) {
         if (!d.available && new Date(t.pickupAt).getTime() - n.getTime() < 12 * 3600e3) w.push(`${d.name} is marked off duty.`);
-        const sh = d.schedule && d.schedule[lp.day];
-        if (sh) {
-          const hm = String(lp.hour).padStart(2, '0') + ':' + String(lp.minute).padStart(2, '0');
-          if (!sh.on) w.push(`${d.name} doesn't normally work on ${lp.day[0].toUpperCase() + lp.day.slice(1)}s.`);
-          else if (hm < sh.start || hm > sh.end) w.push(`Pickup is outside ${d.name}'s shift (${sh.start} to ${sh.end}).`);
-        }
         if (dateOk(d.licenseExp) && d.licenseExp < lp.date) w.push(`${d.name}'s driver's license will have expired.`);
         if (dateOk(d.permitExp) && d.permitExp < lp.date) w.push(`${d.name}'s chauffeur permit will have expired.`);
         const clash = db.trips.find((x) => x.id !== t.id && x.driverId === d.id && !['cancelled', 'completed'].includes(x.status) && overlaps(win, tripWindow(x)));
@@ -1519,13 +1512,10 @@
         if (skip.has(d.id)) warnings.push(`${d.name} already passed on this trip.`);
         const where = driverPointFor(d, t);
         const miles = Math.round(milesBetween(where.point, pick) * 10) / 10;
-        // Working outside the usual shift is allowed but ranked lower; anything else rules the driver out.
-        const soft = warnings.filter((w) => /shift|normally work/.test(w));
-        const ok = soft.length === warnings.length;
-        out.push({ driverId: d.id, name: d.name, vehicleId: v ? v.id : null, vehicle: v ? v.name : null, miles, minutes: Math.max(3, Math.round(miles * 2.4 + 2)), from: where.from, warnings, ok, inShift: !soft.length });
+        out.push({ driverId: d.id, name: d.name, vehicleId: v ? v.id : null, vehicle: v ? v.name : null, miles, minutes: Math.max(3, Math.round(miles * 2.4 + 2)), from: where.from, warnings, ok: !warnings.length });
       }
       Object.assign(t, keep);
-      return out.sort((a, b) => (b.ok - a.ok) || (b.inShift - a.inShift) || a.miles - b.miles);
+      return out.sort((a, b) => (b.ok - a.ok) || a.miles - b.miles);
     }
     // Sends the trip to a driver and starts the accept timer.
     function offerTo(t, d, vehicleId, by) {
@@ -2319,7 +2309,7 @@
       const monday = new Date(n); monday.setHours(0, 0, 0, 0); monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
       const week = db.trips.filter((t) => t.driverId === ctx.user.id && t.status === 'completed' && new Date(t.pickupAt) >= monday);
       return {
-        me: { ...pubUser(ctx.user), payType: ctx.user.payType, payRate: ctx.user.payRate, schedule: ctx.user.schedule },
+        me: { ...pubUser(ctx.user), payType: ctx.user.payType, payRate: ctx.user.payRate },
         trips: db.trips.filter((t) => t.driverId === ctx.user.id && t.status !== 'cancelled').sort((x, y) => x.pickupAt.localeCompare(y.pickupAt)).map(tripView),
         week: { from: monday.toISOString(), ...driverPay(ctx.user, week) },
         stats: driverStats(ctx.user, 30),
@@ -3779,7 +3769,7 @@
     // Drivers
     const driverFull = (u) => ({
       ...pubUser(u), licenseNumber: u.licenseNumber || '', licenseExp: u.licenseExp || '', permitExp: u.permitExp || '', hireDate: u.hireDate || '',
-      payType: u.payType || 'percent', payRate: u.payRate == null ? 35 : u.payRate, schedule: u.schedule || defaultSchedule(), notes: u.notes || '',
+      payType: u.payType || 'percent', payRate: u.payRate == null ? 35 : u.payRate, notes: u.notes || '',
     });
     def('dispatch.drivers', STAFF, false, (ctx) => db.users.filter((u) => u.companyId === ctx.company.id && u.role === 'driver').map((u) => {
       const s = driverStats(u, 30);
@@ -4043,7 +4033,7 @@
       if (!u) {
         if (String(a.password || '').length < 8) fail('Set a password of at least 8 characters.');
         u = { id: id('usr'), role, companyId: ctx.company.id, createdAt: now().toISOString(), available: role === 'driver' };
-        if (role === 'driver') Object.assign(u, { schedule: defaultSchedule(), payType: 'percent', payRate: 35 });
+        if (role === 'driver') Object.assign(u, { payType: 'percent', payRate: 35 });
         db.users.push(u);
       }
       if (u.id === ctx.user.id && a.active === false) fail("You can't deactivate your own login.");
@@ -4055,17 +4045,6 @@
         if ('notes' in a) u.notes = str(a.notes, 300);
         if ('payType' in a) u.payType = PAY_TYPES[a.payType] ? a.payType : 'percent';
         if ('payRate' in a) { const r = num(a.payRate, NaN); if (!(r >= 0 && r <= 1000)) fail('Check the pay rate.'); u.payRate = round2(r); }
-        if (a.schedule) {
-          const s = {};
-          for (const d of DAYS) {
-            const x = a.schedule[d] || {};
-            const start = /^\d{2}:\d{2}$/.test(x.start || '') ? x.start : '07:00';
-            const end = /^\d{2}:\d{2}$/.test(x.end || '') ? x.end : '19:00';
-            if (x.on && end <= start) fail(`Shift end must be after start on ${d}.`);
-            s[d] = { on: !!x.on, start, end };
-          }
-          u.schedule = s;
-        }
       }
       if (a.password) {
         if (String(a.password).length < 8) fail('Use a password of at least 8 characters.');
@@ -4521,7 +4500,7 @@
       const day = (d) => new Date(base.getTime() + d * 86400000).toISOString().slice(0, 10);
       const PW = 'demo1234';
       const mkUser = async (o) => { const u = { id: id('usr'), active: true, createdAt: at(-60 * 24 * 40), ...o }; await setPassword(u, PW); db.users.push(u); return u; };
-      const mkDriver = (o) => mkUser({ role: 'driver', schedule: defaultSchedule(), payType: 'percent', payRate: 35, available: true, ...o });
+      const mkDriver = (o) => mkUser({ role: 'driver', payType: 'percent', payRate: 35, available: true, ...o });
       const mkCo = (o) => { const c = { id: id('co'), status: 'active', setupBilled: true, nextRef: 1000, rates: clone(DEFAULT_RATES), pricing: clone(DEFAULT_PRICING), flight: clone(DEFAULT_FLIGHT), network: { joined: true, areas: '', about: o.tagline || '', read: {} }, createdAt: at(-60 * 24 * 75), ...o }; db.companies.push(c); return c; };
       const mkVeh = (c, o) => { const v = { id: id('veh'), companyId: c.id, status: 'active', active: true, serviceEvery: 5000, registrationExp: day(240), insuranceExp: day(150), inspectionExp: day(200), ...o }; v.active = v.status === 'active'; db.vehicles.push(v); return v; };
       const mnt = (v, o) => db.maintenance.push({ id: id('mnt'), companyId: v.companyId, vehicleId: v.id, by: 'Nadia Hassan', vendor: '', notes: '', ...o });
@@ -4553,8 +4532,8 @@
       await mkUser({ role: 'admin', companyId: cap.id, name: 'Nadia Hassan', email: 'dispatch@carina.demo', phone: '(206) 555-0147' });
       // A night-shift dispatcher on the standard access level (everything but reports).
       await mkUser({ role: 'dispatcher', companyId: cap.id, name: 'Omar Haddad', email: 'nights@carina.demo', phone: '(206) 555-0149' });
-      const marcus = await mkDriver({ companyId: cap.id, name: 'Marcus Bell', photo: sampleFace('#c9d6ea', '#8d5a3b', '#1d1612', '#1f2a44'), email: 'marcus@carina.demo', phone: '(206) 555-0181', vehicleId: sClass.id, licenseNumber: 'WA-B4471920', licenseExp: day(410), permitExp: day(190), hireDate: day(-900), payType: 'percent', payRate: 35, schedule: Object.fromEntries(DAYS.map((d) => [d, { on: d !== 'sun', start: '00:00', end: '23:59' }])) });
-      const elena = await mkDriver({ companyId: cap.id, name: 'Elena Ruiz', photo: sampleFace('#ead9c9', '#d9a77f', '#3a2418', '#2b2f38', true), email: 'elena@carina.demo', phone: '(206) 555-0119', vehicleId: spr.id, licenseNumber: 'WA-T88213004', licenseExp: day(700), permitExp: day(320), hireDate: day(-420), payType: 'hourly', payRate: 28, schedule: Object.fromEntries(DAYS.map((d) => [d, { on: true, start: '00:00', end: '23:59' }])) });
+      const marcus = await mkDriver({ companyId: cap.id, name: 'Marcus Bell', photo: sampleFace('#c9d6ea', '#8d5a3b', '#1d1612', '#1f2a44'), email: 'marcus@carina.demo', phone: '(206) 555-0181', vehicleId: sClass.id, licenseNumber: 'WA-B4471920', licenseExp: day(410), permitExp: day(190), hireDate: day(-900), payType: 'percent', payRate: 35 });
+      const elena = await mkDriver({ companyId: cap.id, name: 'Elena Ruiz', photo: sampleFace('#ead9c9', '#d9a77f', '#3a2418', '#2b2f38', true), email: 'elena@carina.demo', phone: '(206) 555-0119', vehicleId: spr.id, licenseNumber: 'WA-T88213004', licenseExp: day(700), permitExp: day(320), hireDate: day(-420), payType: 'hourly', payRate: 28 });
       const tom = await mkDriver({ companyId: cap.id, name: 'Tom Okafor', photo: sampleFace('#d4e4d8', '#5c3a26', '#141010', '#22262e'), email: 'tom@carina.demo', phone: '(206) 555-0133', vehicleId: esc.id, licenseNumber: 'WA-O5521980', licenseExp: day(250), permitExp: day(19), hireDate: day(-200), payType: 'percent', payRate: 32 });
       const sam = await mkDriver({ companyId: cap.id, name: 'Sam Whitfield', email: 'sam@carina.demo', phone: '(206) 555-0166', vehicleId: str8.id, available: false, licenseNumber: 'WA-W2209381', licenseExp: day(90), permitExp: day(-6), hireDate: day(-1500), payType: 'perTrip', payRate: 60 });
       const jane = await mkUser({ role: 'customer', companyId: cap.id, name: 'Jane Porter', email: 'jane@demo.com', phone: '(206) 555-0102' });
@@ -4658,7 +4637,7 @@
       mkVeh(pot, { name: 'Ford Transit Executive', type: 'Sprinter Van', capacity: 12, plate: 'WA TRN-88', color: 'Black', year: 2022, odometer: 52100, lastServiceOdometer: 50000 });
       mkVeh(pot, { name: 'Freightliner Party Bus', type: 'Party Bus', capacity: 30, plate: 'WA BUS-30', color: 'White', year: 2020, odometer: 88200, lastServiceOdometer: 86000 });
       await mkUser({ role: 'admin', companyId: pot.id, name: 'Grace Lin', email: 'dispatch@pugetsound.demo', phone: '(425) 555-0188' });
-      const james = await mkDriver({ companyId: pot.id, name: 'James Carter', photo: sampleFace('#dcdcef', '#f0c8a8', '#7a5532', '#2b2f38'), email: 'james@pugetsound.demo', phone: '(425) 555-0124', vehicleId: tahoe.id, licenseExp: day(600), permitExp: day(240), hireDate: day(-700), schedule: Object.fromEntries(DAYS.map((d) => [d, { on: true, start: '00:00', end: '23:59' }])) });
+      const james = await mkDriver({ companyId: pot.id, name: 'James Carter', photo: sampleFace('#dcdcef', '#f0c8a8', '#7a5532', '#2b2f38'), email: 'james@pugetsound.demo', phone: '(425) 555-0124', vehicleId: tahoe.id, licenseExp: day(600), permitExp: day(240), hireDate: day(-700) });
       const omar = await mkDriver({ companyId: pot.id, name: 'Omar Haddad', photo: sampleFace('#efe2c8', '#b9835c', '#1a1410', '#1d2230'), email: 'omar@pugetsound.demo', phone: '(425) 555-0139', vehicleId: eCls.id, licenseExp: day(380), permitExp: day(150), hireDate: day(-260) });
       cap.network.areas = 'Seattle, Bellevue, Redmond, Tacoma and Everett; SEA, Boeing Field and Paine Field';
       pot.network.areas = 'Seattle, Bellevue, Tacoma, Everett and SEA airport';

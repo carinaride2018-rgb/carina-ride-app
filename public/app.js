@@ -112,7 +112,7 @@
     const KEY = 'livery-demo-db-v2';
     // Bump DEMO_DATA when the sample data changes (new demo logins, new seed
     // rows): visitors who saved an older copy get the fresh sample data.
-    const DEMO_DATA = '43';
+    const DEMO_DATA = '44';
     if (store.get('livery-demo-data') !== DEMO_DATA) { store.set(KEY, null); store.set('livery-session', null); store.set('livery-demo-data', DEMO_DATA); }
     const mem = { db: null };
     const hex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
@@ -3128,7 +3128,7 @@
     async function driverList(host, redraw) {
       let drivers, vehicles;
       try { [drivers, vehicles] = await Promise.all([api('dispatch.drivers'), api('dispatch.vehicles')]); } catch (e) { return showErr(host, e); }
-      host.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Drivers</h1><p class="muted">Each driver signs in to the driver app with their own email and password. Open a driver for their schedule, documents, pay and reviews.</p></div><button class="btn primary" type="button" id="dr-add">Add driver</button></div>
+      host.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Drivers</h1><p class="muted">Each driver signs in to the driver app with their own email and password. Open a driver for their documents, pay and reviews.</p></div><button class="btn primary" type="button" id="dr-add">Add driver</button></div>
         <div class="tablewrap"><table><thead><tr><th>Driver</th><th>Usual vehicle</th><th>Today</th><th class="r">Rating</th><th class="r">Accepts</th><th class="r">On time</th><th class="r">Trips (30 days)</th><th>Documents</th></tr></thead><tbody>
         ${drivers.map((d) => `<tr class="click" data-id="${d.id}"><td><div class="row" style="gap:10px;flex-wrap:nowrap">${face(d.name, d.photo, 'sm')}<div><b>${esc(d.name)}</b><br><span class="mono small faint">${esc(d.phone)}</span></div></div></td>
           <td class="small">${esc((vehicles.find((x) => x.id === d.vehicleId) || {}).name || '—')}</td>
@@ -3140,10 +3140,9 @@
       $$('tr[data-id]', host).forEach((r) => { r.onclick = () => driverModal(r.dataset.id, vehicles, redraw); });
     }
     async function driverModal(id, vehicles, done) {
-      let data = { driver: { name: '', email: '', phone: '', active: true, payType: 'percent', payRate: 35, schedule: Object.fromEntries(C.DAYS.map((d) => [d, { on: !['sat', 'sun'].includes(d), start: '07:00', end: '19:00' }])) }, stats: null, recent: [] };
+      let data = { driver: { name: '', email: '', phone: '', active: true, payType: 'percent', payRate: 35 }, stats: null, recent: [] };
       if (id) { try { data = await api('dispatch.driver', { id }); } catch (e) { return toast(e.message, true); } }
       const d = data.driver, s = data.stats;
-      const DAYN = { mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday', sun: 'Sunday' };
       const m = openModal({
         title: id ? d.name : 'Add driver', wide: true, onClose: done,
         body: `${s ? `<div class="tiles">
@@ -3168,8 +3167,6 @@
             <div class="grid3"><label class="field"><span>Paid by</span><select id="dm-paytype" name="payType">${Object.entries(C.PAY_TYPES).map(([k, l]) => `<option value="${k}" ${d.payType === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
               <label class="field"><span>Rate</span><input id="dm-payrate" name="payRate" type="number" min="0" step="0.5" value="${d.payRate}"><span class="hint">Percent, or dollars per hour or trip. Tips and tolls always go to the driver.</span></label>
               <label class="field"><span>Hire date</span><input id="dm-hire" name="hireDate" type="date" value="${esc(d.hireDate || '')}"></label></div>
-            <h3>Weekly schedule</h3>
-            <div class="sched">${C.DAYS.map((k) => { const x = (d.schedule || {})[k] || { on: false, start: '07:00', end: '19:00' }; return `<label class="switch"><input type="checkbox" data-day="${k}" ${x.on ? 'checked' : ''}><span>${DAYN[k]}</span></label><input class="input" type="time" data-start="${k}" value="${x.start}"><input class="input" type="time" data-end="${k}" value="${x.end}">`; }).join('')}</div>
             <label class="field"><span>Notes</span><textarea id="dm-notes" name="notes">${esc(d.notes || '')}</textarea></label>
             <div id="dm-err"></div>
             <div><button class="btn primary" type="submit">${id ? 'Save driver' : 'Add driver'}</button></div>
@@ -3184,8 +3181,6 @@
       $('#dm', m).onsubmit = async (e) => {
         e.preventDefault();
         const f = formData(e.target);
-        f.schedule = {};
-        for (const k of C.DAYS) f.schedule[k] = { on: $(`[data-day=${k}]`, m).checked, start: $(`[data-start=${k}]`, m).value, end: $(`[data-end=${k}]`, m).value };
         await busy($('button[type=submit]', e.target), async () => {
           try { const r = await api('dispatch.saveDriver', { ...f, id }); toast(id ? 'Driver saved.' : `${r.name} added. They can sign in now.`); if (id) reopen(); else closeModal(); } catch (err) { showErr($('#dm-err', m), err); }
         });
@@ -3229,7 +3224,7 @@
         <form id="ad-form" class="stack" style="max-width:640px" novalidate>
           <fieldset class="fs"><legend>Auto-assign</legend>
             <label class="switch"><input type="checkbox" name="autoAssign" ${r.autoAssign ? 'checked' : ''} ${ro}><span>Send new trips to the best driver automatically</span></label>
-            <p class="small muted">Picks the closest free driver with a car of the booked type. It skips drivers who are off duty, already busy, with expired papers or a car that's in the shop. Drivers working outside their usual shift are used last.</p>
+            <p class="small muted">Picks the closest free driver with a car of the booked type. It skips drivers who are off duty, already busy, with expired papers or a car that's in the shop.</p>
             <label class="field"><span>Start auto-assigning this many hours before pickup</span><input class="input" type="number" name="horizonHours" min="1" max="168" value="${r.horizonHours}" ${ro}></label>
           </fieldset>
           <fieldset class="fs"><legend>Online booking</legend>
