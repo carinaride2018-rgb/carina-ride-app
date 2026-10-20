@@ -2018,7 +2018,7 @@
       if (!user) fail('Email or password is incorrect.', 401);
       if (user.companyId) {
         const c = findCompany(user.companyId);
-        if (c.status !== 'active') fail(`${c.name}'s account is paused. Contact the platform owner.`, 403);
+        if (c.status !== 'active') fail(closedMsg(c), 403);
       }
       const token = randomId(24);
       db.sessions[token] = { userId: user.id, at: now().toISOString() };
@@ -4076,7 +4076,7 @@
 
     // Platform owner
     function monthKey(d) { return d.toISOString().slice(0, 7); }
-    const foundingLeft = (except) => PLANS.founding.limit - db.companies.filter((c) => c.plan === 'founding' && c !== except).length;
+    const foundingLeft = (except) => PLANS.founding.limit - db.companies.filter((c) => c.plan === 'founding' && c !== except && c.status !== 'pending').length;
     const inTrial = (c, at) => !!(c.trialEnds && (at || now().toISOString().slice(0, 10)) < c.trialEnds);
     // What a company pays: its plan's price (the Founding price stays locked),
     // or 10 months once a year on yearly billing.
@@ -4147,7 +4147,7 @@
       const { u } = linkUser(a.token);
       const pw = String(a.password || '');
       if (pw.length < 8) fail('Choose a password of at least 8 characters.');
-      if (u.companyId) { const c = findCompany(u.companyId); if (c && c.status !== 'active') fail(`${c.name}'s account is paused. Contact the platform owner.`, 403); }
+      if (u.companyId) { const c = findCompany(u.companyId); if (c && c.status !== 'active') fail(closedMsg(c), 403); }
       await setPassword(u, pw);
       db.pwTokens = db.pwTokens.filter((r) => r.userId !== u.id);
       for (const [k, sx] of Object.entries(db.sessions)) if (sx.userId === u.id) delete db.sessions[k];
@@ -4162,6 +4162,76 @@
       if (!admins.length) fail(`${c.name} has no admin login.`);
       const links = admins.map((u) => ({ email: u.email, link: sendWelcome(c, u) }));
       return { sent: admins.map((u) => u.email), emailOn: !!live.email, links: live.email ? [] : links };
+    });
+    const closedMsg = (c) => c.status === 'pending'
+      ? `${c.name} is waiting for approval. We'll email you as soon as it's approved.`
+      : `${c.name}'s account is paused. Contact the platform owner.`;
+    // A new company record with LimoRelay's default rates and settings.
+    function makeCompany(f) {
+      const plan = PLANS[f.plan] ? f.plan : 'standard';
+      const prefix = (f.name.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() || 'TRP').padEnd(3, 'X');
+      return {
+        id: id('co'), slug: f.slug, name: f.name, tagline: str(f.tagline, 120), color: /^#[0-9a-f]{6}$/i.test(f.color || '') ? f.color : '#3d4f7c',
+        phone: str(f.phone, 30), email: f.email, status: f.status || 'active', plan,
+        monthlyFee: f.monthlyFee != null && f.monthlyFee !== '' ? round2(num(f.monthlyFee, PLANS[plan].monthly)) : PLANS[plan].monthly,
+        setupFee: f.setupFee != null && f.setupFee !== '' ? round2(num(f.setupFee, PLANS[plan].setup)) : PLANS[plan].setup,
+        billing: f.billing === 'yearly' ? 'yearly' : 'monthly', trialEnds: f.trial ? new Date(now().getTime() + TRIAL_DAYS * 864e5).toISOString().slice(0, 10) : null,
+        priceLockedUntil: plan === 'founding' ? addMonths(now().toISOString(), PLANS.founding.lockMonths).slice(0, 10) : null,
+        setupBilled: false, refPrefix: prefix, timezone: str(f.timezone, 40) || 'America/Los_Angeles', nextRef: 1000, network: defaultNetwork(null),
+        rates: clone(DEFAULT_RATES), pricing: clone(DEFAULT_PRICING), flight: clone(DEFAULT_FLIGHT), createdAt: now().toISOString(),
+      };
+    }
+    const siteUrl = () => (opts.publicUrl || 'https://limorelay.com/').replace(/#.*$/, '');
+    const loginTaken = (email) => db.users.some((u) => u.email === email && u.role !== 'customer');
+    // Companies sign themselves up from the home page. They can't sign in
+    // until the platform owner approves them; the free trial starts then.
+    def('public.companySignup', 'public', true, async (ctx, a) => {
+      const company = str(a.company, 80), name = str(a.name, 80), email = str(a.email, 120).toLowerCase();
+      const phone = str(a.phone, 30), city = str(a.city, 80), fleet = str(a.fleet, 20), note = str(a.note, 600);
+      const pw = String(a.password || '');
+      if (!company) fail('Enter your company name.');
+      if (!name) fail('Enter your name.');
+      if (!emailOk(email)) fail('Enter a valid email address.');
+      if (phone.replace(/\D/g, '').length < 10) fail('Enter your phone number.');
+      if (pw.length < 8) fail('Choose a password of at least 8 characters.');
+      if (!a.terms) fail('Please agree to the Terms to continue.');
+      if (loginTaken(email)) fail('That email already has a login. Sign in, or use Forgot password.');
+      const slug = slugify(a.slug || company);
+      if (!slug || slug.length < 3) fail('Choose a booking link name of at least 3 letters.');
+      if (db.companies.some((c) => c.slug === slug)) fail('That booking link name is taken. Choose another.');
+      if (db.companies.filter((c) => c.status === 'pending' && new Date(c.createdAt).getTime() > now().getTime() - 3600e3).length >= 20) fail('Too many sign-ups right now. Please try again later.', 429);
+      const plan = PLANS[a.plan] ? a.plan : foundingLeft() > 0 ? 'founding' : 'standard';
+      if (plan === 'founding' && foundingLeft() <= 0) fail(`All ${PLANS.founding.limit} Founding places are taken. Choose Standard or Fleet.`);
+      const c = makeCompany({ name: company, slug, plan, phone, email, status: 'pending' });
+      c.signup = { city, fleet, note, at: c.createdAt };
+      db.companies.push(c);
+      const u = { id: id('usr'), role: 'admin', companyId: c.id, name, email, phone, active: true, createdAt: now().toISOString() };
+      await setPassword(u, pw);
+      db.users.push(u);
+      mailUser(u, null, 'signup', `Thank you, ${name.split(' ')[0]}. We've got your sign-up for ${company} on LimoRelay. We review every new company and will email you at ${email} as soon as your account is approved, usually the same day. Your 30-day free trial starts then. Questions? Reply to this email or write to ${PLATFORM_EMAIL}.`);
+      const owner = db.users.find((x) => x.role === 'owner' && x.active !== false);
+      if (owner && owner.email) db.messages.unshift({ id: id('msg'), companyId: null, tripId: null, ref: '', at: c.createdAt, recipient: owner.email, channel: 'email', kind: 'signup', metered: true, replyTo: email,
+        body: `New company sign-up waiting for your approval: ${company}${city ? ', ' + city : ''}. ${name}, ${email}, ${phone}${fleet ? '. Fleet: ' + fleet + ' vehicles' : ''}. Plan: ${PLANS[plan].label}.${note ? ' Note: ' + note : ''} Approve or decline it at ${siteUrl()} under Companies.` });
+      return { ok: true, company, email };
+    });
+    def('owner.reviewSignup', ['owner'], true, (ctx, a) => {
+      const c = findCompany(a.id);
+      if (!c || c.status !== 'pending') fail('That sign-up was not found or was already reviewed.', 404);
+      const admins = db.users.filter((u) => u.companyId === c.id);
+      if (a.approve) {
+        if (c.plan === 'founding' && foundingLeft(c) <= 0) setPlan(c, 'standard');
+        c.status = 'active';
+        c.trialEnds = new Date(now().getTime() + TRIAL_DAYS * 864e5).toISOString().slice(0, 10);
+        c.approvedAt = now().toISOString();
+        for (const u of admins) mailUser(u, null, 'approved', `Good news, ${u.name.split(' ')[0]}: ${c.name} is approved on LimoRelay. Your 30-day free trial has started. Sign in at ${siteUrl()} with ${u.email} and the password you chose, then add your drivers, cars and rates. Your booking page is ${siteUrl()}#book.${c.slug}. Questions? Reply to this email or write to ${PLATFORM_EMAIL}.`);
+        return { ...pubCompany(c), approved: true };
+      }
+      for (const u of admins) mailUser(u, null, 'declined', `Hello ${u.name.split(' ')[0]}, thank you for signing up ${c.name} for LimoRelay. We weren't able to approve this account. If you think this is a mistake, reply to this email or write to ${PLATFORM_EMAIL}.`);
+      const ids = new Set(admins.map((u) => u.id));
+      db.users = db.users.filter((u) => !ids.has(u.id));
+      db.pwTokens = (db.pwTokens || []).filter((r) => !ids.has(r.userId));
+      db.companies = db.companies.filter((x) => x !== c);
+      return { declined: true, name: c.name };
     });
     def('public.requestTrial', 'public', true, (ctx, a) => {
       const name = str(a.name, 80), company = str(a.company, 100), email = str(a.email, 120).toLowerCase();
@@ -4197,7 +4267,7 @@
         const trips = db.trips.filter((t) => t.companyId === c.id && t.pickupAt.slice(0, 7) === m);
         const admin = db.users.find((u) => u.companyId === c.id && u.role === 'admin');
         return {
-          ...pubCompany(c), ...planInfo(c), createdAt: c.createdAt,
+          ...pubCompany(c), ...planInfo(c), createdAt: c.createdAt, signup: c.signup ? clone(c.signup) : null, adminPhone: admin ? admin.phone || '' : '',
           adminEmail: admin ? admin.email : '', adminName: admin ? admin.name : '', adminId: admin ? admin.id : '', drivers: db.users.filter((u) => u.companyId === c.id && u.role === 'driver' && u.active !== false).length,
           vehicles: db.vehicles.filter((v) => v.companyId === c.id && v.status !== 'retired').length,
           tripsMonth: trips.filter((t) => t.status !== 'cancelled').length,
@@ -4219,17 +4289,7 @@
       if (!str(a.adminName, 80)) fail("Enter the company admin's name.");
       if (!emailOk(adminEmail)) fail("Enter the company admin's email.");
       if (a.adminPassword && String(a.adminPassword).length < 8) fail('Make the temporary password at least 8 characters, or leave it blank.');
-      const prefix = (name.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() || 'TRP').padEnd(3, 'X');
-      const c = {
-        id: id('co'), slug, name, tagline: str(a.tagline, 120), color: /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color : '#3d4f7c',
-        phone: str(a.phone, 30), email: adminEmail, status: 'active', plan,
-        monthlyFee: a.monthlyFee != null && a.monthlyFee !== '' ? round2(num(a.monthlyFee, PLANS[plan].monthly)) : PLANS[plan].monthly,
-        setupFee: a.setupFee != null && a.setupFee !== '' ? round2(num(a.setupFee, PLANS[plan].setup)) : PLANS[plan].setup,
-        billing, trialEnds: a.trial ? new Date(now().getTime() + TRIAL_DAYS * 864e5).toISOString().slice(0, 10) : null,
-        priceLockedUntil: plan === 'founding' ? addMonths(now().toISOString(), PLANS.founding.lockMonths).slice(0, 10) : null,
-        setupBilled: false, refPrefix: prefix, timezone: str(a.timezone, 40) || 'America/Los_Angeles', nextRef: 1000, network: defaultNetwork(null),
-        rates: clone(DEFAULT_RATES), pricing: clone(DEFAULT_PRICING), flight: clone(DEFAULT_FLIGHT), createdAt: now().toISOString(),
-      };
+      const c = makeCompany({ ...a, name, slug, plan, billing, email: adminEmail, status: 'active' });
       db.companies.push(c);
       const u = { id: id('usr'), role: 'admin', companyId: c.id, name: str(a.adminName, 80), email: adminEmail, phone: c.phone, active: true, createdAt: now().toISOString() };
       if (a.adminPassword) await setPassword(u, a.adminPassword);

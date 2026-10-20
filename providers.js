@@ -67,7 +67,7 @@ function createProviders(rawEnv, opts) {
     return null;
   }
   const fromAddress = () => { const m = String(env.EMAIL_FROM).match(/<([^>]+)>/); return (m ? m[1] : String(env.EMAIL_FROM)).trim(); };
-  const SUBJECTS = { reminder: 'Ride reminder', quote: 'Your quote', invoice: 'Your invoice', login: 'Your LimoRelay login', reset: 'Reset your password', test: 'LimoRelay test email' };
+  const SUBJECTS = { reminder: 'Ride reminder', quote: 'Your quote', invoice: 'Your invoice', login: 'Your LimoRelay login', reset: 'Reset your password', test: 'LimoRelay test email', signup: 'LimoRelay sign-up', approved: 'Your LimoRelay account is approved', declined: 'Your LimoRelay sign-up' };
   function subjectOf(m) {
     if (SUBJECTS[m.kind]) return `${SUBJECTS[m.kind]}${m.ref ? ' ' + m.ref : ''}`;
     const body = String(m.body || '').replace(new RegExp('^' + escapeRe(m.company.name) + ':\\s*'), '');

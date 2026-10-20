@@ -909,14 +909,17 @@
         <p class="small faint" style="margin-top:12px">Extra texts are $15 for 500. Card processing is billed by Stripe directly to your company; ${PLATFORM} takes no share of your fares.</p>
       </section>
       <section class="lp-sec lp-trial" id="lp-trial">
-        <div class="stack" style="gap:8px"><h2>Join us, free for 30 days</h2><p class="muted">Tell us about your company and we’ll set up your account, usually the same day. We’ll also introduce you to the members near you. No card needed. Questions first? Email ${mailLink()}.</p></div>
+        <div class="stack" style="gap:8px"><h2>Join us, free for 30 days</h2><p class="muted">Sign up your company below. We review every new company and email you when your account is approved, usually the same day. Your 30-day free trial starts then, and we’ll introduce you to the members near you. No card needed. Questions first? Email ${mailLink()}.</p></div>
         <form id="tr-form" class="stack" novalidate>
-          <div class="grid2"><label class="field"><span>Your name</span><input id="tr-name" name="name" autocomplete="name"></label><label class="field"><span>Company name</span><input id="tr-company" name="company" autocomplete="organization"></label></div>
-          <div class="grid2"><label class="field"><span>Email</span><input id="tr-email" name="email" type="email" autocomplete="email"></label><label class="field"><span>Phone</span><input id="tr-phone" name="phone" type="tel" autocomplete="tel"></label></div>
+          <div class="grid2"><label class="field"><span>Company name</span><input id="tr-company" name="company" autocomplete="organization"></label><label class="field"><span>Booking link name</span><input id="tr-slug" name="slug" class="mono" autocapitalize="off" placeholder="your-company"><span class="hint" id="tr-slughint">Your booking page will be ${esc(location.host || 'limorelay.com')}/#book.<b class="mono">your-company</b></span></label></div>
+          <div class="grid2"><label class="field"><span>Your name</span><input id="tr-name" name="name" autocomplete="name"></label><label class="field"><span>Mobile phone</span><input id="tr-phone" name="phone" type="tel" autocomplete="tel"></label></div>
+          <div class="grid2"><label class="field"><span>Email (you sign in with this)</span><input id="tr-email" name="email" type="email" autocomplete="email"></label><label class="field"><span>Choose a password</span><input id="tr-pw" name="password" type="password" autocomplete="new-password" minlength="8"><span class="hint">At least 8 characters.</span></label></div>
           <div class="grid2"><label class="field"><span>City</span><input id="tr-city" name="city"></label><label class="field"><span>Vehicles in your fleet</span><select id="tr-fleet" name="fleet"><option value="">Choose</option><option>1-3</option><option>4-10</option><option>11-25</option><option>26+</option></select></label></div>
+          <label class="field"><span>Membership</span><select id="tr-plan" name="plan">${['founding', 'standard', 'fleet'].map((k) => `<option value="${k}">${esc(P[k].label)}, $${P[k].monthly}/month after the free trial</option>`).join('')}</select></label>
           <label class="field"><span>Anything we should know? (optional)</span><textarea id="tr-note" name="note" placeholder="The software you use today, when you want to start"></textarea></label>
+          <label class="check"><input type="checkbox" id="tr-terms" name="terms" value="1"> <span>I agree to the ${termsLink()} and ${privacyLink()}.</span></label>
           <div id="tr-err"></div>
-          <div><button class="btn brand" type="submit" id="tr-go">Ask to join</button></div>
+          <div><button class="btn brand" type="submit" id="tr-go">Sign up my company</button></div>
         </form>
       </section>
       <section class="lp-sec">
@@ -937,13 +940,18 @@
       });
     };
     $('#si-forgot', v).onclick = () => forgotModal($('#si-email', v).value);
+    let slugEdited = false;
+    const slugOf = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+    const showSlug = () => { $('#tr-slughint b', v).textContent = slugOf($('#tr-slug', v).value) || 'your-company'; };
+    $('#tr-company', v).oninput = () => { if (!slugEdited) { $('#tr-slug', v).value = slugOf($('#tr-company', v).value); showSlug(); } };
+    $('#tr-slug', v).oninput = () => { slugEdited = true; showSlug(); };
     $('#tr-form', v).onsubmit = async (e) => {
       e.preventDefault();
       const f = formData(e.target);
       await busy($('#tr-go', v), async () => {
         try {
-          await api('public.requestTrial', f);
-          $('#tr-form', v).outerHTML = `<div class="note ok" id="tr-done"><b>Thank you, ${esc(f.name.split(' ')[0])}.</b> We’ve got your request for ${esc(f.company)} and will be in touch at ${esc(f.email)} to set up your free trial. You can also reach us at ${mailLink()}.</div>`;
+          await api('public.companySignup', { ...f, terms: $('#tr-terms', v).checked });
+          $('#tr-form', v).outerHTML = `<div class="note ok" id="tr-done"><b>Thank you, ${esc(f.name.split(' ')[0])}.</b> We’ve got your sign-up for ${esc(f.company)}. We’ll email ${esc(f.email)} as soon as it’s approved, usually the same day, and then you can sign in with that email and your password. Questions? Write to ${mailLink()}.</div>`;
         } catch (err) { showErr($('#tr-err', v), err); }
       });
     };
@@ -4098,6 +4106,8 @@
         let list, invoices, leads;
         try { [list, invoices, plans, leads] = await Promise.all([api('owner.companies'), api('owner.invoices'), api('owner.plans'), api('owner.leads')]); } catch (e) { if (!silent) showErr(v, e); return; }
         const sig = JSON.stringify([list, invoices, plans, leads]); if (sig === last) return; last = sig;
+        const pending = list.filter((c) => c.status === 'pending');
+        list = list.filter((c) => c.status !== 'pending');
         const active = list.filter((c) => c.status === 'active');
         const mrr = active.filter((c) => !c.inTrial).reduce((s, c) => s + c.monthlyEquivalent, 0);
         const trials = active.filter((c) => c.inTrial).length;
@@ -4111,7 +4121,14 @@
             <div class="tile"><span class="label">Trips booked this month</span><b>${list.reduce((s, c) => s + c.tripsMonth, 0)}</b></div>
             <div class="tile"><span class="label">Unpaid invoices</span><b>${money0(open)}</b></div>
           </div>
-          ${leads.length ? `<details class="panel" id="co-leads" style="margin-bottom:20px" ${leads.some((l) => l.status === 'new') ? 'open' : ''}><summary><b>Free-trial requests</b> <span class="pill ${leads.some((l) => l.status === 'new') ? 's-assigned' : 'off'} count">${leads.filter((l) => l.status === 'new').length} new</span> <span class="small faint">from the home page. Add the company when you have spoken to them.</span></summary>
+          ${pending.length ? `<section class="panel stack" id="co-pending" style="margin-bottom:20px"><div class="row" style="justify-content:space-between"><h2>Waiting for your approval <span class="pill s-assigned count">${pending.length}</span></h2><span class="small faint">Companies that signed up on the home page. They can sign in once you approve; their 30-day trial starts then.</span></div>
+            <div class="tablewrap"><table><thead><tr><th>Signed up</th><th>Company</th><th>Contact</th><th>City</th><th>Fleet</th><th>Plan</th><th>Note</th><th></th></tr></thead><tbody>
+            ${pending.map((c) => `<tr><td class="mono small nowrap">${esc(fmtDT(c.createdAt))}</td><td data-label="Company"><b>${esc(c.name)}</b><br><span class="small mono">#book.${esc(c.slug)}</span></td>
+              <td data-label="Contact" class="small">${esc(c.adminName)}<br><a href="mailto:${esc(c.adminEmail)}">${esc(c.adminEmail)}</a>${c.adminPhone ? `<br><a href="tel:${esc(c.adminPhone)}">${esc(c.adminPhone)}</a>` : ''}</td>
+              <td data-label="City" class="small">${esc((c.signup || {}).city || '')}</td><td data-label="Fleet" class="small">${esc((c.signup || {}).fleet || '')}</td><td data-label="Plan" class="small">${esc(c.planLabel || c.plan)}</td><td data-label="Note" class="small" style="max-width:240px">${esc((c.signup || {}).note || '')}</td>
+              <td class="nowrap"><button class="btn sm primary" type="button" data-approve="${c.id}">Approve</button> <button class="btn sm" type="button" data-decline="${c.id}">Decline</button></td></tr>`).join('')}
+            </tbody></table></div></section>` : ''}
+          ${leads.length ? `<details class="panel" id="co-leads" style="margin-bottom:20px" ${leads.some((l) => l.status === 'new') ? 'open' : ''}><summary><b>Free-trial requests</b> <span class="pill ${leads.some((l) => l.status === 'new') ? 's-assigned' : 'off'} count">${leads.filter((l) => l.status === 'new').length} new</span> <span class="small faint">earlier requests from the home page. Add the company when you have spoken to them.</span></summary>
             <div class="tablewrap" style="margin-top:12px"><table><thead><tr><th>Received</th><th>Name and company</th><th>Contact</th><th>City</th><th>Fleet</th><th>Note</th><th>Status</th><th></th></tr></thead><tbody>
             ${leads.map((l) => `<tr><td class="mono small nowrap">${esc(fmtDT(l.at))}</td><td data-label="Name and company"><b>${esc(l.name)}</b><br><span class="small">${esc(l.company)}</span></td>
               <td data-label="Contact" class="small"><a href="mailto:${esc(l.email)}">${esc(l.email)}</a>${l.phone ? `<br><a href="tel:${esc(l.phone)}">${esc(l.phone)}</a>` : ''}</td><td data-label="City" class="small">${esc(l.city || '')}</td><td data-label="Fleet" class="small">${esc(l.fleet || '')}</td><td data-label="Note" class="small" style="max-width:260px">${esc(l.note || '')}</td>
@@ -4130,6 +4147,16 @@
           </tbody></table></div>
           <p class="small faint" style="margin-top:10px">Pausing a company signs out its staff, drivers and customers and closes its booking page until you resume it.</p>`;
         $('#co-add', v).onclick = addCompany;
+        $$('[data-approve]', v).forEach((b) => { b.onclick = () => busy(b, async () => {
+          const c = pending.find((x) => x.id === b.dataset.approve);
+          if (!confirm(`Approve ${c.name}? ${c.adminName} can sign in right away and their 30-day free trial starts today.`)) return;
+          try { await api('owner.reviewSignup', { id: c.id, approve: true }); toast(`${c.name} approved. We emailed ${c.adminEmail}.`); last = ''; refresh(); } catch (e) { toast(e.message, true); }
+        }); });
+        $$('[data-decline]', v).forEach((b) => { b.onclick = () => busy(b, async () => {
+          const c = pending.find((x) => x.id === b.dataset.decline);
+          if (!confirm(`Decline ${c.name}? Their sign-up and login are deleted and we email them that it wasn't approved.`)) return;
+          try { await api('owner.reviewSignup', { id: c.id, approve: false }); toast(`${c.name} declined.`); last = ''; refresh(); } catch (e) { toast(e.message, true); }
+        }); });
         $$('[data-lead]', v).forEach((el) => { el.onchange = async () => { try { await api('owner.leadAction', { id: el.dataset.lead, action: el.value }); last = ''; refresh(); } catch (e) { toast(e.message, true); } }; });
         $$('[data-rmlead]', v).forEach((el) => { el.onclick = async () => { if (!confirm('Remove this request?')) return; try { await api('owner.leadAction', { id: el.dataset.rmlead, action: 'delete' }); last = ''; refresh(); } catch (e) { toast(e.message, true); } }; });
         $$('[data-texts]', v).forEach((b) => { b.onclick = () => textsModal(list.find((c) => c.id === b.dataset.texts)); });
