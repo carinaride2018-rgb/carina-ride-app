@@ -4466,11 +4466,22 @@
       ctx.dirty = true; save(db);
       fail(`Wrong PIN. ${PIN_TRIES - c.pinFails} ${PIN_TRIES - c.pinFails === 1 ? 'try' : 'tries'} left.`, 400);
     }
+    async function checkPassword(ctx, pw) {
+      const c = ctx.company, u = ctx.user;
+      if (c.pinLockUntil && c.pinLockUntil > now().toISOString()) fail(`Too many wrong tries. Try again after ${fmtLocal(c.pinLockUntil, c)}.`, 429);
+      if (u.passHash && (await hashPw(String(pw || ''), u.salt)) === u.passHash) { delete c.pinFails; delete c.pinLockUntil; return; }
+      c.pinFails = (c.pinFails || 0) + 1;
+      if (c.pinFails >= PIN_TRIES) { c.pinFails = 0; c.pinLockUntil = new Date(now().getTime() + PIN_LOCK_MIN * 6e4).toISOString(); save(db); fail(`Too many wrong tries. Payments are locked for ${PIN_LOCK_MIN} minutes.`, 429); }
+      save(db);
+      fail('That password is not right.', 400);
+    }
     def('company.setPayPin', ['admin'], true, async (ctx, a) => {
       const c = ctx.company;
       if (!isMaster(ctx.user)) fail('Only the master login can set the payment PIN.', 403);
-      if (c.paymentPin) await checkPin(ctx, a.current);
       if (!pinOk(a.pin)) fail('Choose a PIN of 4 to 6 digits.');
+      // Forgot the PIN: the master proves who they are with their login password.
+      if (c.paymentPin && a.password != null) await checkPassword(ctx, a.password);
+      else if (c.paymentPin) await checkPin(ctx, a.current);
       const salt = randomId(8);
       c.paymentPin = { salt, hash: await hashPw(String(a.pin), salt), setAt: now().toISOString(), by: ctx.user.name };
       openPayments(ctx);

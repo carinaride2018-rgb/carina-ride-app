@@ -447,10 +447,11 @@
     el.innerHTML = `${lockHead}<p class="small muted">Enter your payment PIN to open this. It stays open for 15 minutes.</p>
       <div class="stack" data-pinform><div class="row">${pinIn('pl-pin', 'Payment PIN')}</div>
       <div class="row"><button class="btn primary" type="button" data-pingo>Unlock</button></div><div data-pinerr>${st.lockedUntil ? '<div class="err">Too many wrong PINs. Try again in a few minutes.</div>' : ''}</div>
-      <p class="small faint">Forgot it? Ask LimoRelay to reset your payment PIN, then choose a new one.</p></div>`;
+      <p class="small faint">Forgot it? <button class="linkbtn" type="button" data-pinforgot>Reset it with your password</button></p></div>`;
     onPinGo(el, () => busy($('[data-pingo]', el), async () => {
       try { await api('company.unlockPayments', { pin: $('#pl-pin', el).value }); reopen(); } catch (err) { showErr($('[data-pinerr]', el), err); }
     }));
+    $('[data-pinforgot]', el).onclick = () => forgotPinModal(reopen);
     return false;
   }
   // Change PIN (needs the current one).
@@ -463,6 +464,18 @@
         if ($('#cp-new', m).value !== $('#cp-new2', m).value) throw new Error("The two new PINs don't match.");
         await api('company.setPayPin', { current: $('#cp-cur', m).value, pin: $('#cp-new', m).value }); closeModal(); toast('Payment PIN changed.'); if (done) done();
       } catch (err) { showErr($('#cp-err', m), err); }
+    });
+  }
+  // Forgot the PIN: the master types their login password and picks a new one.
+  function forgotPinModal(done) {
+    const pinIn = (id, label) => `<label class="field"><span>${label}</span><input id="${id}" class="mono" type="password" inputmode="numeric" autocomplete="off" maxlength="6"></label>`;
+    const m = openModal({ title: 'Reset payment PIN', body: `<form class="stack" id="fp-form" novalidate><label class="field"><span>Your login password</span><input id="fp-pass" type="password" autocomplete="current-password"></label><div class="grid2">${pinIn('fp-new', 'New PIN (4 to 6 digits)')}${pinIn('fp-new2', 'Type it again')}</div><div id="fp-err"></div></form>`, footer: '<button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="fp-go">Reset PIN</button>' });
+    $('[data-close]', m).onclick = closeModal;
+    $('#fp-go', m).onclick = (e) => busy(e.currentTarget, async () => {
+      try {
+        if ($('#fp-new', m).value !== $('#fp-new2', m).value) throw new Error("The two new PINs don't match.");
+        await api('company.setPayPin', { password: $('#fp-pass', m).value, pin: $('#fp-new', m).value }); closeModal(); toast('Payment PIN reset.'); if (done) done();
+      } catch (err) { showErr($('#fp-err', m), err); }
     });
   }
   const lockNowBtn = (id) => `<button class="btn sm" type="button" id="${id}">🔒 Lock</button>`;
@@ -4129,7 +4142,7 @@
           ${lock.isMaster ? `<p class="small">Payment PIN: ${lock.pinSet ? '<span class="pill s-on_board">Set</span>' : '<span class="pill unpaid">Not set yet</span>'}</p>
             <div class="row">${lock.pinSet ? '<button class="btn" type="button" id="tm-pin">Change PIN</button>' : '<button class="btn primary" type="button" id="tm-pin">Set payment PIN</button>'}
             ${others.length ? '<button class="btn" type="button" id="tm-hand">Make another admin the master</button>' : ''}</div>
-            <p class="small faint">Forgot the PIN? Only LimoRelay can reset it. Ask us and then choose a new one.</p>` : '<p class="small faint">Ask the master login if you need a payment change.</p>'}
+            ${lock.pinSet ? '<p class="small faint">Forgot the PIN? <button class="linkbtn" type="button" id="tm-forgot">Reset it with your password</button></p>' : ''}` : '<p class="small faint">Ask the master login if you need a payment change.</p>'}
         </section>
         <div class="tablewrap"><table id="tm-table"><thead><tr><th>Name</th><th>Email (login)</th><th>Access level</th><th>Login</th></tr></thead><tbody>
         ${team.map((p) => `<tr class="click" data-id="${p.id}"><td><b>${esc(p.name)}</b>${p.master ? ' <span class="pill s-assigned">Master</span>' : ''}</td><td class="mono small" data-label="Email">${esc(p.email)}</td><td data-label="Access level" style="min-width:220px">${levelText(p)}</td><td data-label="Login">${p.active ? '<span class="pill s-on_board">Enabled</span>' : '<span class="pill off">Disabled</span>'}</td></tr>`).join('')}
@@ -4170,6 +4183,8 @@
         const m = openModal({ title: 'Set payment PIN', body: '<div class="stack" id="sp-box"></div>' });
         payLocked($('#sp-box', m), 'Payment PIN', () => { closeModal(); drawTeam(v); });
       };
+      const fg = $('#tm-forgot', v);
+      if (fg) fg.onclick = () => forgotPinModal(() => drawTeam(v));
       const hand = $('#tm-hand', v);
       if (hand) hand.onclick = () => {
         const m = openModal({ title: 'Hand over the master login', body: `<div class="stack"><label class="field"><span>New master</span><select id="mh-to">${others.map((p) => `<option value="${p.id}">${esc(p.name)} (${esc(p.email)})</option>`).join('')}</select></label>
