@@ -17,8 +17,14 @@
 const crypto = require('crypto');
 const fs = require('fs');
 
-function createProviders(env, opts) {
+function createProviders(rawEnv, opts) {
   opts = opts || {};
+  // Keys pasted into a host's settings often pick up spaces, quotes or a
+  // "Bearer " prefix, which the services then reject as an invalid key.
+  const env = {};
+  for (const [k, v] of Object.entries(rawEnv || {})) {
+    env[k] = typeof v === 'string' && /(_KEY|_TOKEN|_SID|_SECRET|_FROM)$/.test(k) ? v.trim().replace(/^(['"])(.*)\1$/, '$2').replace(/^Bearer\s+/i, '').trim() : v;
+  }
   const log = opts.log || ((...a) => console.log(...a));
   // Base URLs can be pointed at a local fake for tests only.
   const url = (name, def) => env[`LIVERY_TEST_${name}_URL`] || def;
