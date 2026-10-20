@@ -61,6 +61,8 @@ Each limo company connects its own Stripe account, so their customers' money goe
 3. Each company admin opens **Rates & brand**, clicks **Connect Stripe** and fills in Stripe's form. Customers then save a card on Stripe's secure page when they book or accept a quote (no deposit). The app charges that saved card by itself: the fare 24 hours before pickup (the hours are set in Rates & brand), extras such as waiting time or added stops 30 minutes after drop-off, and refunds when a trip is cancelled. A declined card texts the passenger a link to add another one and shows up for the office.
 4. Optional but recommended: in Stripe, go to Developers, then Webhooks, and add the endpoint `https://<your address>/pay/webhook`. Choose "Events on connected accounts" with `checkout.session.completed` and `account.updated`. Put the signing secret in `STRIPE_WEBHOOK_SECRET`. This records saved cards and payments even when a customer closes the page before coming back.
 
+5. **Membership billing (what companies pay LimoRelay)** uses your own Stripe account with the same `STRIPE_SECRET_KEY`; nothing else to set up. Company admins add a card under My account, Membership, and each invoice is charged to it. Turn on **Bill companies automatically** in the owner's Billing tab: invoices are then made on the 1st of each month and the day a free trial ends. Cards and payments are recorded when the admin comes back from Stripe's page, so no extra webhook is needed.
+
 Without `STRIPE_SECRET_KEY`, the real site (`SAMPLE_DATA=off`) has no online card payments: the office takes payment itself (chauffeurs never take payment), and company accounts are invoiced.
 
 ### Maps: Google Maps

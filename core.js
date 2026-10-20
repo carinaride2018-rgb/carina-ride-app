@@ -4352,14 +4352,32 @@
       return textPlan();
     });
     def('owner.invoices', ['owner'], false, () => db.invoices.slice().sort((x, y) => y.createdAt.localeCompare(x.createdAt)).map((i) => ({ ...clone(i), companyName: (findCompany(i.companyId) || {}).name })));
-    def('owner.runBilling', ['owner'], true, (ctx, a) => {
-      const period = /^\d{4}-\d{2}$/.test(a.period || '') ? a.period : monthKey(now());
+    // ---- Membership billing: each company pays LimoRelay for its plan ---------
+    // Invoices are made on the 1st of each month (and the day a free trial
+    // ends). A company with a card on file is charged automatically; the others
+    // get an email with a link to pay.
+    const companyAdmins = (c) => db.users.filter((u) => u.companyId === c.id && u.role === 'admin' && u.active !== false);
+    const billingCfg = () => ({ autoBill: false, ...(db.billing || {}) });
+    function chargeInvoice(inv, c) {
+      if (inv.status !== 'open' || !c.billingCard || inv.total <= 0) return;
+      if (inv.charge && inv.charge.status === 'pending') return;
+      if (payMode === 'demo') {
+        const bad = c.billingCard.last4 === '0341';
+        inv.charge = { id: id('ich'), status: bad ? 'failed' : 'paid', at: now().toISOString(), last4: c.billingCard.last4, ...(bad ? { error: 'Card declined' } : { ref: `demo_${randomId(5)}` }) };
+        if (!bad) { inv.status = 'paid'; inv.paidAt = now().toISOString(); inv.paidBy = `${c.billingCard.brand} ending ${c.billingCard.last4}`; }
+        else billingMail(c, 'billing', `we couldn't charge your card ending ${c.billingCard.last4} for LimoRelay invoice ${inv.number} ($${money(inv.total)}). Please add another card under My account, Membership, at ${siteUrl()}#account.`);
+      } else if (payMode === 'stripe' && c.billingCard.stripe) {
+        inv.charge = { id: id('ich'), status: 'pending', at: now().toISOString(), last4: c.billingCard.last4 };
+      }
+    }
+    function billingMail(c, kind, body) { for (const u of companyAdmins(c)) mailUser(u, null, kind, `Hello ${u.name.split(' ')[0]}, ${body} Questions? Reply to this email or write to ${PLATFORM_EMAIL}.`); }
+    function billCompanies(period, trialAt) {
       const made = [];
       for (const c of db.companies) {
         if (c.status !== 'active') continue;
         if (db.invoices.some((i) => i.companyId === c.id && i.period === period)) continue;
         // Free trial: nothing is billed until it ends.
-        if (inTrial(c, `${period}-28`)) continue;
+        if (inTrial(c, trialAt || `${period}-28`)) continue;
         const items = [];
         if (c.billing === 'yearly') {
           // One invoice covers 12 months for the price of 10, no setup fee.
@@ -4376,13 +4394,73 @@
         }
         const packs = ((c.texts && c.texts.packs) || []).filter((p) => !p.invoiceId && !p.free && p.price > 0);
         for (const p of packs.slice().reverse()) items.push({ label: `${p.texts} extra texts, bought ${p.at.slice(0, 10)}${p.auto ? ' (automatic)' : ''}`, amount: p.price });
-        if (!items.length) continue;
-        const inv = { id: id('inv'), number: `INV-${period.replace('-', '')}-${String(db.seq.inv).padStart(3, '0')}`, companyId: c.id, period, items, total: round2(items.reduce((s, i) => s + i.amount, 0)), status: 'open', createdAt: now().toISOString(), paidAt: null };
+        const total = round2(items.reduce((sum, i) => sum + i.amount, 0));
+        if (!items.length || total <= 0) continue;
+        const inv = { id: id('inv'), number: `INV-${period.replace('-', '')}-${String(db.seq.inv).padStart(3, '0')}`, companyId: c.id, period, items, total, status: 'open', createdAt: now().toISOString(), paidAt: null };
         for (const p of packs) p.invoiceId = inv.id;
         db.invoices.push(inv); made.push(inv);
+        chargeInvoice(inv, c);
+        if (inv.status === 'open' && !(inv.charge && inv.charge.status === 'failed')) {
+          billingMail(c, 'planinvoice', inv.charge && inv.charge.status === 'pending'
+            ? `your LimoRelay invoice ${inv.number} for $${money(inv.total)} is ready. We're charging your card ending ${c.billingCard.last4}, so there's nothing to do.`
+            : `your LimoRelay invoice ${inv.number} for $${money(inv.total)} is ready. Pay it or add a card for automatic payments under My account, Membership, at ${siteUrl()}#account.`);
+        }
       }
-      return { created: made.length, period };
+      return made;
+    }
+    def('owner.runBilling', ['owner'], true, (ctx, a) => {
+      const period = /^\d{4}-\d{2}$/.test(a.period || '') ? a.period : monthKey(now());
+      return { created: billCompanies(period).length, period };
     });
+    def('owner.billingSettings', ['owner'], true, (ctx, a) => {
+      db.billing = { ...billingCfg(), autoBill: a.autoBill !== false };
+      return billingCfg();
+    });
+    def('owner.billingInfo', ['owner'], false, () => ({ ...billingCfg(), payMode }));
+    const memberInv = (i) => ({ id: i.id, number: i.number, period: i.period, items: clone(i.items), total: i.total, status: i.status, createdAt: i.createdAt, paidAt: i.paidAt, paidBy: i.paidBy || '', charge: i.charge ? { status: i.charge.status, error: i.charge.error || '', last4: i.charge.last4 || '' } : null });
+    // The company admin's view of their own LimoRelay membership.
+    def('company.membership', ['admin'], false, (ctx) => {
+      const c = ctx.company, k = c.billingCard;
+      return {
+        ...planInfo(c), payMode, cardsOn: payMode === 'demo' || payMode === 'stripe', autoBill: billingCfg().autoBill,
+        card: k ? { brand: k.brand, last4: k.last4, exp: k.exp, savedAt: k.savedAt } : null,
+        invoices: db.invoices.filter((i) => i.companyId === c.id).sort((x, y) => y.createdAt.localeCompare(x.createdAt)).map(memberInv),
+      };
+    });
+    // Demo only: the live site saves cards and takes payment on Stripe's page.
+    def('company.saveBillingCard', ['admin'], true, (ctx, a) => {
+      if (payMode !== 'demo') fail(payMode === 'stripe' ? 'Your card is saved on a secure Stripe page. Reload and try again.' : "Card payments aren't set up yet.");
+      ctx.company.billingCard = demoCard(a, ctx.user.name);
+      for (const inv of db.invoices.filter((i) => i.companyId === ctx.company.id && i.status === 'open')) { delete inv.charge; chargeInvoice(inv, ctx.company); }
+      return { ok: true };
+    });
+    def('company.payInvoice', ['admin'], true, (ctx, a) => {
+      if (payMode !== 'demo') fail(payMode === 'stripe' ? 'Payments open a secure Stripe page. Reload and tap Pay again.' : "Card payments aren't set up yet.");
+      const inv = db.invoices.find((i) => i.id === a.id && i.companyId === ctx.company.id);
+      if (!inv) fail('Invoice not found.', 404);
+      if (inv.status === 'paid') fail('This invoice is already paid.');
+      const k = demoCard(a, ctx.user.name);
+      if (k.last4 === '0341') fail('Card declined. Try another card.');
+      Object.assign(inv, { status: 'paid', paidAt: now().toISOString(), paidBy: `${k.brand} ending ${k.last4}` });
+      return memberInv(inv);
+    });
+    // Runs from the server clock: invoices on the 1st and when a trial ends,
+    // and a reminder 3 days before a trial ends for companies with no card.
+    function billingTick() {
+      let changed = false;
+      const today = now().toISOString().slice(0, 10);
+      if (billingCfg().autoBill && billCompanies(monthKey(now()), today).length) changed = true;
+      for (const c of db.companies) {
+        if (c.status !== 'active' || !c.trialEnds || c.billingCard || c.trialReminded === c.trialEnds) continue;
+        const days = (new Date(c.trialEnds + 'T12:00:00Z').getTime() - new Date(today + 'T12:00:00Z').getTime()) / 864e5;
+        if (days > 3 || days < 0) continue;
+        c.trialReminded = c.trialEnds;
+        const fee = c.billing === 'yearly' ? `$${money(c.monthlyFee * YEARLY_MONTHS)} a year` : `$${money(c.monthlyFee)} a month`;
+        billingMail(c, 'billing', `your free LimoRelay trial for ${c.name} ends on ${c.trialEnds}. To keep going without a break, add a card under My account, Membership, at ${siteUrl()}#account. Your ${PLANS[c.plan].label} plan is ${fee}.`);
+        changed = true;
+      }
+      return changed;
+    }
     def('owner.markInvoice', ['owner'], true, (ctx, a) => {
       const inv = db.invoices.find((i) => i.id === a.id);
       if (!inv) fail('Invoice not found.', 404);
@@ -4818,6 +4896,17 @@
       async prepare(token, a) {
         await ensure();
         if (payMode !== 'stripe') fail('Card payments are not switched on.');
+        // The company admin's LimoRelay membership: on the platform's own Stripe account.
+        if (a.kind === 'plancard' || a.kind === 'invoice') {
+          const u = sessionUser(token);
+          if (u.role !== 'admin') fail('Only the company admin can manage the membership.', 403);
+          const c = findCompany(u.companyId);
+          if (a.kind === 'plancard') return { mode: 'setup', account: 'platform', description: `LimoRelay membership, ${c.name}`, email: u.email, name: c.name, meta: { kind: 'plancard', company: c.id }, back: '#account' };
+          const inv = db.invoices.find((i) => i.id === a.id && i.companyId === c.id);
+          if (!inv) fail('Invoice not found.', 404);
+          if (inv.status === 'paid') fail('This invoice is already paid.');
+          return { account: 'platform', amount: cents(inv.total), description: `LimoRelay ${inv.number}, ${c.name}`, email: u.email, meta: { kind: 'invoice', id: inv.id, ref: inv.number }, back: '#account' };
+        }
         if (a.kind === 'trip') {
           const u = sessionUser(token);
           const t = db.trips.find((x) => x.id === a.id && x.customerId === u.id);
@@ -4864,6 +4953,17 @@
           const k = p.setup;
           const card = (by) => ({ brand: str(k.brand, 20) || 'Card', last4: str(k.last4, 4), exp: str(k.exp, 7), savedAt: now().toISOString(), by: str(by, 80), stripe: { customer: str(k.customer, 80), pm: str(k.pm, 80), session: str(p.sessionId, 120) } });
           const same = (x) => x && x.stripe && x.stripe.session === p.sessionId;
+          if (m.kind === 'plancard') {
+            if (p.account !== 'platform') fail('Payment account does not match.', 403);
+            const c = findCompany(m.company);
+            if (!c) fail('Company not found.', 404);
+            if (!same(c.billingCard)) {
+              c.billingCard = card('Company admin');
+              for (const inv of db.invoices.filter((i) => i.companyId === c.id && i.status === 'open')) { if (!(inv.charge && inv.charge.status === 'pending')) delete inv.charge; chargeInvoice(inv, c); }
+            }
+            meterTexts(); save(db);
+            return { back: '#account', ref: 'your LimoRelay membership' };
+          }
           if (m.kind === 'card') {
             const t = db.trips.find((x) => x.cardToken === m.token);
             if (!t) fail('Trip not found.', 404);
@@ -4896,6 +4996,14 @@
           } else fail('Unknown card.');
           syncFarmouts(); meterTexts(); save(db);
           return out;
+        }
+        if (m.kind === 'invoice') {
+          if (p.account !== 'platform') fail('Payment account does not match.', 403);
+          const inv = db.invoices.find((i) => i.id === m.id);
+          if (!inv) fail('Invoice not found.', 404);
+          if (inv.status !== 'paid') Object.assign(inv, { status: 'paid', paidAt: now().toISOString(), paidBy: `Card ending ${str(p.last4, 4) || '••••'}`, stripeSession: p.sessionId });
+          meterTexts(); save(db);
+          return { back: '#account', ref: inv.number };
         }
         if (m.kind === 'trip') {
           const t = db.trips.find((x) => x.id === m.id);
@@ -4947,11 +5055,30 @@
               description: `${c.name}, ${x.kind === 'refund' ? 'refund for' : x.kind === 'extra' ? 'extras on' : x.kind === 'fee' ? 'fee for' : 'ride'} ${t.ref}`, meta: { kind: x.kind, trip: t.ref } });
           }
         }
+        for (const inv of db.invoices) {
+          if (!inv.charge || inv.charge.status !== 'pending') continue;
+          const c = findCompany(inv.companyId), k = c && c.billingCard && c.billingCard.stripe;
+          if (inv.status === 'paid') { inv.charge.status = 'paid'; dirty = true; continue; }
+          if (!k || !k.customer || !k.pm) { inv.charge = { ...inv.charge, status: 'failed', error: 'No card saved with Stripe' }; dirty = true; continue; }
+          out.push({ invoiceId: inv.id, id: inv.charge.id, kind: 'invoice', amount: cents(inv.total), account: null, customer: k.customer, pm: k.pm, description: `LimoRelay ${inv.number}, ${c.name}`, meta: { kind: 'invoice', invoice: inv.number } });
+        }
         if (dirty) { syncFarmouts(); meterTexts(); save(db); }
         return out;
       },
       async chargeResult(r) {
         await ensure();
+        if (r.invoiceId) {
+          const inv = db.invoices.find((i) => i.id === r.invoiceId);
+          if (!inv || !inv.charge || inv.charge.id !== r.id || inv.charge.status !== 'pending' || r.retry) return false;
+          const c = findCompany(inv.companyId);
+          if (r.ok) Object.assign(inv, { status: 'paid', paidAt: now().toISOString(), paidBy: `Card ending ${inv.charge.last4}`, charge: { ...inv.charge, status: 'paid', ref: str(r.ref, 80) } });
+          else {
+            inv.charge = { ...inv.charge, status: 'failed', error: str(r.error, 200) || 'Card declined' };
+            billingMail(c, 'billing', `we couldn't charge your card ending ${inv.charge.last4} for LimoRelay invoice ${inv.number} ($${money(inv.total)}): ${inv.charge.error}. Please add another card under My account, Membership, at ${siteUrl()}#account.`);
+          }
+          meterTexts(); save(db);
+          return true;
+        }
         const t = db.trips.find((x) => x.id === r.tripId);
         const x = t && (t.payment.charges || []).find((y) => y.id === r.id);
         if (!x || x.status !== 'pending' || r.retry) return false;
@@ -5061,6 +5188,7 @@
         await ensure();
         let changed = false;
         for (const c of db.companies) if (c.status === 'active' && sweepDispatch(c, true)) changed = true;
+        if (billingTick()) changed = true;
         if (changed) { syncFarmouts(); syncCredits(); meterTexts(); save(db); }
         return changed;
       },

@@ -418,6 +418,50 @@
   // iPhone app: Apple doesn't allow buying the software itself in the app.
   const IOS_APP = !!(window.LiveryNative && window.LiveryNative.platform === 'ios');
 
+  // ---- The company's own LimoRelay membership: plan, card and invoices -------
+  async function drawMembership(el) {
+    let mb;
+    try { mb = await api('company.membership'); } catch (e) { el.innerHTML = '<h2>LimoRelay membership</h2>'; return showErr(el, e); }
+    const price = mb.billing === 'yearly' ? `${money(mb.yearlyFee)} a year (2 months free)` : `${money(mb.monthlyFee)} a month`;
+    const open = mb.invoices.filter((i) => i.status === 'open');
+    const invStatus = (i) => i.status === 'paid' ? `<span class="pill paid">Paid</span>${i.paidBy ? `<div class="small faint">${esc(i.paidBy)}</div>` : ''}`
+      : i.charge && i.charge.status === 'pending' ? '<span class="pill s-assigned">Charging card</span>'
+      : i.charge && i.charge.status === 'failed' ? `<span class="pill s-cancelled">Card declined</span><div class="small faint">${esc(i.charge.error)}</div>` : '<span class="pill unpaid">Due</span>';
+    el.innerHTML = `<h2>LimoRelay membership</h2>
+      <dl class="kv"><dt>Plan</dt><dd>${esc(mb.planLabel)}, ${price}${mb.priceLockedUntil ? `<div class="small faint">Price locked until ${esc(fmtYMD(mb.priceLockedUntil))}</div>` : ''}</dd>
+        <dt>Status</dt><dd>${mb.inTrial ? `Free trial until ${esc(fmtYMD(mb.trialEnds))}` : open.length ? `<b>${open.length} invoice${open.length === 1 ? '' : 's'} due</b>` : 'Paid up'}</dd>
+        <dt>Card</dt><dd id="mb-card">${mb.card ? `${esc(mb.card.brand)} ending ${esc(mb.card.last4)}${mb.card.exp ? ` · exp ${esc(mb.card.exp)}` : ''}` : '<span class="faint">No card yet</span>'}</dd></dl>
+      <p class="small muted">${mb.card ? 'Each invoice is charged to this card automatically.' : `Add a card and each invoice is paid automatically.${mb.inTrial ? ' Nothing is charged until your free trial ends.' : ''}`}</p>
+      ${mb.cardsOn ? `<div class="row"><button class="btn ${mb.card ? '' : 'brand'}" type="button" id="mb-addcard">${mb.card ? 'Change card' : 'Add a card'}</button></div>` : '<p class="small faint">Online card payment for memberships isn\'t switched on yet. We\'ll email your invoices.</p>'}
+      ${mb.invoices.length ? `<div class="tablewrap"><table><thead><tr><th>Invoice</th><th>For</th><th class="r">Amount</th><th>Status</th><th></th></tr></thead><tbody>
+        ${mb.invoices.map((i) => `<tr><td class="mono small">${esc(i.number)}</td><td class="small">${i.items.map((x) => esc(x.label)).join('<br>')}</td><td class="r num">${money(i.total)}</td><td>${invStatus(i)}</td>
+          <td>${i.status === 'open' && mb.cardsOn && !(i.charge && i.charge.status === 'pending') ? `<button class="btn sm brand" type="button" data-payinv="${i.id}">Pay ${money(i.total)}</button>` : ''}</td></tr>`).join('')}
+        </tbody></table></div>` : ''}`;
+    const stripe = mb.payMode === 'stripe';
+    const cardForm = (note) => `<form id="mb-form" class="stack" novalidate>
+      <label class="field"><span>Card number</span><input id="mb-num" class="mono" value="4242 4242 4242 4242" inputmode="numeric"></label>
+      <div class="grid2"><label class="field"><span>Expiry</span><input id="mb-exp" class="mono" value="12/30"></label><label class="field"><span>CVC</span><input id="mb-cvc" class="mono" value="123"></label></div>
+      <p class="note">${note}</p><div id="mb-err"></div></form>`;
+    const addBtn = $('#mb-addcard', el);
+    if (addBtn) addBtn.onclick = () => busy(addBtn, async () => {
+      if (stripe) { try { const r = await payApi('checkout', { kind: 'plancard' }); location.href = r.url; await new Promise(() => {}); } catch (err) { toast(err.message, true); } return; }
+      const m = openModal({ title: 'Card for your membership', body: cardForm('Demo: no card is charged. A card ending 0341 shows a decline.'), footer: '<button class="btn" type="button" data-close>Cancel</button><button class="btn brand" type="button" id="mb-save">Save card</button>' });
+      $('[data-close]', m).onclick = closeModal;
+      $('#mb-save', m).onclick = (e) => busy(e.currentTarget, async () => {
+        try { await api('company.saveBillingCard', { number: $('#mb-num', m).value, exp: $('#mb-exp', m).value }); closeModal(); toast('Card saved. Invoices are now paid automatically.'); drawMembership(el); } catch (err) { showErr($('#mb-err', m), err); }
+      });
+    });
+    $$('[data-payinv]', el).forEach((b) => { b.onclick = () => busy(b, async () => {
+      const inv = mb.invoices.find((i) => i.id === b.dataset.payinv);
+      if (stripe) { try { const r = await payApi('checkout', { kind: 'invoice', id: inv.id }); location.href = r.url; await new Promise(() => {}); } catch (err) { toast(err.message, true); } return; }
+      const m = openModal({ title: `Pay ${inv.number}`, body: `<div class="spread"><span class="muted">LimoRelay membership</span><b class="num" style="font-size:22px">${money(inv.total)}</b></div>${cardForm('Demo: no card is charged.')}`, footer: `<button class="btn" type="button" data-close>Not now</button><button class="btn brand" type="button" id="mb-pay">Pay ${money(inv.total)}</button>` });
+      $('[data-close]', m).onclick = closeModal;
+      $('#mb-pay', m).onclick = (e) => busy(e.currentTarget, async () => {
+        try { await api('company.payInvoice', { id: inv.id, number: $('#mb-num', m).value, exp: $('#mb-exp', m).value }); closeModal(); toast(`${inv.number} paid. Thank you.`); drawMembership(el); } catch (err) { showErr($('#mb-err', m), err); }
+      });
+    }); });
+  }
+
   // ---- My account (also the web address the app stores ask for) -------------
   function viewAccount() {
     current = null;
@@ -428,11 +472,13 @@
       <div><a class="linkbtn small" href="#${HOME[u.role]}">← Back</a><h1 style="margin-top:6px">My account</h1></div>
       <section class="panel"><dl class="kv"><dt>Name</dt><dd>${esc(u.name)}</dd><dt>Email</dt><dd>${esc(u.email)}</dd>${u.phone ? `<dt>Mobile</dt><dd>${esc(u.phone)}</dd>` : ''}<dt>Account</dt><dd>${esc(roleName)}${co ? ` · ${esc(co.name)}` : ''}</dd></dl></section>
       <section class="panel stack"><h2>Your privacy</h2><p class="small muted">What we keep and why is in the ${privacyLink()}. To change your name or number, ${u.role === 'customer' ? `call ${esc((co && co.name) || 'the company')}` : 'ask your office'}.</p></section>
+      ${u.role === 'admin' ? '<section class="panel stack" id="acct-plan"><h2>LimoRelay membership</h2><p class="small faint">Loading…</p></section>' : ''}
       ${['owner', 'admin'].includes(u.role) ? `<section class="panel stack"><h2>Sign-in email</h2><p class="small muted">You sign in with ${esc(u.email)}.${u.role === 'owner' ? ' Free-trial requests are emailed there too.' : ''}</p><div><button class="btn" type="button" id="acct-email">Change sign-in email</button></div></section>` : ''}
       ${u.role === 'owner' ? '' : `<section class="panel stack danger-zone"><h2>Delete my account</h2>
         <p class="small muted">${u.role === 'customer' ? 'This removes your login, saved card and contact details. Past rides stay on the company\'s books for tax records, with your name removed. You can\'t undo this.' : 'This switches off your login and removes your name, contact details and photo. Past trips and pay records stay on the company\'s books without your name. You can\'t undo this.'}</p>
         <button class="btn danger" type="button" id="acct-del">Delete my account</button></section>`}
     </div>`;
+    if (u.role === 'admin') drawMembership($('#acct-plan', v));
     const em = $('#acct-email', v);
     if (em) em.onclick = () => {
       const m = openModal({
@@ -4214,6 +4260,7 @@
               <label class="field"><span>Company email</span><input name="email" type="email" value="${esc(c.email || '')}"><span class="hint">Shown to their customers and used as the reply-to address.</span></label></div>
             <div class="grid2"><label class="field"><span>Time zone</span><select name="timezone">${[...new Set([c.timezone, ...TZ].filter(Boolean))].map((z) => `<option value="${z}" ${z === c.timezone ? 'selected' : ''}>${esc(z.replace(/_/g, ' '))}</option>`).join('')}</select></label>
               <label class="field"><span>Brand color</span><input name="color" type="color" value="${esc(c.color || '#2b4a7e')}" style="padding:4px;height:40px"></label></div>
+            <label class="field"><span>Membership fee ($ a month)</span><input id="ec-fee" name="fee" type="number" min="0" step="0.01" value="${esc(String(c.monthlyFee))}"><span class="hint">Their ${esc(c.planLabel || 'plan')} price. Set 0 for a company you don't bill, such as your own.</span></label>
             <h3>Their admin login</h3>
             <div class="grid2"><label class="field"><span>Admin name</span><input id="ec-aname" name="adminName" value="${esc(c.adminName || '')}"></label>
               <label class="field"><span>Admin email</span><input id="ec-aemail" name="adminEmail" type="email" value="${esc(c.adminEmail || '')}"><span class="hint">They sign in with this email. Use Send login email afterwards if it changed.</span></label></div>
@@ -4222,7 +4269,7 @@
         });
         $('[data-close]', m).onclick = closeModal;
         $('#ec-save', m).onclick = (e) => busy(e.currentTarget, async () => {
-          try { const r = await api('owner.updateCompany', { id: c.id, info: formData($('#ec', m)) }); closeModal(); toast(`${r.name} saved.`); last = ''; refresh(); } catch (err) { showErr($('#ec-err', m), err); }
+          try { const f = formData($('#ec', m)); const r = await api('owner.updateCompany', { id: c.id, info: f, monthlyFee: f.fee }); closeModal(); toast(`${r.name} saved.`); last = ''; refresh(); } catch (err) { showErr($('#ec-err', m), err); }
         });
       }
       function addCompany() {
@@ -4260,12 +4307,13 @@
     }
     async function drawBilling(v) {
       current = { poll: false };
-      let invoices, tp;
-      try { [invoices, tp] = await Promise.all([api('owner.invoices'), api('owner.textPlan')]); } catch (e) { return showErr(v, e); }
+      let invoices, tp, bi;
+      try { [invoices, tp, bi] = await Promise.all([api('owner.invoices'), api('owner.textPlan'), api('owner.billingInfo')]); } catch (e) { return showErr(v, e); }
       const month = new Date().toISOString().slice(0, 7);
       v.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Billing</h1><p class="muted">Monthly invoices to each company for their plan, plus the setup fee on their first bill. Yearly companies get one invoice a year for 10 months (no setup fee). Companies on a free trial are skipped until it ends.</p></div>
           <div class="row"><input class="input" type="month" id="bl-month" value="${month}" style="width:auto"><button class="btn primary" type="button" id="bl-run">Create invoices for ${esc(new Date(month + '-15T12:00:00').toLocaleDateString([], { month: 'long', year: 'numeric' }))}</button></div></div>
-        <p class="note" style="margin-bottom:16px">Invoices are tracked here for now. Connecting Stripe Billing charges each company's card automatically. Text packs a company buys go on its next invoice.</p>
+        <section class="panel stack" style="margin-bottom:16px"><label class="check"><input type="checkbox" id="bl-auto" ${bi.autoBill ? 'checked' : ''}> <span><b>Bill companies automatically</b><br><span class="small muted">On the 1st of each month, and the day a free trial ends, each company gets its invoice. Companies with a card on file (My account, Membership) are charged right away; the others get an email with a link to pay. Text packs a company buys go on its next invoice.</span></span></label>
+          <p class="small faint">${bi.payMode === 'stripe' ? 'Cards are charged on your own Stripe account.' : bi.payMode === 'demo' ? 'Demo: cards are simulated.' : 'Add STRIPE_SECRET_KEY in Render to take card payments; until then invoices are emailed and you mark them paid.'}</p></section>
         <form class="panel stack" id="tp-form" style="margin-bottom:16px" novalidate><h2>Texts for every company</h2>
           <div class="grid3">${Object.entries(C.PLANS).map(([k, p]) => `<label class="field"><span>${esc(p.label)} plan, texts a month</span><input class="input" type="number" name="plan_${k}" min="0" value="${tp.plans[k]}"></label>`).join('')}</div>
           <div class="grid3">
@@ -4276,7 +4324,7 @@
           <div id="tp-err"></div><div><button class="btn" type="submit">Save texts</button></div></form>
         <div class="tablewrap"><table><thead><tr><th>Invoice</th><th>Company</th><th>Period</th><th>Items</th><th class="r">Total</th><th>Status</th><th></th></tr></thead><tbody>
         ${invoices.map((i) => `<tr><td class="mono small">${esc(i.number)}</td><td>${esc(i.companyName)}</td><td class="mono small">${esc(i.period)}</td><td class="small">${i.items.map((x) => `${esc(x.label)}: ${money(x.amount)}`).join('<br>')}</td>
-          <td class="r num">${money(i.total)}</td><td>${i.status === 'paid' ? '<span class="pill paid">Paid</span>' : '<span class="pill unpaid">Open</span>'}</td>
+          <td class="r num">${money(i.total)}</td><td>${i.status === 'paid' ? `<span class="pill paid">Paid</span>${i.paidBy ? `<div class="small faint">${esc(i.paidBy)}</div>` : ''}` : i.charge && i.charge.status === 'pending' ? '<span class="pill s-assigned">Charging card</span>' : i.charge && i.charge.status === 'failed' ? `<span class="pill s-cancelled">Card declined</span><div class="small faint">${esc(i.charge.error || '')}</div>` : '<span class="pill unpaid">Open</span>'}</td>
           <td><button class="btn sm" type="button" data-inv="${i.id}" data-paid="${i.status !== 'paid'}">${i.status === 'paid' ? 'Reopen' : 'Mark paid'}</button></td></tr>`).join('') || '<tr><td colspan="7" class="faint">No invoices yet.</td></tr>'}
         </tbody></table></div>`;
       $('#bl-month', v).onchange = (e) => { if (/^\d{4}-\d{2}$/.test(e.target.value)) $('#bl-run', v).textContent = `Create invoices for ${new Date(e.target.value + '-15T12:00:00').toLocaleDateString([], { month: 'long', year: 'numeric' })}`; };
@@ -4284,6 +4332,7 @@
         try { const r = await api('owner.runBilling', { period: $('#bl-month', v).value }); toast(r.created ? `${r.created} invoice(s) created for ${r.period}.` : `Every active company already has an invoice for ${r.period}.`); drawBilling(v); } catch (err) { toast(err.message, true); }
       });
       $('#tp-form', v).onsubmit = (e) => { e.preventDefault(); busy($('button[type=submit]', e.target), async () => { const f = formData(e.target); const pl = {}; for (const k of Object.keys(C.PLANS)) { pl[k] = f['plan_' + k]; delete f['plan_' + k]; } try { await api('owner.saveTextPlan', { ...f, plans: pl }); toast('Text allowance saved.'); } catch (err) { showErr($('#tp-err', v), err); } }); };
+      $('#bl-auto', v).onchange = async (e) => { try { const r = await api('owner.billingSettings', { autoBill: e.target.checked }); toast(r.autoBill ? 'Automatic billing is on.' : 'Automatic billing is off. Use the button to create invoices yourself.'); } catch (err) { toast(err.message, true); e.target.checked = !e.target.checked; } };
       $$('[data-inv]', v).forEach((b) => { b.onclick = () => busy(b, async () => { try { await api('owner.markInvoice', { id: b.dataset.inv, paid: b.dataset.paid === 'true' }); drawBilling(v); } catch (err) { toast(err.message, true); } }); });
     }
     draw();
@@ -4300,6 +4349,7 @@
     // Coming back from Stripe.
     const qs = new URLSearchParams(location.search);
     const back = qs.get('paid') ? [`Payment received for ${qs.get('paid')}. Thank you.`]
+      : qs.get('cardsaved') && location.hash === '#account' ? ['Card saved. Your LimoRelay invoices are now paid automatically.']
       : qs.get('cardsaved') ? [`Card saved for ${qs.get('cardsaved')}. Nothing is charged until shortly before pickup.`]
       : qs.get('payment') === 'cancelled' ? ['Payment cancelled. Nothing was charged.']
       : qs.get('payment') ? ['The payment did not go through. Nothing was charged.', true]

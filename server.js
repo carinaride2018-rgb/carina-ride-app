@@ -210,6 +210,8 @@ async function warmFor(args) {
 const base = PUBLIC_URL.endsWith('/') ? PUBLIC_URL : PUBLIC_URL + '/';
 function redirect(res, to) { res.writeHead(302, { Location: to, 'Cache-Control': 'no-store', ...SECURITY_HEADERS }); res.end(); }
 const bearer = (req) => { const a = req.headers.authorization || ''; return a.startsWith('Bearer ') ? a.slice(7) : null; };
+// LimoRelay's own membership payments use the platform's Stripe account (no Stripe-Account header).
+const acctOf = (a) => (a === 'platform' ? null : a);
 
 async function payRoute(req, res, url, raw) {
   const p = url.pathname;
@@ -221,13 +223,14 @@ async function payRoute(req, res, url, raw) {
       const what = await core.pay.prepare(bearer(req), args);
       const success = `${base}pay/return?s={CHECKOUT_SESSION_ID}&a=${encodeURIComponent(what.account)}`;
       const cancel = `${base}?payment=cancelled${what.back}`;
-      const session = what.mode === 'setup' ? await live.pay.setup(what, success, cancel) : await live.pay.checkout(what, success, cancel);
+      const on = { ...what, account: acctOf(what.account) };
+      const session = what.mode === 'setup' ? await live.pay.setup(on, success, cancel) : await live.pay.checkout(on, success, cancel);
       return send(res, 200, { ok: true, data: { url: session.url } });
     }
     if (p === '/pay/return' && req.method === 'GET') {
       const sid = url.searchParams.get('s'), acct = url.searchParams.get('a');
       if (!sid || !acct) return redirect(res, base);
-      const session = await live.pay.getSession(sid, acct);
+      const session = await live.pay.getSession(sid, acctOf(acct));
       if (session.mode === 'setup') {
         const card = session.status === 'complete' && live.pay.cardOf(session);
         if (!card) return redirect(res, `${base}?payment=unpaid`);
@@ -261,6 +264,15 @@ async function payRoute(req, res, url, raw) {
       const evt = live.pay.verifyWebhook(raw, req.headers['stripe-signature']);
       if (!evt) return send(res, 400, { ok: false, error: 'Bad signature.' });
       const o = evt.data && evt.data.object;
+      // Membership payments happen on the platform account, so they carry no evt.account.
+      const kindOf = o && o.metadata && o.metadata.kind;
+      if (evt.type === 'checkout.session.completed' && o && !evt.account && (kindOf === 'plancard' || kindOf === 'invoice')) {
+        try {
+          if (o.mode === 'setup') { const full = await live.pay.getSession(o.id, null); const card = live.pay.cardOf(full); if (card) await core.pay.complete({ account: 'platform', sessionId: o.id, meta: full.metadata || {}, setup: card }); }
+          else if (o.payment_status === 'paid') await core.pay.complete({ account: 'platform', sessionId: o.id, amount: o.amount_total, meta: o.metadata || {}, last4: '' });
+          runCharges(); flushOutbox();
+        } catch (e) { console.error('webhook', e.message); }
+      }
       if (evt.type === 'checkout.session.completed' && o && o.mode === 'setup' && evt.account) {
         try { const full = await live.pay.getSession(o.id, evt.account); const card = live.pay.cardOf(full); if (card) { await core.pay.complete({ account: evt.account, sessionId: o.id, meta: full.metadata || {}, setup: card }); runCharges(); flushOutbox(); } } catch (e) { console.error('webhook', e.message); }
       }
@@ -293,7 +305,7 @@ async function runCharges() {
       for (const x of await core.pay.pendingCharges()) {
         const r = await live.pay.charge(x);
         if (r.retry) { if (r.error) console.error(`card ${x.id}: ${r.error}, will retry`); continue; }
-        await core.pay.chargeResult({ tripId: x.tripId, id: x.id, ...r });
+        await core.pay.chargeResult({ tripId: x.tripId, invoiceId: x.invoiceId, id: x.id, ...r });
       }
     } while (chargeAgain);
   } catch (e) { console.error('card charges', e.message); }
