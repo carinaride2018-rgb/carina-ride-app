@@ -418,8 +418,58 @@
   // iPhone app: Apple doesn't allow buying the software itself in the app.
   const IOS_APP = !!(window.LiveryNative && window.LiveryNative.platform === 'ios');
 
+  // ---- Payment lock: only the master login, after entering the payment PIN ---
+  // Draws the lock into el and resolves true once payments are open.
+  // The PIN box can sit inside another form, so it is a div: Enter and the button both run go.
+  function onPinGo(el, go) {
+    $('[data-pingo]', el).onclick = go;
+    $$('[data-pinform] input', el).forEach((i) => { i.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } }; });
+  }
+  async function payLocked(el, title, reopen) {
+    let st;
+    try { st = await api('company.payLock'); } catch (e) { el.innerHTML = `<h2>${esc(title)}</h2>`; showErr(el, e); return false; }
+    if (st.unlocked) return true;
+    const lockHead = `<h2>${esc(title)} <span class="pill off" style="vertical-align:middle">🔒 Locked</span></h2>`;
+    if (!st.isMaster) { el.innerHTML = `${lockHead}<p class="small muted">Only the master login${st.masterName ? ` (${esc(st.masterName)})` : ''} can open payment settings.</p>`; return false; }
+    const pinIn = (id, label) => `<label class="field" style="max-width:220px"><span>${label}</span><input id="${id}" class="mono" type="password" inputmode="numeric" autocomplete="off" maxlength="6" pattern="[0-9]*"></label>`;
+    if (!st.pinSet) {
+      el.innerHTML = `${lockHead}<p class="small muted">You are the master login. Choose a payment PIN of 4 to 6 digits. You'll enter it each time you open payment settings.</p>
+        <div class="stack" data-pinform><div class="row">${pinIn('pl-new', 'New PIN')}${pinIn('pl-new2', 'Type it again')}</div>
+        <div class="row"><button class="btn primary" type="button" data-pingo>Set PIN and open</button></div><div data-pinerr></div></div>`;
+      onPinGo(el, () => busy($('[data-pingo]', el), async () => {
+        try {
+          if ($('#pl-new', el).value !== $('#pl-new2', el).value) throw new Error("The two PINs don't match.");
+          await api('company.setPayPin', { pin: $('#pl-new', el).value }); toast('Payment PIN set.'); reopen();
+        } catch (err) { showErr($('[data-pinerr]', el), err); }
+      }));
+      return false;
+    }
+    el.innerHTML = `${lockHead}<p class="small muted">Enter your payment PIN to open this. It stays open for 15 minutes.</p>
+      <div class="stack" data-pinform><div class="row">${pinIn('pl-pin', 'Payment PIN')}</div>
+      <div class="row"><button class="btn primary" type="button" data-pingo>Unlock</button></div><div data-pinerr>${st.lockedUntil ? '<div class="err">Too many wrong PINs. Try again in a few minutes.</div>' : ''}</div>
+      <p class="small faint">Forgot it? Ask LimoRelay to reset your payment PIN, then choose a new one.</p></div>`;
+    onPinGo(el, () => busy($('[data-pingo]', el), async () => {
+      try { await api('company.unlockPayments', { pin: $('#pl-pin', el).value }); reopen(); } catch (err) { showErr($('[data-pinerr]', el), err); }
+    }));
+    return false;
+  }
+  // Change PIN (needs the current one).
+  function changePinModal(done) {
+    const pinIn = (id, label) => `<label class="field"><span>${label}</span><input id="${id}" class="mono" type="password" inputmode="numeric" autocomplete="off" maxlength="6"></label>`;
+    const m = openModal({ title: 'Change payment PIN', body: `<form class="stack" id="cp-form" novalidate>${pinIn('cp-cur', 'Current PIN')}<div class="grid2">${pinIn('cp-new', 'New PIN (4 to 6 digits)')}${pinIn('cp-new2', 'Type it again')}</div><div id="cp-err"></div></form>`, footer: '<button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="cp-go">Change PIN</button>' });
+    $('[data-close]', m).onclick = closeModal;
+    $('#cp-go', m).onclick = (e) => busy(e.currentTarget, async () => {
+      try {
+        if ($('#cp-new', m).value !== $('#cp-new2', m).value) throw new Error("The two new PINs don't match.");
+        await api('company.setPayPin', { current: $('#cp-cur', m).value, pin: $('#cp-new', m).value }); closeModal(); toast('Payment PIN changed.'); if (done) done();
+      } catch (err) { showErr($('#cp-err', m), err); }
+    });
+  }
+  const lockNowBtn = (id) => `<button class="btn sm" type="button" id="${id}">🔒 Lock</button>`;
+
   // ---- The company's own LimoRelay membership: plan, card and invoices -------
   async function drawMembership(el) {
+    if (!(await payLocked(el, 'LimoRelay membership', () => drawMembership(el)))) return;
     let mb;
     try { mb = await api('company.membership'); } catch (e) { el.innerHTML = '<h2>LimoRelay membership</h2>'; return showErr(el, e); }
     const price = mb.billing === 'yearly' ? `${money(mb.yearlyFee)} a year (2 months free)` : `${money(mb.monthlyFee)} a month`;
@@ -427,7 +477,7 @@
     const invStatus = (i) => i.status === 'paid' ? `<span class="pill paid">Paid</span>${i.paidBy ? `<div class="small faint">${esc(i.paidBy)}</div>` : ''}`
       : i.charge && i.charge.status === 'pending' ? '<span class="pill s-assigned">Charging card</span>'
       : i.charge && i.charge.status === 'failed' ? `<span class="pill s-cancelled">Card declined</span><div class="small faint">${esc(i.charge.error)}</div>` : '<span class="pill unpaid">Due</span>';
-    el.innerHTML = `<h2>LimoRelay membership</h2>
+    el.innerHTML = `<div class="spread"><h2>LimoRelay membership</h2>${lockNowBtn('mb-lock')}</div>
       <dl class="kv"><dt>Plan</dt><dd>${esc(mb.planLabel)}, ${price}${mb.priceLockedUntil ? `<div class="small faint">Price locked until ${esc(fmtYMD(mb.priceLockedUntil))}</div>` : ''}</dd>
         <dt>Status</dt><dd>${mb.inTrial ? `Free trial until ${esc(fmtYMD(mb.trialEnds))}` : open.length ? `<b>${open.length} invoice${open.length === 1 ? '' : 's'} due</b>` : 'Paid up'}</dd>
         <dt>Card</dt><dd id="mb-card">${mb.card ? `${esc(mb.card.brand)} ending ${esc(mb.card.last4)}${mb.card.exp ? ` · exp ${esc(mb.card.exp)}` : ''}` : '<span class="faint">No card yet</span>'}</dd></dl>
@@ -437,6 +487,7 @@
         ${mb.invoices.map((i) => `<tr><td class="mono small">${esc(i.number)}</td><td class="small">${i.items.map((x) => esc(x.label)).join('<br>')}</td><td class="r num">${money(i.total)}</td><td>${invStatus(i)}</td>
           <td>${i.status === 'open' && mb.cardsOn && !(i.charge && i.charge.status === 'pending') ? `<button class="btn sm brand" type="button" data-payinv="${i.id}">Pay ${money(i.total)}</button>` : ''}</td></tr>`).join('')}
         </tbody></table></div>` : ''}`;
+    $('#mb-lock', el).onclick = async () => { try { await api('company.lockPayments'); } catch (e) { /* already locked */ } drawMembership(el); };
     const stripe = mb.payMode === 'stripe';
     const cardForm = (note) => `<form id="mb-form" class="stack" novalidate>
       <label class="field"><span>Card number</span><input id="mb-num" class="mono" value="4242 4242 4242 4242" inputmode="numeric"></label>
@@ -4010,12 +4061,20 @@
           </div>
           <div class="panel stack"><h2>Booking terms</h2><p class="small muted">Optional. When filled in, customers must tick "I agree" before they book online or accept a quote, and each trip records the version they agreed to.</p>
             <label class="field"><span>Your terms and conditions</span><textarea name="terms" rows="6" maxlength="6000" placeholder="For example: no smoking; a cleaning fee of $250 applies to spills; children under 8 need a car seat." ${ro}>${esc(s.company.terms || '')}</textarea></label></div>
-          <div class="panel stack" id="rs-cards"><h2>Card payments</h2>${cardsPanel(s.company)}</div>
+          <div class="panel stack" id="rs-cards"><h2>Card payments</h2><p class="small faint">Loading…</p></div>
           <div id="rs-err"></div>
           ${isAdmin ? '<div class="savebar"><button class="btn primary" type="submit">Save rates and brand</button></div>' : ''}
         </form>`;
-      const sc = $('#rs-stripe', v);
-      if (sc) sc.onclick = () => busy(sc, async () => { try { const r = await payApi('connect'); location.href = r.url; await new Promise(() => {}); } catch (err) { toast(err.message, true); } });
+      const drawCards = async () => {
+        const box = $('#rs-cards', v);
+        if (!isAdmin) { box.innerHTML = `<h2>Card payments <span class="pill off" style="vertical-align:middle">🔒 Locked</span></h2><p class="small muted">Only the company's master login can open payment settings.</p>`; return; }
+        if (!(await payLocked(box, 'Card payments', drawCards))) return;
+        box.innerHTML = `<div class="spread"><h2>Card payments</h2>${lockNowBtn('rs-lock')}</div>${cardsPanel(s.company)}`;
+        $('#rs-lock', box).onclick = async () => { try { await api('company.lockPayments'); } catch (e) { /* already locked */ } drawCards(); };
+        const sc = $('#rs-stripe', box);
+        if (sc) sc.onclick = () => busy(sc, async () => { try { const r = await payApi('connect'); location.href = r.url; await new Promise(() => {}); } catch (err) { toast(err.message, true); } });
+      };
+      drawCards();
       $('#rs-copy', v).onclick = async () => {
         const inp = $('#rs-link', v);
         try { await navigator.clipboard.writeText(inp.value); toast('Link copied.'); } catch (e) { inp.select(); toast('Press Ctrl+C or ⌘C to copy.'); }
@@ -4051,8 +4110,10 @@
 
     async function drawTeam(v) {
       current = { poll: false };
-      let team, perms;
-      try { [team, perms] = await Promise.all([api('dispatch.team'), api('dispatch.staffPerms')]); } catch (e) { return showErr(v, e); }
+      let team, perms, lock;
+      try { [team, perms, lock] = await Promise.all([api('dispatch.team'), api('dispatch.staffPerms'), api('company.payLock')]); } catch (e) { return showErr(v, e); }
+      const master = team.find((p) => p.master);
+      const others = team.filter((p) => p.role === 'admin' && p.active && !p.master);
       const level = (p) => p.role === 'admin' ? 'admin' : perms.every((x) => !p.perms[x.key]) ? 'view' : 'dispatcher';
       const levelText = (p) => {
         const l = level(p);
@@ -4063,8 +4124,15 @@
         return `<b>Dispatcher${std ? '' : ' (custom)'}</b><div class="small faint">${off.length ? 'No ' + off.map((x) => x.label.toLowerCase()).join(', no ') : 'Everything except rates, pricing and the team'}</div>`;
       };
       v.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Team</h1><p class="muted">Office staff who can use the dispatch board, and what each one is allowed to do.</p></div><button class="btn primary" type="button" id="tm-add">Add office staff</button></div>
+        <section class="panel stack" id="tm-master" style="margin-bottom:16px"><h2>Master login</h2>
+          <p class="small muted"><b>${esc(master ? master.name : 'No admin yet')}</b>${master ? ` (${esc(master.email)})` : ''} is the master login. Only the master can open payment settings (Card payments under Rates &amp; brand, and the LimoRelay membership under My account), and only after entering the payment PIN.</p>
+          ${lock.isMaster ? `<p class="small">Payment PIN: ${lock.pinSet ? '<span class="pill s-on_board">Set</span>' : '<span class="pill unpaid">Not set yet</span>'}</p>
+            <div class="row">${lock.pinSet ? '<button class="btn" type="button" id="tm-pin">Change PIN</button>' : '<button class="btn primary" type="button" id="tm-pin">Set payment PIN</button>'}
+            ${others.length ? '<button class="btn" type="button" id="tm-hand">Make another admin the master</button>' : ''}</div>
+            <p class="small faint">Forgot the PIN? Only LimoRelay can reset it. Ask us and then choose a new one.</p>` : '<p class="small faint">Ask the master login if you need a payment change.</p>'}
+        </section>
         <div class="tablewrap"><table id="tm-table"><thead><tr><th>Name</th><th>Email (login)</th><th>Access level</th><th>Login</th></tr></thead><tbody>
-        ${team.map((p) => `<tr class="click" data-id="${p.id}"><td><b>${esc(p.name)}</b></td><td class="mono small" data-label="Email">${esc(p.email)}</td><td data-label="Access level" style="min-width:220px">${levelText(p)}</td><td data-label="Login">${p.active ? '<span class="pill s-on_board">Enabled</span>' : '<span class="pill off">Disabled</span>'}</td></tr>`).join('')}
+        ${team.map((p) => `<tr class="click" data-id="${p.id}"><td><b>${esc(p.name)}</b>${p.master ? ' <span class="pill s-assigned">Master</span>' : ''}</td><td class="mono small" data-label="Email">${esc(p.email)}</td><td data-label="Access level" style="min-width:220px">${levelText(p)}</td><td data-label="Login">${p.active ? '<span class="pill s-on_board">Enabled</span>' : '<span class="pill off">Disabled</span>'}</td></tr>`).join('')}
         </tbody></table></div>
         <details class="panel" style="margin-top:16px"><summary><b>What each access level can do</b></summary>
           <ul class="small" style="margin:10px 0 0;padding-left:18px">
@@ -4095,6 +4163,28 @@
         const l = $('#pm-level', m).value, perms2 = {};
         $$('[data-perm]', m).forEach((c) => { perms2[c.dataset.perm] = l === 'dispatcher' && c.checked; });
         return { role: l === 'admin' ? 'admin' : 'dispatcher', perms: perms2 };
+      };
+      const pinBtn = $('#tm-pin', v);
+      if (pinBtn) pinBtn.onclick = () => {
+        if (lock.pinSet) return changePinModal(() => drawTeam(v));
+        const m = openModal({ title: 'Set payment PIN', body: '<div class="stack" id="sp-box"></div>' });
+        payLocked($('#sp-box', m), 'Payment PIN', () => { closeModal(); drawTeam(v); });
+      };
+      const hand = $('#tm-hand', v);
+      if (hand) hand.onclick = () => {
+        const m = openModal({ title: 'Hand over the master login', body: `<div class="stack"><label class="field"><span>New master</span><select id="mh-to">${others.map((p) => `<option value="${p.id}">${esc(p.name)} (${esc(p.email)})</option>`).join('')}</select></label>
+          <p class="small muted">They become the only one who can open payment settings. Your payment PIN is cleared and they choose their own.</p>
+          <label class="field" style="max-width:220px"><span>Your payment PIN</span><input id="mh-pin" class="mono" type="password" inputmode="numeric" maxlength="6" autocomplete="off"></label><div id="mh-err"></div></div>`,
+          footer: '<button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="mh-go">Make master</button>' });
+        $('[data-close]', m).onclick = closeModal;
+        $('#mh-go', m).onclick = (e) => busy(e.currentTarget, async () => {
+          try {
+            const st = await api('company.payLock');
+            if (!st.unlocked) await api('company.unlockPayments', { pin: $('#mh-pin', m).value });
+            await api('dispatch.makeMaster', { id: $('#mh-to', m).value });
+            closeModal(); toast('Master login handed over.'); drawTeam(v);
+          } catch (err) { showErr($('#mh-err', m), err); }
+        });
       };
       $('#tm-add', v).onclick = () => personModal({ title: 'Add office staff', person: null, method: 'dispatch.saveStaff', role: 'dispatcher', extra: accessHtml(null), setup, collect, done: () => drawTeam(v) });
       $$('tr[data-id]', v).forEach((r) => { r.onclick = () => { const p = team.find((x) => x.id === r.dataset.id); personModal({ title: `Edit ${p.name}`, person: p, method: 'dispatch.saveStaff', role: p.role, extra: p.id === session.user.id ? '<p class="small muted">You can’t change your own access level.</p>' : accessHtml(p), setup: p.id === session.user.id ? null : setup, collect: p.id === session.user.id ? null : collect, done: () => drawTeam(v) }); }; });
@@ -4259,10 +4349,17 @@
             <h3>Their admin login</h3>
             <div class="grid2"><label class="field"><span>Admin name</span><input id="ec-aname" name="adminName" value="${esc(c.adminName || '')}"></label>
               <label class="field"><span>Admin email</span><input id="ec-aemail" name="adminEmail" type="email" value="${esc(c.adminEmail || '')}"><span class="hint">They sign in with this email. Use Send login email afterwards if it changed.</span></label></div>
+            <h3>Payment PIN</h3>
+            <div class="spread"><p class="small muted" style="margin:0">Master login: <b>${esc(c.masterName || 'none yet')}</b>. PIN ${c.pinSet ? 'is set' : 'not set yet'}.</p>${c.pinSet ? '<button class="btn sm" type="button" id="ec-pin">Reset payment PIN</button>' : ''}</div>
             <div id="ec-err"></div></form>`,
           footer: `<button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="ec-save">Save</button>`,
         });
         $('[data-close]', m).onclick = closeModal;
+        const rp = $('#ec-pin', m);
+        if (rp) rp.onclick = () => busy(rp, async () => {
+          if (!confirm(`Clear ${c.name}'s payment PIN? Their master login (${c.masterName}) chooses a new one next time they open payments.`)) return;
+          try { await api('owner.updateCompany', { id: c.id, resetPin: true }); c.pinSet = false; rp.remove(); toast('Payment PIN reset. Tell them to choose a new one.'); last = ''; refresh(); } catch (err) { showErr($('#ec-err', m), err); }
+        });
         $('#ec-save', m).onclick = (e) => busy(e.currentTarget, async () => {
           try { const f = formData($('#ec', m)); const r = await api('owner.updateCompany', { id: c.id, info: f, monthlyFee: f.fee }); closeModal(); toast(`${r.name} saved.`); last = ''; refresh(); } catch (err) { showErr($('#ec-err', m), err); }
         });

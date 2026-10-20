@@ -672,7 +672,7 @@
     const findCompany = (cid) => db.companies.find((c) => c.id === cid);
     const findVehicle = (vid) => db.vehicles.find((v) => v.id === vid);
     const findAccount = (c, aid) => aid ? (db.accounts || []).find((x) => x.id === aid && x.companyId === c.id) : null;
-    const pubUser = (u) => u && ({ id: u.id, name: u.name, email: u.email, phone: u.phone, role: u.role, companyId: u.companyId, active: u.active !== false, vehicleId: u.vehicleId || null, available: !!u.available, ...(u.role === 'customer' ? { prefs: pubUserPrefs(u), card: pubCard(u.card), agent: u.agent ? { agency: u.agent.agency, commissionPct: agentPct(u), commissionOn: u.agent.commissionOn !== false } : null, credit: u.credit ? u.credit.balance : 0 } : {}), ...(u.role === 'driver' ? { photo: u.photo || '' } : {}), ...(u.role === 'admin' || u.role === 'dispatcher' ? { perms: staffPerms(u) } : {}) });
+    const pubUser = (u) => u && ({ id: u.id, name: u.name, email: u.email, phone: u.phone, role: u.role, companyId: u.companyId, active: u.active !== false, vehicleId: u.vehicleId || null, available: !!u.available, ...(u.role === 'customer' ? { prefs: pubUserPrefs(u), card: pubCard(u.card), agent: u.agent ? { agency: u.agent.agency, commissionPct: agentPct(u), commissionOn: u.agent.commissionOn !== false } : null, credit: u.credit ? u.credit.balance : 0 } : {}), ...(u.role === 'driver' ? { photo: u.photo || '' } : {}), ...(u.role === 'admin' || u.role === 'dispatcher' ? { perms: staffPerms(u) } : {}), ...(u.role === 'admin' ? { master: isMaster(u) } : {}) });
     const bagsCfg = (c) => ({ ...DEFAULT_BAGS, ...((c.rates && c.rates.bags) || {}) });
     const pcfg = (c) => ({ ...DEFAULT_POLICY, ...(c.policy || {}) });
     const agentCfg = (c) => ({ ...DEFAULT_AGENTS, ...((c && c.agents) || {}) });
@@ -685,6 +685,26 @@
 
     async function hashPw(pw, salt) { return hash(String(pw), salt); }
     async function setPassword(u, pw) { u.salt = randomId(8); u.passHash = await hashPw(pw, u.salt); }
+    // Each company has one master login: the only one who can open payment
+    // settings, after entering the payment PIN. It starts as the first admin.
+    function masterOf(c) {
+      const admins = db.users.filter((u) => c && u.companyId === c.id && u.role === 'admin' && u.active !== false);
+      return admins.find((u) => u.id === c.masterId) || admins[0] || null;
+    }
+    const isMaster = (u) => !!u && u.role === 'admin' && masterOf(findCompany(u.companyId)) === u;
+    const PIN_TRIES = 5, PIN_LOCK_MIN = 15, PIN_OPEN_MIN = 15;
+    function payLockState(u, token) {
+      const c = findCompany(u.companyId), m = masterOf(c), s = token && db.sessions[token];
+      const until = s && s.payUnlockedUntil && s.payUnlockedUntil > now().toISOString() ? s.payUnlockedUntil : null;
+      return { isMaster: m === u, masterName: m ? m.name : '', pinSet: !!c.paymentPin, unlocked: m === u && !!c.paymentPin && !!until, until, lockedUntil: c.pinLockUntil && c.pinLockUntil > now().toISOString() ? c.pinLockUntil : null };
+    }
+    // Throws unless this is the master login with payments unlocked by PIN.
+    function payGate(u, token) {
+      const st = payLockState(u, token);
+      if (!st.isMaster) fail(`Only the master login${st.masterName ? ` (${st.masterName})` : ''} can open payment settings.`, 403);
+      if (!st.pinSet) fail('Set a payment PIN first.', 423);
+      if (!st.unlocked) fail('Enter your payment PIN to open payment settings.', 423);
+    }
 
     function log(trip, status, by, note) { trip.history.push({ at: now().toISOString(), status, by, ...(note ? { note } : {}) }); }
     function fmtLocal(iso, c, withDay) {
@@ -4246,7 +4266,7 @@
         const trips = db.trips.filter((t) => t.companyId === c.id && t.pickupAt.slice(0, 7) === m);
         const admin = db.users.find((u) => u.companyId === c.id && u.role === 'admin');
         return {
-          ...pubCompany(c), ...planInfo(c), createdAt: c.createdAt, signup: c.signup ? clone(c.signup) : null, adminPhone: admin ? admin.phone || '' : '',
+          ...pubCompany(c), ...planInfo(c), createdAt: c.createdAt, signup: c.signup ? clone(c.signup) : null, adminPhone: admin ? admin.phone || '' : '', masterName: masterOf(c) ? masterOf(c).name : '', pinSet: !!c.paymentPin,
           adminEmail: admin ? admin.email : '', adminName: admin ? admin.name : '', adminId: admin ? admin.id : '', drivers: db.users.filter((u) => u.companyId === c.id && u.role === 'driver' && u.active !== false).length,
           vehicles: db.vehicles.filter((v) => v.companyId === c.id && v.status !== 'retired').length,
           tripsMonth: trips.filter((t) => t.status !== 'cancelled').length,
@@ -4281,6 +4301,8 @@
       if (!c) fail('Company not found.', 404);
       if (a.plan || a.billing) setPlan(c, a.plan || c.plan, a.billing);
       if (a.endTrial) c.trialEnds = null;
+      // A forgotten payment PIN: only the platform owner can clear it.
+      if (a.resetPin) { delete c.paymentPin; delete c.pinFails; delete c.pinLockUntil; for (const s of Object.values(db.sessions)) delete s.payUnlockedUntil; }
       // The company's details and its admin login, edited by the platform owner.
       if (a.info) {
         const x = a.info;
@@ -4399,6 +4421,7 @@
     const memberInv = (i) => ({ id: i.id, number: i.number, period: i.period, items: clone(i.items), total: i.total, status: i.status, createdAt: i.createdAt, paidAt: i.paidAt, paidBy: i.paidBy || '', charge: i.charge ? { status: i.charge.status, error: i.charge.error || '', last4: i.charge.last4 || '' } : null });
     // The company admin's view of their own LimoRelay membership.
     def('company.membership', ['admin'], false, (ctx) => {
+      payGate(ctx.user, ctx.token);
       const c = ctx.company, k = c.billingCard;
       return {
         ...planInfo(c), payMode, cardsOn: payMode === 'demo' || payMode === 'stripe', autoBill: billingCfg().autoBill,
@@ -4408,12 +4431,14 @@
     });
     // Demo only: the live site saves cards and takes payment on Stripe's page.
     def('company.saveBillingCard', ['admin'], true, (ctx, a) => {
+      payGate(ctx.user, ctx.token);
       if (payMode !== 'demo') fail(payMode === 'stripe' ? 'Your card is saved on a secure Stripe page. Reload and try again.' : "Card payments aren't set up yet.");
       ctx.company.billingCard = demoCard(a, ctx.user.name);
       for (const inv of db.invoices.filter((i) => i.companyId === ctx.company.id && i.status === 'open')) { delete inv.charge; chargeInvoice(inv, ctx.company); }
       return { ok: true };
     });
     def('company.payInvoice', ['admin'], true, (ctx, a) => {
+      payGate(ctx.user, ctx.token);
       if (payMode !== 'demo') fail(payMode === 'stripe' ? 'Payments open a secure Stripe page. Reload and tap Pay again.' : "Card payments aren't set up yet.");
       const inv = db.invoices.find((i) => i.id === a.id && i.companyId === ctx.company.id);
       if (!inv) fail('Invoice not found.', 404);
@@ -4422,6 +4447,58 @@
       if (k.last4 === '0341') fail('Card declined. Try another card.');
       Object.assign(inv, { status: 'paid', paidAt: now().toISOString(), paidBy: `${k.brand} ending ${k.last4}` });
       return memberInv(inv);
+    });
+    // Master login and payment PIN.
+    def('company.payLock', ['admin'], false, (ctx) => payLockState(ctx.user, ctx.token));
+    const pinOk = (pin) => /^\d{4,6}$/.test(String(pin || ''));
+    async function pinMatches(c, pin) { return !!c.paymentPin && (await hashPw(String(pin || ''), c.paymentPin.salt)) === c.paymentPin.hash; }
+    function openPayments(ctx) { const s = db.sessions[ctx.token]; if (s) s.payUnlockedUntil = new Date(now().getTime() + PIN_OPEN_MIN * 6e4).toISOString(); }
+    async function checkPin(ctx, pin) {
+      const c = ctx.company;
+      if (c.pinLockUntil && c.pinLockUntil > now().toISOString()) fail(`Too many wrong PINs. Try again after ${fmtLocal(c.pinLockUntil, c)}.`, 429);
+      if (await pinMatches(c, pin)) { delete c.pinFails; delete c.pinLockUntil; return; }
+      c.pinFails = (c.pinFails || 0) + 1;
+      if (c.pinFails >= PIN_TRIES) {
+        c.pinFails = 0; c.pinLockUntil = new Date(now().getTime() + PIN_LOCK_MIN * 6e4).toISOString();
+        ctx.dirty = true; save(db);
+        fail(`Too many wrong PINs. Payments are locked for ${PIN_LOCK_MIN} minutes.`, 429);
+      }
+      ctx.dirty = true; save(db);
+      fail(`Wrong PIN. ${PIN_TRIES - c.pinFails} ${PIN_TRIES - c.pinFails === 1 ? 'try' : 'tries'} left.`, 400);
+    }
+    def('company.setPayPin', ['admin'], true, async (ctx, a) => {
+      const c = ctx.company;
+      if (!isMaster(ctx.user)) fail('Only the master login can set the payment PIN.', 403);
+      if (c.paymentPin) await checkPin(ctx, a.current);
+      if (!pinOk(a.pin)) fail('Choose a PIN of 4 to 6 digits.');
+      const salt = randomId(8);
+      c.paymentPin = { salt, hash: await hashPw(String(a.pin), salt), setAt: now().toISOString(), by: ctx.user.name };
+      openPayments(ctx);
+      return payLockState(ctx.user, ctx.token);
+    });
+    def('company.unlockPayments', ['admin'], true, async (ctx, a) => {
+      if (!isMaster(ctx.user)) fail('Only the master login can open payment settings.', 403);
+      if (!ctx.company.paymentPin) fail('Set a payment PIN first.');
+      await checkPin(ctx, a.pin);
+      openPayments(ctx);
+      return payLockState(ctx.user, ctx.token);
+    });
+    def('company.lockPayments', ['admin'], true, (ctx) => {
+      const s = db.sessions[ctx.token]; if (s) delete s.payUnlockedUntil;
+      return payLockState(ctx.user, ctx.token);
+    });
+    // The master hands the master login to another admin. The PIN is cleared
+    // so the new master chooses their own.
+    def('dispatch.makeMaster', ['admin'], true, (ctx, a) => {
+      const c = ctx.company;
+      payGate(ctx.user, ctx.token);
+      const to = db.users.find((u) => u.id === a.id && u.companyId === c.id && u.role === 'admin' && u.active !== false);
+      if (!to) fail('Only an active admin can be the master login.');
+      if (to === ctx.user) fail('You are already the master login.');
+      c.masterId = to.id;
+      delete c.paymentPin; delete c.pinFails; delete c.pinLockUntil;
+      for (const s of Object.values(db.sessions)) delete s.payUnlockedUntil;
+      return { masterId: to.id };
     });
     // Runs from the server clock: invoices on the 1st and when a trial ends,
     // and a reminder 3 days before a trial ends for companies with no card.
@@ -4879,6 +4956,7 @@
         if (a.kind === 'plancard' || a.kind === 'invoice') {
           const u = sessionUser(token);
           if (u.role !== 'admin') fail('Only the company admin can manage the membership.', 403);
+          payGate(u, token);
           const c = findCompany(u.companyId);
           if (a.kind === 'plancard') return { mode: 'setup', account: 'platform', description: `LimoRelay membership, ${c.name}`, email: u.email, name: c.name, meta: { kind: 'plancard', company: c.id }, back: '#account' };
           const inv = db.invoices.find((i) => i.id === a.id && i.companyId === c.id);
@@ -5070,6 +5148,7 @@
         await ensure();
         const u = sessionUser(token);
         if (u.role !== 'admin') fail('Only the company admin can connect card payments.', 403);
+        payGate(u, token);
         const c = findCompany(u.companyId);
         return { id: c.id, name: c.name, email: c.email || u.email, stripe: c.stripe ? clone(c.stripe) : null };
       },
