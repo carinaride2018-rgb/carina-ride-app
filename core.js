@@ -2156,6 +2156,37 @@
       if (!agent) ctx.user.prefs = { ...b.prefs, signName: b.signName || (ctx.user.prefs && ctx.user.prefs.signName) || '' };
       return { ...tripView(t), returnTrip: r ? tripView(r) : null, landingTrip: lt ? tripView(lt) : null, repeats: reps.filter((x) => !x.returnOf).length };
     });
+    // Booking without an account: the guest types their name, mobile and email.
+    // The ride goes under a customer record for that email (made if new), but a
+    // card already saved there is never used: the guest gives their own. The
+    // usual confirmation goes out, plus an email to set up a login.
+    def('public.guestBook', 'public', true, (ctx, a) => {
+      const c = companyBySlug(a.slug);
+      const email = str(a.email, 120).toLowerCase();
+      const name = str(a.name, 80);
+      if (!name) fail('Enter your name.');
+      if (!emailOk(email)) fail('Enter your email so we can send your confirmation.');
+      let u = db.users.find((x) => x.email === email && x.companyId === c.id && x.role === 'customer');
+      if (u && u.active === false) fail('This email belongs to a closed account. Use another email.');
+      if (u && u.agent) fail('That email is a travel agent login. Sign in to book.');
+      const isNew = !u;
+      if (isNew) { u = { id: id('usr'), role: 'customer', companyId: c.id, email, name, phone: str(a.phone, 30), active: true, guest: true, createdAt: now().toISOString() }; db.users.push(u); }
+      else if (!u.phone && str(a.phone)) u.phone = str(a.phone, 30);
+      const saved = u.card, savedPrefs = u.prefs;
+      u.card = null;
+      const booking = { ...(a.booking || {}), passengerName: str((a.booking || {}).passengerName) || name, passengerPhone: str((a.booking || {}).passengerPhone) || str(a.phone, 30), accountId: '' };
+      let res;
+      try { res = M['customer.book'].fn({ ...ctx, user: u, company: c }, { ...a, booking }); }
+      catch (e) { u.card = saved; if (isNew) db.users.splice(db.users.indexOf(u), 1); throw e; }
+      // The guest's card stays on their rides only; an existing customer keeps theirs.
+      if (!isNew) { u.card = saved; u.prefs = savedPrefs; }
+      let accountEmail = false;
+      if (!u.passHash) {
+        mailUser(u, c.id, 'login', `Thanks for booking with ${c.name}, ${name.split(' ')[0]}. Your ride ${res.ref} is booked. Set up your ${c.name} account to see your rides, change bookings and book faster next time: choose a password with this link (it works for ${WELCOME_DAYS} days): ${loginLink(u, 'welcome')}`);
+        accountEmail = true;
+      }
+      return { ...res, guest: true, email, accountEmail, hasAccount: !!u.passHash };
+    });
     // A travel agent's booking: the ride carries who booked it and the
     // commission rate at the time. The passenger gets the usual texts; the
     // agent gets an email copy. "Passenger pays" sends the client a card link

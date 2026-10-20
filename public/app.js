@@ -1724,25 +1724,37 @@
     });
     function showAuth() {
       const host = $('#auth-host', v);
-      let mode = 'signup';
+      let mode = 'guest';
       const draw = () => {
+        const t = { guest: 'Your details to confirm', signup: 'Create your account to confirm', signin: 'Sign in to confirm' }[mode];
         host.innerHTML = `<div class="panel stack" style="margin-top:20px;max-width:560px">
-          <h2>${mode === 'signup' ? 'Create your account to confirm' : 'Sign in to confirm'}</h2>
-          <p class="muted small">Your account lets you see your trips, pay and get your receipts.</p>
+          <h2>${t}</h2>
+          <p class="muted small">${mode === 'guest' ? "No account needed. We'll email your confirmation and a link to set up an account if you'd like one." : 'Your account lets you see your trips, pay and get your receipts.'}</p>
           <form id="au-form" class="stack" novalidate>
-            ${mode === 'signup' ? `<div class="grid2"><label class="field"><span>Full name</span><input id="au-name" name="name" value="${esc(pending.booking.passengerName || '')}"></label><label class="field"><span>Mobile</span><input id="au-phone" name="phone" type="tel" value="${esc(pending.booking.passengerPhone || '')}"></label></div>` : ''}
-            <label class="field"><span>Email</span><input id="au-email" name="email" type="email" autocomplete="username"></label>
-            <label class="field"><span>Password</span><input id="au-pass" name="password" type="password" autocomplete="${mode === 'signup' ? 'new-password' : 'current-password'}">${mode === 'signup' ? '<span class="hint">At least 8 characters</span>' : ''}</label>
+            ${mode !== 'signin' ? `<div class="grid2"><label class="field"><span>Full name</span><input id="au-name" name="name" value="${esc(pending.booking.passengerName || '')}"></label><label class="field"><span>Mobile</span><input id="au-phone" name="phone" type="tel" value="${esc(pending.booking.passengerPhone || '')}"></label></div>` : ''}
+            <label class="field"><span>Email</span><input id="au-email" name="email" type="email" autocomplete="${mode === 'guest' ? 'email' : 'username'}"></label>
+            ${mode !== 'guest' ? `<label class="field"><span>Password</span><input id="au-pass" name="password" type="password" autocomplete="${mode === 'signup' ? 'new-password' : 'current-password'}">${mode === 'signup' ? '<span class="hint">At least 8 characters</span>' : ''}</label>` : ''}
             <div id="au-err"></div>
-            <div class="row"><button class="btn brand" type="submit">${mode === 'signup' ? 'Create account and book' : 'Sign in and book'}</button>
-              <button class="linkbtn" type="button" id="au-switch">${mode === 'signup' ? 'I already have an account' : 'Create a new account'}</button></div>
+            <div class="row"><button class="btn brand" type="submit">${{ guest: 'Book now', signup: 'Create account and book', signin: 'Sign in and book' }[mode]}</button>
+              ${mode !== 'guest' ? '<button class="linkbtn" type="button" data-aumode="guest">Book without an account</button>' : ''}
+              ${mode !== 'signin' ? '<button class="linkbtn" type="button" data-aumode="signin">I have an account</button>' : ''}
+              ${mode !== 'signup' ? '<button class="linkbtn" type="button" data-aumode="signup">Create an account</button>' : ''}</div>
           </form></div>`;
-        $('#au-switch', host).onclick = () => { mode = mode === 'signup' ? 'signin' : 'signup'; draw(); };
+        $$('[data-aumode]', host).forEach((x) => { x.onclick = () => { mode = x.dataset.aumode; draw(); }; });
         $('#au-form', host).onsubmit = async (e) => {
           e.preventDefault();
           const f = formData(e.target);
           await busy($('button[type=submit]', e.target), async () => {
             try {
+              if (mode === 'guest') {
+                const t = await api('public.guestBook', { slug, name: f.name, phone: f.phone, email: f.email, booking: pending.booking });
+                if (t.pay && t.pay.needsCard && info.company.payMode === 'stripe') {
+                  toast(`${bookedMsg(t)} Next, save your card.`);
+                  const r = await payApi('checkout', { kind: 'card', token: t.cardToken });
+                  location.href = r.url; await new Promise(() => {});
+                }
+                return guestDone(t);
+              }
               const res = mode === 'signup' ? await api('auth.signup', { ...f, slug }) : await api('auth.login', { ...f, slug });
               if (res.user.role !== 'customer' || res.user.companyId !== info.company.id) throw new Error(`That login isn't a ${info.company.name} customer account.`);
               setSession(res);
@@ -1755,6 +1767,19 @@
         host.scrollIntoView({ behavior: 'smooth', block: 'start' });
       };
       draw();
+    }
+    // Booked as a guest: a thank-you in place of the form.
+    function guestDone(t) {
+      $('#book-host', v).hidden = true;
+      const host = $('#auth-host', v);
+      host.innerHTML = `<div class="panel stack" style="margin-top:20px;max-width:560px" id="guest-done">
+        <h2>You're booked</h2>
+        <p>${esc(bookedMsg(t))}</p>
+        <dl class="kv"><dt>Pickup</dt><dd>${esc(fmtDT(t.pickupAt))}<div class="small faint">${esc(t.pickup || '')}</div></dd>${t.dropoff ? `<dt>Drop-off</dt><dd class="small">${esc(t.dropoff)}</dd>` : ''}${t.price ? `<dt>Total</dt><dd class="num">${money(t.price.total)}</dd>` : ''}</dl>
+        <p class="small muted">We emailed your confirmation to <b>${esc(t.email)}</b>.${t.accountEmail ? ' We also sent a link to set up your account, so you can see and change your rides any time.' : ' Sign in with that email to see your rides.'}</p>
+        <div class="row"><a class="btn" href="#book.${esc(slug)}" id="guest-again">Book another ride</a>${info.company.phone ? `<a class="btn" href="tel:${esc(info.company.phone)}">Call ${esc(info.company.name)}</a>` : ''}</div></div>`;
+      host.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      $('#guest-again', host).onclick = (e) => { e.preventDefault(); viewBook(slug); };
     }
   }
 
