@@ -909,7 +909,7 @@
         <p class="small faint" style="margin-top:12px">Extra texts are $15 for 500. Card processing is billed by Stripe directly to your company; ${PLATFORM} takes no share of your fares.</p>
       </section>
       <section class="lp-sec lp-trial" id="lp-trial">
-        <div class="stack" style="gap:8px"><h2>Join us, free for 30 days</h2><p class="muted">Sign up your company below. We review every new company and email you when your account is approved, usually the same day. Your 30-day free trial starts then, and we’ll introduce you to the members near you. No card needed. Questions first? Email ${mailLink()}.</p></div>
+        <div class="stack" style="gap:8px"><h2>Join us, free for 30 days</h2><p class="muted">It takes two minutes. We welcome every new member personally and email you as soon as you’re approved, usually the same day. Your free trial starts then, with no card needed, and we’ll introduce you to operators near you. Questions? Email ${mailLink()}.</p></div>
         <form id="tr-form" class="stack" novalidate>
           <div class="grid2"><label class="field"><span>Company name</span><input id="tr-company" name="company" autocomplete="organization"></label><label class="field"><span>Booking link name</span><input id="tr-slug" name="slug" class="mono" autocapitalize="off" placeholder="your-company"><span class="hint" id="tr-slughint">Your booking page will be ${esc(location.host || 'limorelay.com')}/#book.<b class="mono">your-company</b></span></label></div>
           <div class="grid2"><label class="field"><span>Your name</span><input id="tr-name" name="name" autocomplete="name"></label><label class="field"><span>Mobile phone</span><input id="tr-phone" name="phone" type="tel" autocomplete="tel"></label></div>
@@ -951,7 +951,8 @@
       await busy($('#tr-go', v), async () => {
         try {
           await api('public.companySignup', { ...f, terms: $('#tr-terms', v).checked });
-          $('#tr-form', v).outerHTML = `<div class="note ok" id="tr-done"><b>Thank you, ${esc(f.name.split(' ')[0])}.</b> We’ve got your sign-up for ${esc(f.company)}. We’ll email ${esc(f.email)} as soon as it’s approved, usually the same day, and then you can sign in with that email and your password. Questions? Write to ${mailLink()}.</div>`;
+          const first = (f.name.trim().split(/\s+/)[0] || '').replace(/^./, (ch) => ch.toUpperCase());
+          $('#tr-form', v).outerHTML = `<div class="note ok" id="tr-done"><b>Welcome aboard, ${esc(first)}!</b> We’ve received the sign-up for ${esc(f.company)}. Watch for an email at ${esc(f.email)} saying you’re approved, usually the same day. Then sign in with that email and the password you just chose. Questions? Email ${mailLink()}.</div>`;
         } catch (err) { showErr($('#tr-err', v), err); }
       });
     };
