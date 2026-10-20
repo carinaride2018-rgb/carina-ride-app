@@ -112,7 +112,7 @@
     const KEY = 'livery-demo-db-v2';
     // Bump DEMO_DATA when the sample data changes (new demo logins, new seed
     // rows): visitors who saved an older copy get the fresh sample data.
-    const DEMO_DATA = '42';
+    const DEMO_DATA = '43';
     if (store.get('livery-demo-data') !== DEMO_DATA) { store.set(KEY, null); store.set('livery-session', null); store.set('livery-demo-data', DEMO_DATA); }
     const mem = { db: null };
     const hex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
@@ -474,7 +474,13 @@
   async function demoLogin(key) {
     const d = DEMO_LOGINS.find((x) => x.key === key);
     try {
-      const res = await api('auth.login', { email: d.email, password: 'demo1234' });
+      let res;
+      try { res = await api('auth.login', { email: d.email, password: 'demo1234' }); } catch (e) {
+        // Sample data saved by an older version may lack this login: restore it once.
+        if (!DEMO) throw e;
+        await core.reset(); toast('Sample data refreshed.');
+        res = await api('auth.login', { email: d.email, password: 'demo1234' });
+      }
       setSession(res); go(HOME[res.user.role]);
     } catch (e) { toast(e.message, true); }
   }
