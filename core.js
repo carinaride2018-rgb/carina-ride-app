@@ -4198,7 +4198,7 @@
         const admin = db.users.find((u) => u.companyId === c.id && u.role === 'admin');
         return {
           ...pubCompany(c), ...planInfo(c), createdAt: c.createdAt,
-          adminEmail: admin ? admin.email : '', drivers: db.users.filter((u) => u.companyId === c.id && u.role === 'driver' && u.active !== false).length,
+          adminEmail: admin ? admin.email : '', adminName: admin ? admin.name : '', adminId: admin ? admin.id : '', drivers: db.users.filter((u) => u.companyId === c.id && u.role === 'driver' && u.active !== false).length,
           vehicles: db.vehicles.filter((v) => v.companyId === c.id && v.status !== 'retired').length,
           tripsMonth: trips.filter((t) => t.status !== 'cancelled').length,
           bookedMonth: round2(trips.filter((t) => t.status !== 'cancelled').reduce((s, t) => s + t.price.total, 0)),
@@ -4242,6 +4242,27 @@
       if (!c) fail('Company not found.', 404);
       if (a.plan || a.billing) setPlan(c, a.plan || c.plan, a.billing);
       if (a.endTrial) c.trialEnds = null;
+      // The company's details and its admin login, edited by the platform owner.
+      if (a.info) {
+        const x = a.info;
+        const name = str(x.name, 80);
+        if (!name) fail('Enter the company name.');
+        const slug = slugify(x.slug || c.slug);
+        if (!slug || slug.length < 3) fail('Choose a booking link name of at least 3 letters.');
+        if (db.companies.some((o) => o !== c && o.slug === slug)) fail('That booking link name is taken. Choose another.');
+        const email = str(x.email, 120).toLowerCase();
+        if (email && !emailOk(email)) fail('Enter a valid company email.');
+        const admin = db.users.find((u) => u.companyId === c.id && u.role === 'admin');
+        const adminEmail = str(x.adminEmail, 120).toLowerCase();
+        if (admin) {
+          if (!str(x.adminName, 80)) fail("Enter the company admin's name.");
+          if (!emailOk(adminEmail)) fail("Enter the company admin's email.");
+          if (db.users.some((u) => u !== admin && u.email === adminEmail && (u.role !== 'customer' || u.companyId === c.id))) fail('Another login already uses that email.');
+          admin.name = str(x.adminName, 80);
+          if (admin.email !== adminEmail) admin.email = adminEmail;
+        }
+        Object.assign(c, { name, slug, email, phone: str(x.phone, 30), tagline: str(x.tagline, 120), ...(/^#[0-9a-f]{6}$/i.test(x.color || '') ? { color: x.color } : {}), ...(str(x.timezone, 40) ? { timezone: str(x.timezone, 40) } : {}) });
+      }
       if (a.monthlyFee != null && a.monthlyFee !== '') c.monthlyFee = Math.max(0, round2(num(a.monthlyFee, c.monthlyFee)));
       if (a.textsIncluded !== undefined) {
         if (a.textsIncluded === '' || a.textsIncluded === null) delete c.textsIncluded;

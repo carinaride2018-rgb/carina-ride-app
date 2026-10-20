@@ -4114,7 +4114,7 @@
             <td class="r num nowrap">${c.billing === 'yearly' ? `${money(c.yearlyFee)}/yr` : `${money(c.monthlyFee)}/mo`}${c.inTrial ? `<div class="small faint">Trial until ${esc(fmtYMD(c.trialEnds))}</div>` : c.priceLockedUntil ? `<div class="small faint">Locked until ${esc(fmtYMD(c.priceLockedUntil))}</div>` : c.paidThrough ? `<div class="small faint">Paid through ${esc(c.paidThrough)}</div>` : ''}</td><td class="r num">${c.drivers}</td><td class="r num">${c.vehicles}</td><td class="r num">${c.tripsMonth}</td><td class="r num">${money0(c.bookedMonth)}</td>
             <td class="nowrap"><button class="linkbtn num" type="button" data-texts="${c.id}">${c.texts.used} / ${c.texts.included}${c.texts.custom ? '*' : ''}</button>${c.texts.out ? ' <span class="pill s-cancelled">Out</span>' : c.texts.low ? ' <span class="pill unpaid">Low</span>' : ''}${c.texts.credits ? `<div class="small faint">+${c.texts.credits} bought</div>` : ''}</td>
             <td>${c.status === 'active' ? '<span class="pill s-on_board">Active</span>' : '<span class="pill s-cancelled">Paused</span>'}</td>
-            <td class="nowrap"><button class="btn sm" type="button" data-sendlogin="${c.id}">Send login email</button> <button class="btn sm" type="button" data-status="${c.id}" data-to="${c.status === 'active' ? 'suspended' : 'active'}">${c.status === 'active' ? 'Pause' : 'Resume'}</button></td></tr>`).join('')}
+            <td class="nowrap"><button class="btn sm" type="button" data-editco="${c.id}">Edit</button> <button class="btn sm" type="button" data-sendlogin="${c.id}">Send login email</button> <button class="btn sm" type="button" data-status="${c.id}" data-to="${c.status === 'active' ? 'suspended' : 'active'}">${c.status === 'active' ? 'Pause' : 'Resume'}</button></td></tr>`).join('')}
           </tbody></table></div>
           <p class="small faint" style="margin-top:10px">Pausing a company signs out its staff, drivers and customers and closes its booking page until you resume it.</p>`;
         $('#co-add', v).onclick = addCompany;
@@ -4128,6 +4128,7 @@
         }); });
         $$('[data-plan]', v).forEach((s) => { s.onchange = async () => { try { await api('owner.updateCompany', { id: s.dataset.plan, plan: s.value }); toast('Plan changed.'); } catch (e) { toast(e.message, true); } last = ''; refresh(); }; });
         $$('[data-billing]', v).forEach((s) => { s.onchange = async () => { try { await api('owner.updateCompany', { id: s.dataset.billing, billing: s.value }); toast(s.value === 'yearly' ? 'Now billed yearly: 12 months for the price of 10.' : 'Now billed monthly.'); } catch (e) { toast(e.message, true); } last = ''; refresh(); }; });
+        $$('[data-editco]', v).forEach((b) => { b.onclick = () => editCompany(list.find((x) => x.id === b.dataset.editco)); });
         $$('[data-status]', v).forEach((b) => { b.onclick = () => busy(b, async () => { try { await api('owner.updateCompany', { id: b.dataset.status, status: b.dataset.to }); toast(b.dataset.to === 'active' ? 'Company resumed.' : 'Company paused.'); last = ''; refresh(); } catch (e) { toast(e.message, true); } }); });
       }
       // Owner: change one company's monthly texts, or give it free texts.
@@ -4159,6 +4160,30 @@
         });
         $('[data-close]', m).onclick = closeModal;
         $$('[data-copyll]', m).forEach((b) => { b.onclick = async () => { const inp = $('#ll-' + b.dataset.copyll, m); try { await navigator.clipboard.writeText(inp.value); toast('Link copied.'); } catch (e) { inp.select(); toast('Press Ctrl+C or ⌘C to copy.'); } }; });
+      }
+      // The company's details and its admin login.
+      function editCompany(c) {
+        const TZ = ['America/Los_Angeles', 'America/Denver', 'America/Phoenix', 'America/Chicago', 'America/New_York', 'America/Anchorage', 'Pacific/Honolulu'];
+        const m = openModal({
+          title: `Edit ${c.name}`,
+          body: `<form id="ec" class="stack" novalidate>
+            <div class="grid2"><label class="field"><span>Company name</span><input id="ec-name" name="name" value="${esc(c.name)}"></label>
+              <label class="field"><span>Booking link name</span><input id="ec-slug" name="slug" class="mono" value="${esc(c.slug)}"><span class="hint">Changing it changes their booking page address, so links they shared stop working.</span></label></div>
+            <label class="field"><span>Tagline on their booking page</span><input name="tagline" value="${esc(c.tagline || '')}"></label>
+            <div class="grid2"><label class="field"><span>Company phone</span><input name="phone" type="tel" value="${esc(c.phone || '')}"></label>
+              <label class="field"><span>Company email</span><input name="email" type="email" value="${esc(c.email || '')}"><span class="hint">Shown to their customers and used as the reply-to address.</span></label></div>
+            <div class="grid2"><label class="field"><span>Time zone</span><select name="timezone">${[...new Set([c.timezone, ...TZ].filter(Boolean))].map((z) => `<option value="${z}" ${z === c.timezone ? 'selected' : ''}>${esc(z.replace(/_/g, ' '))}</option>`).join('')}</select></label>
+              <label class="field"><span>Brand color</span><input name="color" type="color" value="${esc(c.color || '#2b4a7e')}" style="padding:4px;height:40px"></label></div>
+            <h3>Their admin login</h3>
+            <div class="grid2"><label class="field"><span>Admin name</span><input id="ec-aname" name="adminName" value="${esc(c.adminName || '')}"></label>
+              <label class="field"><span>Admin email</span><input id="ec-aemail" name="adminEmail" type="email" value="${esc(c.adminEmail || '')}"><span class="hint">They sign in with this email. Use Send login email afterwards if it changed.</span></label></div>
+            <div id="ec-err"></div></form>`,
+          footer: `<button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="ec-save">Save</button>`,
+        });
+        $('[data-close]', m).onclick = closeModal;
+        $('#ec-save', m).onclick = (e) => busy(e.currentTarget, async () => {
+          try { const r = await api('owner.updateCompany', { id: c.id, info: formData($('#ec', m)) }); closeModal(); toast(`${r.name} saved.`); last = ''; refresh(); } catch (err) { showErr($('#ec-err', m), err); }
+        });
       }
       function addCompany() {
         const m = openModal({
