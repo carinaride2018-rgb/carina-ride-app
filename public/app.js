@@ -860,8 +860,8 @@
         </div>
       </section>
       ${DEMO ? '' : `<section class="lp-sec lp-video" id="lp-video">
-        <div class="stack" style="gap:6px"><span class="label">See it in 60 seconds</span><h2>Booking, dispatch, driver and passenger apps in one minute.</h2></div>
-        <video controls playsinline preload="none" poster="media/limorelay-promo-poster.jpg" width="1280" height="720"><source src="media/limorelay-promo.mp4" type="video/mp4">Your browser can't play this video. <a href="media/limorelay-promo.mp4">Download it</a>.</video>
+        <div class="stack" style="gap:6px"><span class="label">See it in 60 seconds</span><h2>100 limousine companies. One shared commitment to service.</h2></div>
+        <video controls playsinline preload="none" poster="media/limorelay-promo-v2-poster.jpg" width="1280" height="720"><source src="media/limorelay-promo-v2.mp4" type="video/mp4">Your browser can't play this video. <a href="media/limorelay-promo-v2.mp4">Download it</a>.</video>
       </section>`}
       ${sample ? `<section class="stack lp-sec">
         <span class="label">Try it with sample logins${DEMO ? '' : ' <span class="pwhint">· password demo1234</span>'}</span>
