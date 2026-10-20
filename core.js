@@ -4208,7 +4208,7 @@
       const u = { id: id('usr'), role: 'admin', companyId: c.id, name, email, phone, active: true, createdAt: now().toISOString() };
       await setPassword(u, pw);
       db.users.push(u);
-      mailUser(u, null, 'signup', `Welcome aboard, ${name.split(' ')[0]}! We've received the sign-up for ${company} on LimoRelay. We welcome every new member personally and will email you at ${email} as soon as you're approved, usually the same day. Your 30-day free trial starts then, with no card needed. Questions? Reply to this email or write to ${PLATFORM_EMAIL}.`);
+      mailUser(u, null, 'signup', `Welcome aboard, ${name.split(' ')[0]}! We've received the sign-up for ${company} on LimoRelay. We welcome every new member personally and will email you at ${email} as soon as you're approved, within 3 business days. Your 30-day free trial starts then, with no card needed. Questions? Reply to this email or write to ${PLATFORM_EMAIL}.`);
       const owner = db.users.find((x) => x.role === 'owner' && x.active !== false);
       if (owner && owner.email) db.messages.unshift({ id: id('msg'), companyId: null, tripId: null, ref: '', at: c.createdAt, recipient: owner.email, channel: 'email', kind: 'signup', metered: true, replyTo: email,
         body: `New company sign-up waiting for your approval: ${company}${city ? ', ' + city : ''}. ${name}, ${email}, ${phone}${fleet ? '. Fleet: ' + fleet + ' vehicles' : ''}. Plan: ${PLANS[plan].label}.${note ? ' Note: ' + note : ''} Approve or decline it at ${siteUrl()} under Companies.` });
