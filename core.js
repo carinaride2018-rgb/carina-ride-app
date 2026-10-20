@@ -1698,7 +1698,7 @@
       bookings: ['dispatch.createTrip', 'dispatch.updateTrip', 'dispatch.setStatus', 'dispatch.cancelSeries', 'dispatch.noShow', 'dispatch.importTrips', 'dispatch.applyFlight', 'dispatch.sendCardLink', 'dispatch.inboxSend', 'dispatch.saveQuote', 'dispatch.sendQuote', 'dispatch.quoteAction'],
       assign: ['dispatch.assign', 'dispatch.autoAssign', 'network.offer', 'network.respond', 'network.cancelOffer', 'network.handBack'],
       payments: ['dispatch.chargeCard', 'dispatch.markPaid', 'network.settle'],
-      customers: ['dispatch.saveCustomer', 'dispatch.saveAccount', 'dispatch.accountBooker', 'dispatch.createInvoice', 'dispatch.invoiceAction', 'dispatch.invoices', 'dispatch.invoice'],
+      customers: ['dispatch.saveCustomer', 'dispatch.sendCustomerLogin', 'dispatch.saveAccount', 'dispatch.accountBooker', 'dispatch.createInvoice', 'dispatch.invoiceAction', 'dispatch.invoices', 'dispatch.invoice'],
       drivers: ['dispatch.saveDriver', 'dispatch.setDriverPhoto', 'dispatch.saveVehicle', 'dispatch.setVehiclePhoto', 'dispatch.addMaintenance', 'dispatch.deleteMaintenance'],
       pay: ['dispatch.payroll', 'dispatch.markPayout'],
       reports: ['dispatch.reports'],
@@ -4153,6 +4153,24 @@
       const token = randomId(24);
       db.sessions[token] = { userId: u.id, at: now().toISOString() };
       return { token, user: pubUser(u), company: pubCompany(findCompany(u.companyId)) };
+    });
+    // Login email for a customer, from their limo company: a link to set (or
+    // reset) their password, then sign in to book and see their rides.
+    function sendCustomerLogin(c, u) {
+      const link = loginLink(u, 'welcome');
+      const site = `${(opts.publicUrl || 'https://limorelay.com/').replace(/#.*$/, '')}#book.${c.slug}`;
+      mailUser(u, c.id, 'login', `Hi ${u.name.split(' ')[0]}, here are your ${c.name} login details. Your sign-in email is ${u.email}. ${u.passHash ? 'Choose a new password' : 'Set your password'} with this link (it works for ${WELCOME_DAYS} days): ${link} Then sign in any time at ${site} to book rides, see your trips and keep your card on file.${c.phone ? ` Questions? Call ${c.phone}.` : ''}`);
+      return link;
+    }
+    def('dispatch.sendCustomerLogin', STAFF, true, (ctx, a) => {
+      const c = ctx.company;
+      const pick = a.all ? db.users.filter((u) => u.companyId === c.id && u.role === 'customer' && u.active !== false && !u.passHash)
+        : db.users.filter((u) => u.id === a.id && u.companyId === c.id && u.role === 'customer' && u.active !== false);
+      if (!a.all && !pick.length) fail('Customer not found.', 404);
+      const ok = pick.filter((u) => emailOk(u.email));
+      if (!a.all && !ok.length) fail('This customer has no email address. Add one first.');
+      const links = ok.map((u) => ({ email: u.email, link: sendCustomerLogin(c, u) }));
+      return { sent: ok.map((u) => u.email), emailOn: !!live.email, links: live.email ? [] : links };
     });
     def('owner.sendLogin', ['owner'], true, (ctx, a) => {
       const c = findCompany(a.id);

@@ -3853,10 +3853,25 @@
       try { [list, accounts] = await Promise.all([api('dispatch.customers'), api('dispatch.accounts')]); } catch (e) { return showErr(v, e); }
       list.sort((a, b) => (b.lastTrip || '').localeCompare(a.lastTrip || ''));
       v.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Customers</h1><p class="muted">People who booked online, plus passengers added by phone with an email. Open one to give them an account discount.</p></div>
-          <a class="btn" href="#book.${esc(session.company.slug)}">Open your booking page</a></div>
+          <div class="row"><button class="btn" type="button" id="cu-sendall">Email login to customers without one</button><a class="btn" href="#book.${esc(session.company.slug)}">Open your booking page</a></div></div>
         <div class="tablewrap"><table><thead><tr><th>Name</th><th>Company account</th><th>Email</th><th>Phone</th><th>Online login</th><th class="r">Discount</th><th class="r">Trips</th><th class="r">Spent</th><th>Last trip</th></tr></thead><tbody>
         ${list.map((c) => `<tr class="click" data-id="${c.id}"><td><b>${esc(c.name)}</b></td><td class="small">${esc(c.account)}</td><td class="mono small">${esc(c.email)}</td><td class="mono small">${esc(c.phone)}</td><td>${c.hasLogin ? '<span class="pill s-on_board">Yes</span>' : '<span class="pill off">No</span>'}</td><td class="r num">${c.discountPct ? c.discountPct + '%' : '—'}</td><td class="r num">${c.trips}</td><td class="r num">${money(c.spend)}</td><td class="small">${c.lastTrip ? esc(fmtDate(c.lastTrip)) : '—'}</td></tr>`).join('') || '<tr><td colspan="9" class="faint">No customers yet.</td></tr>'}
         </tbody></table></div>`;
+      // Without email switched on, show the links so the office can send them.
+      const custLoginDone = (r) => {
+        if (!r.sent.length) return toast('Everyone with an email already has a login.');
+        if (!r.links.length) return toast(r.sent.length === 1 ? `Login email sent to ${r.sent[0]}.` : `Login emails sent to ${r.sent.length} customers.`);
+        const m = openModal({ title: 'Login links', body: `<div class="stack"><div class="note warn">Email isn't switched on yet, so nothing was emailed. Send these links yourself. Each works for 7 days and lets the customer choose a password.</div>
+          ${r.links.map((l, i) => `<label class="field"><span>${esc(l.email)}</span><div class="row"><input class="input grow mono small" readonly id="cl-${i}" value="${esc(l.link)}"><button class="btn sm" type="button" data-copycl="${i}">Copy</button></div></label>`).join('')}</div>`, footer: '<button class="btn primary" type="button" data-close>Done</button>' });
+        $('[data-close]', m).onclick = closeModal;
+        $$('[data-copycl]', m).forEach((b) => { b.onclick = async () => { const inp = $('#cl-' + b.dataset.copycl, m); try { await navigator.clipboard.writeText(inp.value); toast('Link copied.'); } catch (e) { inp.select(); toast('Press Ctrl+C or ⌘C to copy.'); } }; });
+      };
+      const sa = $('#cu-sendall', v), need = list.filter((c) => !c.hasLogin && c.email).length;
+      sa.hidden = !need;
+      sa.onclick = () => busy(sa, async () => {
+        if (!confirm(`Email a set-your-password link to ${need} customer${need === 1 ? '' : 's'} who don't have a login yet?`)) return;
+        try { custLoginDone(await api('dispatch.sendCustomerLogin', { all: true })); } catch (err) { toast(err.message, true); }
+      });
       $$('tr[data-id]', v).forEach((r) => { r.onclick = () => {
         const c = list.find((x) => x.id === r.dataset.id);
         const m = openModal({
@@ -3867,9 +3882,11 @@
             <label class="field"><span>Phone</span><input id="cf-phone" name="phone" value="${esc(c.phone)}"></label>
             <label class="field"><span>Notes</span><textarea id="cf-notes" name="notes">${esc(c.notes)}</textarea></label>
             <div id="cf-err"></div></form>`,
-          footer: '<button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="cf-save">Save</button>',
+          footer: `${c.email ? `<button class="btn" type="button" id="cf-login">${c.hasLogin ? 'Resend login email' : 'Send login email'}</button>` : ''}<span class="grow"></span><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="cf-save">Save</button>`,
         });
         $('[data-close]', m).onclick = closeModal;
+        const cl = $('#cf-login', m);
+        if (cl) cl.onclick = () => busy(cl, async () => { try { custLoginDone(await api('dispatch.sendCustomerLogin', { id: c.id })); } catch (err) { showErr($('#cf-err', m), err); } });
         $('#cf-save', m).onclick = (e) => busy(e.currentTarget, async () => { try { await api('dispatch.saveCustomer', { ...formData($('#cf', m)), id: c.id }); closeModal(); toast('Customer saved.'); redraw(); } catch (err) { showErr($('#cf-err', m), err); } });
       }; });
     }
@@ -4282,15 +4299,16 @@
               <td data-label="Status"><select class="input" style="width:auto;min-height:32px;padding:3px 6px" data-lead="${l.id}" aria-label="Status">${[['new', 'New'], ['contacted', 'Contacted'], ['signed', 'Signed up']].map(([k, t]) => `<option value="${k}" ${l.status === k ? 'selected' : ''}>${t}</option>`).join('')}</select></td>
               <td><button class="linkbtn small" type="button" data-rmlead="${l.id}">Remove</button></td></tr>`).join('')}
             </tbody></table></div></details>` : ''}
-          <div class="tablewrap"><table><thead><tr><th>Company</th><th>Admin login</th><th>Plan</th><th class="r">Fee</th><th class="r">Drivers</th><th class="r">Vehicles</th><th class="r">Trips this month</th><th class="r">Booked this month</th><th>Texts this month</th><th>Status</th><th></th></tr></thead><tbody>
-          ${list.map((c) => `<tr><td><div class="row" style="flex-wrap:nowrap"><span class="avatar" style="background:${esc(c.color)};color:#fff;border:0">${esc(initials(c.name))}</span><div><b>${esc(c.name)}</b><br><a class="small mono" href="#book.${esc(c.slug)}">#book.${esc(c.slug)}</a></div></div></td>
+          <div class="tablewrap"><table><thead><tr><th>Company</th><th>Admin login</th><th>Plan</th><th class="r">Fee</th><th class="r">Drivers</th><th class="r">Vehicles</th><th class="r">Trips this month</th><th class="r">Booked this month</th><th>Texts this month</th><th>Status</th></tr></thead><tbody>
+          ${list.map((c) => `<tr><td><div class="row" style="flex-wrap:nowrap"><span class="avatar" style="background:${esc(c.color)};color:#fff;border:0">${esc(initials(c.name))}</span><div><b>${esc(c.name)}</b><br><a class="small mono" href="#book.${esc(c.slug)}">#book.${esc(c.slug)}</a></div></div>
+              <div class="row" style="gap:6px;margin-top:8px;flex-wrap:nowrap"><button class="btn sm" type="button" data-editco="${c.id}">Edit</button><button class="btn sm" type="button" data-sendlogin="${c.id}">Send login email</button><button class="btn sm" type="button" data-status="${c.id}" data-to="${c.status === 'active' ? 'suspended' : 'active'}">${c.status === 'active' ? 'Pause' : 'Resume'}</button></div></td>
             <td class="mono small">${esc(c.adminEmail)}</td>
             <td class="nowrap"><select class="input" style="width:auto;min-height:32px;padding:3px 6px" data-plan="${c.id}" aria-label="Plan">${Object.entries(C.PLANS).map(([k, p]) => `<option value="${k}" ${c.plan === k ? 'selected' : ''}>${p.label}</option>`).join('')}</select>
               <select class="input" style="width:auto;min-height:32px;padding:3px 6px" data-billing="${c.id}" aria-label="Billing"><option value="monthly" ${c.billing === 'monthly' ? 'selected' : ''}>Monthly</option><option value="yearly" ${c.billing === 'yearly' ? 'selected' : ''}>Yearly</option></select></td>
             <td class="r num nowrap">${c.billing === 'yearly' ? `${money(c.yearlyFee)}/yr` : `${money(c.monthlyFee)}/mo`}${c.inTrial ? `<div class="small faint">Trial until ${esc(fmtYMD(c.trialEnds))}</div>` : c.priceLockedUntil ? `<div class="small faint">Locked until ${esc(fmtYMD(c.priceLockedUntil))}</div>` : c.paidThrough ? `<div class="small faint">Paid through ${esc(c.paidThrough)}</div>` : ''}</td><td class="r num">${c.drivers}</td><td class="r num">${c.vehicles}</td><td class="r num">${c.tripsMonth}</td><td class="r num">${money0(c.bookedMonth)}</td>
             <td class="nowrap"><button class="linkbtn num" type="button" data-texts="${c.id}">${c.texts.used} / ${c.texts.included}${c.texts.custom ? '*' : ''}</button>${c.texts.out ? ' <span class="pill s-cancelled">Out</span>' : c.texts.low ? ' <span class="pill unpaid">Low</span>' : ''}${c.texts.credits ? `<div class="small faint">+${c.texts.credits} bought</div>` : ''}</td>
             <td>${c.status === 'active' ? '<span class="pill s-on_board">Active</span>' : '<span class="pill s-cancelled">Paused</span>'}</td>
-            <td class="nowrap"><button class="btn sm" type="button" data-editco="${c.id}">Edit</button> <button class="btn sm" type="button" data-sendlogin="${c.id}">Send login email</button> <button class="btn sm" type="button" data-status="${c.id}" data-to="${c.status === 'active' ? 'suspended' : 'active'}">${c.status === 'active' ? 'Pause' : 'Resume'}</button></td></tr>`).join('')}
+            </tr>`).join('')}
           </tbody></table></div>
           <p class="small faint" style="margin-top:10px">Pausing a company signs out its staff, drivers and customers and closes its booking page until you resume it.</p>`;
         $('#co-add', v).onclick = addCompany;
@@ -4367,9 +4385,13 @@
             <h3>Payment PIN</h3>
             <div class="spread"><p class="small muted" style="margin:0">Master login: <b>${esc(c.masterName || 'none yet')}</b>. PIN ${c.pinSet ? 'is set' : 'not set yet'}.</p>${c.pinSet ? '<button class="btn sm" type="button" id="ec-pin">Reset payment PIN</button>' : ''}</div>
             <div id="ec-err"></div></form>`,
-          footer: `<button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="ec-save">Save</button>`,
+          footer: `<button class="btn" type="button" id="ec-login">Send login email</button><span class="grow"></span><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="ec-save">Save</button>`,
         });
         $('[data-close]', m).onclick = closeModal;
+        $('#ec-login', m).onclick = (e) => busy(e.currentTarget, async () => {
+          if (!confirm(`Email ${c.name}'s admin (${c.adminEmail}) a link to set their password and sign in? Save first if you changed the admin email.`)) return;
+          try { const r = await api('owner.sendLogin', { id: c.id }); if (r.links.length) { closeModal(); loginLinksModal(c.name, r.links); } else toast(`Login email sent to ${r.sent.join(', ')}.`); } catch (err) { showErr($('#ec-err', m), err); }
+        });
         const rp = $('#ec-pin', m);
         if (rp) rp.onclick = () => busy(rp, async () => {
           if (!confirm(`Clear ${c.name}'s payment PIN? Their master login (${c.masterName}) chooses a new one next time they open payments.`)) return;
