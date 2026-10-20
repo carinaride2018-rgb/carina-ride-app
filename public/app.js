@@ -4077,7 +4077,19 @@
         <div class="tablewrap"><table><thead><tr><th>Service</th><th>Used for</th><th>Status</th><th>Settings to add</th></tr></thead><tbody>
         ${rows.map(([k, label, keys, more]) => { const x = st[k] || {}; return `<tr><td><b>${esc(x.service || k)}</b></td><td>${label}</td><td>${x.on ? '<span class="pill s-on_board">On</span>' : '<span class="pill s-confirmed">Simulated</span>'}${more(x) ? `<div class="small faint">${more(x)}</div>` : ''}</td><td class="mono small">${keys}</td></tr>`; }).join('')}
         </tbody></table></div>
+        <section class="panel stack" style="margin-top:16px"><h2>Test emails</h2><p class="small muted">Sends one email now, so you can check it arrives.</p>
+          <form id="te-form" class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end" novalidate><label class="field" style="flex:1;min-width:220px;margin:0"><span>Send to</span><input name="to" type="email" id="te-to" value="${esc(session.user.email)}"></label><button class="btn primary" type="submit" id="te-send">Send test email</button></form>
+          <p class="small" id="te-out" role="status"></p></section>
         <p class="small faint" style="margin-top:12px">Step-by-step setup for each one is in DEPLOY.md, under “Switching on real services”.</p>`;
+      $('#te-form', v).onsubmit = (e) => { e.preventDefault(); const out = $('#te-out', v); busy($('#te-send', v), async () => {
+        if (st.demo) { out.textContent = 'This demo runs in your browser, so no email is sent. On limorelay.com this button sends a real one.'; return; }
+        try {
+          const r = await api('owner.testEmail', { to: $('#te-to', v).value });
+          out.innerHTML = r.status === 'sent' ? `<b>Sent to ${esc(r.to)}.</b> Check that inbox (and its spam folder).`
+            : r.status === 'off' ? 'Emails are not switched on: add RESEND_API_KEY and EMAIL_FROM in Render, Environment, then try again.'
+            : `<b>Resend did not send it.</b> ${esc(r.error || r.status)}`;
+        } catch (err) { out.textContent = err.message; }
+      }); };
     }
 
     async function drawCompanies(v) {

@@ -151,7 +151,7 @@ function limited(ip) {
 
 // Hosts put the app behind a proxy; only then is X-Forwarded-For the visitor.
 const clientIp = (req) => (TRUST_PROXY && String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()) || req.socket.remoteAddress;
-const LIMITED = new Set(['auth.login', 'auth.signup', 'public.requestQuote', 'public.acceptQuote', 'public.rate', 'public.requestTrial', 'auth.changeEmail', 'public.forgotPassword', 'public.setPassword']);
+const LIMITED = new Set(['auth.login', 'auth.signup', 'public.requestQuote', 'public.acceptQuote', 'public.rate', 'public.requestTrial', 'auth.changeEmail', 'public.forgotPassword', 'public.setPassword', 'owner.testEmail']);
 
 // ---- Outside services ---------------------------------------------------------
 
@@ -327,6 +327,19 @@ async function connections(token) {
   return { publicUrl: base, sample: !BLANK, ...live.status() };
 }
 
+// Sends one email straight through Resend (not the outbox) so the owner sees
+// the real result, including Resend's error message.
+async function testEmail(token, args) {
+  const me = await core.call(token, 'auth.me', {});
+  if (me.user.role !== 'owner') { const e = new Error("Your login can't do that."); e.status = 403; throw e; }
+  const to = String((args && args.to) || me.user.email).trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) { const e = new Error('Enter a valid email address.'); e.status = 400; throw e; }
+  if (!live.on.email) return { to, status: 'off' };
+  const r = await live.deliver({ id: 'test', recipient: to, kind: 'test', company: { name: 'LimoRelay', email: 'info@limorelay.com' },
+    body: `This is a test email from LimoRelay, sent ${new Date().toUTCString()}. If you can read it, emails from ${base} are working.` });
+  return { to, status: r.status, error: r.error || '' };
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   if (url.pathname === '/healthz') return send(res, 200, { ok: true });
@@ -360,6 +373,7 @@ const server = http.createServer((req, res) => {
     const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
     try {
       if (method === 'owner.connections') return send(res, 200, { ok: true, data: await connections(token) });
+      if (method === 'owner.testEmail') return send(res, 200, { ok: true, data: await testEmail(token, args) });
       await warmFor(args);
       const data = await core.call(token, method, args);
       send(res, 200, { ok: true, data });
