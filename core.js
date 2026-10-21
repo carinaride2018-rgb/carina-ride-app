@@ -1702,7 +1702,7 @@
     };
     const PERM_OF = {};
     for (const [perm, names] of Object.entries({
-      bookings: ['dispatch.createTrip', 'dispatch.updateTrip', 'dispatch.setStatus', 'dispatch.cancelSeries', 'dispatch.noShow', 'dispatch.importTrips', 'dispatch.applyFlight', 'dispatch.sendCardLink', 'dispatch.inboxSend', 'dispatch.saveQuote', 'dispatch.sendQuote', 'dispatch.quoteAction'],
+      bookings: ['dispatch.createTrip', 'dispatch.updateTrip', 'dispatch.resendConfirmation', 'dispatch.setStatus', 'dispatch.cancelSeries', 'dispatch.noShow', 'dispatch.importTrips', 'dispatch.applyFlight', 'dispatch.sendCardLink', 'dispatch.inboxSend', 'dispatch.saveQuote', 'dispatch.sendQuote', 'dispatch.quoteAction'],
       assign: ['dispatch.assign', 'dispatch.autoAssign', 'network.offer', 'network.respond', 'network.cancelOffer', 'network.handBack'],
       payments: ['dispatch.chargeCard', 'dispatch.markPaid', 'network.settle'],
       customers: ['dispatch.saveCustomer', 'dispatch.sendCustomerLogin', 'dispatch.saveAccount', 'dispatch.accountBooker', 'dispatch.createInvoice', 'dispatch.invoiceAction', 'dispatch.invoices', 'dispatch.invoice'],
@@ -2579,6 +2579,19 @@
       if (s.failed) s.failed.retired = true;
       queueCharge(t, t.status === 'cancelled' ? 'fee' : s.fare ? 'extra' : 'fare', s.balance, ctx.user.name);
       return tripView(t);
+    });
+    // Sends the booking confirmation again: email, and a text when the passenger agreed to texts.
+    def('dispatch.resendConfirmation', STAFF, true, (ctx, a) => {
+      const t = ownTrip(ctx, a.id);
+      if (t.status === 'cancelled') fail('This ride is cancelled.');
+      if (!t.passengerEmail && !t.passengerPhone) fail('Add a passenger email or mobile first.');
+      const sent = [];
+      const put = (recipient, channel, body) => { db.messages.unshift({ id: id('msg'), companyId: t.companyId, tripId: t.id, ref: t.ref, at: now().toISOString(), recipient, channel, body }); sent.push(recipient); };
+      if (t.passengerEmail) put(t.passengerEmail, 'email', msgText(t, 'confirm_email'));
+      if (t.passengerPhone && t.smsOk !== false) put(t.passengerPhone, 'sms', msgText(t, 'confirm_sms'));
+      if (!sent.length) fail("This passenger didn't agree to texts and has no email. Add an email first.");
+      log(t, 'confirm_resent', ctx.user.name, `Confirmation sent again to ${sent.join(' and ')}`);
+      return { sent, trip: tripView(t) };
     });
     def('dispatch.sendCardLink', STAFF, true, (ctx, a) => {
       const t = ownTrip(ctx, a.id);

@@ -172,7 +172,7 @@
 
   // ---- UI primitives --------------------------------------------------------
   let toastTimer = null;
-  const HIST_LABELS = { paid: 'Charged', refunded: 'Refunded', card_failed: 'Card declined', card_saved: 'Card saved', card_link: 'Card link sent', no_show: 'No-show', pickup_moved: 'Pickup moved', flight_cancelled: 'Flight cancelled', declined: 'Declined', edited: 'Edited', unassigned: 'Unassigned', no_answer: 'No answer in time', farm_offered: 'Offered to partner', farm_accepted: 'Partner accepted', farm_declined: 'Partner declined', farm_cancelled: 'Taken back from partner', farm_returned: 'Partner handed it back', farm_expired: 'Partner offer expired', farm_completed: 'Partner completed', auto_farm_none: 'Automatic farm-out stopped' };
+  const HIST_LABELS = { confirm_resent: 'Confirmation sent again', paid: 'Charged', refunded: 'Refunded', card_failed: 'Card declined', card_saved: 'Card saved', card_link: 'Card link sent', no_show: 'No-show', pickup_moved: 'Pickup moved', flight_cancelled: 'Flight cancelled', declined: 'Declined', edited: 'Edited', unassigned: 'Unassigned', no_answer: 'No answer in time', farm_offered: 'Offered to partner', farm_accepted: 'Partner accepted', farm_declined: 'Partner declined', farm_cancelled: 'Taken back from partner', farm_returned: 'Partner handed it back', farm_expired: 'Partner offer expired', farm_completed: 'Partner completed', auto_farm_none: 'Automatic farm-out stopped' };
   function toast(text, bad, ms) {
     let el = $('.toast');
     if (!el) { el = document.createElement('div'); el.className = 'toast'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
@@ -2740,6 +2740,7 @@
               <button class="btn sm" type="button" id="te-setstatus">Update status</button>
               ${['accepted', 'en_route', 'arrived'].includes(t.status) && !t.farmout ? '<button class="btn sm danger" type="button" id="te-noshow">Passenger no-show</button>' : ''}
               <button class="btn sm" type="button" id="te-sheet">Print trip sheet</button>
+              ${t.status !== 'cancelled' && (t.passengerEmail || t.passengerPhone) ? '<button class="btn sm" type="button" id="te-confirm">Resend confirmation</button>' : ''}
               ${t.passengerPhone ? '<button class="btn sm" type="button" id="te-text">Text passenger</button>' : ''}
               ${canFarm ? '<button class="btn sm" type="button" id="te-farm">Send to a partner company</button>' : ''}
             </div>` : ''}
@@ -2820,6 +2821,9 @@
       };
       const tx = $('#te-text', m); if (tx) tx.onclick = () => { inboxOpen = { tripId: t.id }; m._onClose = null; closeModal(); go2('inbox'); };
       const mp = $('#te-msgpartner', m); if (mp) mp.onclick = () => { netState.sub = 'messages'; netState.partner = mp.dataset.partner; m._onClose = null; closeModal(); go2('network'); };
+      const rc = $('#te-confirm', m); if (rc) rc.onclick = (e) => busy(e.currentTarget, async () => {
+        try { const r = await api('dispatch.resendConfirmation', { id }); toast(`Confirmation sent to ${r.sent.join(' and ')}.`); reopen(); } catch (err) { toast(err.message, true); }
+      });
       const shb = $('#te-sheet', m); if (shb) shb.onclick = () => printSheets([t], `${t.ref}, ${fmtDate(t.pickupAt)}`);
       const nsb = $('#te-noshow', m); if (nsb) nsb.onclick = () => noShowModal(t, 'dispatch.noShow', reopen);
       const ss = $('#te-setstatus', m); if (ss) ss.onclick = (e) => busy(e.currentTarget, async () => {
