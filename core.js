@@ -68,7 +68,7 @@
   // filled in per trip; the *_line ones are whole sentences or empty.
   const MSG_TEMPLATES = {
     confirm_sms: { label: 'Booking confirmed (text)', text: '{company}: booking {ref} confirmed for {pickup_time} from {pickup}. Total {total}.{landing_short_line}{call_line}' },
-    confirm_email: { label: 'Booking confirmed (email)', text: "Hi {hi_name},\n\nYour ride {ref} is confirmed for {pickup_time}, from {pickup}{dropoff_to}. {vehicle_type}, {passengers}. Total {total}.{flight_line}{landing_line} We'll send your chauffeur's name when they set off.\n\nIf you need to change or cancel, {contact}.\n\nSincerely,\n{signer}" },
+    confirm_email: { label: 'Booking confirmed (email)', text: "Hi {hi_name},\n\nYour ride is confirmed.\n\nTrip confirmation: {ref}\nName: {passenger_name}\nCellphone: {cellphone}\nPickup Date and Time: {pickup_time}\nPickup Address: {pickup}\nDestination: {destination}\n{flight_info_line}Vehicle: {vehicle_type}, {passengers}\nTotal: {total}\n\nIf you need to change or cancel, {contact}.\n\nSincerely,\n{signer}" },
     reminder_sms: { label: '24-hour reminder (text)', text: "{company}: reminder, your ride {ref} is {pickup_time} from {pickup}.{flight_short_line} Reply or call {phone} to change it." },
     reminder_email: { label: '24-hour reminder (email)', text: "{company}: a reminder that your ride {ref} is {pickup_time}. Pickup: {pickup}.{dropoff_line} {vehicle_type}, {passengers}.{chauffeur_line}{flight_track_line} Need to change something? Call {phone}." },
     accepted: { label: 'Chauffeur confirmed', text: '{company}: your chauffeur for {ref} is {driver}{vehicle_line}.' },
@@ -85,7 +85,7 @@
     card_refund: { label: 'Refund to card', text: '{company}: we refunded {amount} to your card ending {last4} for {ref}.' },
     card_failed: { label: "Card couldn't be charged", text: "{company}: we couldn't charge {amount} to your card ending {last4} for ride {ref}. Please add a card here: {card_link}{call_line}" },
   };
-  const MSG_WORDS = ['company', 'ref', 'passenger', 'pickup_time', 'pickup', 'dropoff', 'vehicle_type', 'passengers', 'ride', 'driver', 'driver_first', 'driver_and', 'vehicle', 'plate', 'vehicle_line', 'car_line', 'total', 'phone', 'flight', 'track_link', 'review_link', 'call_line', 'wrong_line', 'dropoff_line', 'flight_line', 'flight_short_line', 'flight_track_line', 'chauffeur_line', 'track_line', 'landing_line', 'landing_short_line', 'waited', 'fee', 'fee_line', 'amount', 'last4', 'extras', 'card_link', 'hi_name', 'dropoff_to', 'signer', 'contact'];
+  const MSG_WORDS = ['company', 'ref', 'passenger', 'pickup_time', 'pickup', 'dropoff', 'vehicle_type', 'passengers', 'ride', 'driver', 'driver_first', 'driver_and', 'vehicle', 'plate', 'vehicle_line', 'car_line', 'total', 'phone', 'flight', 'track_link', 'review_link', 'call_line', 'wrong_line', 'dropoff_line', 'flight_line', 'flight_short_line', 'flight_track_line', 'chauffeur_line', 'track_line', 'landing_line', 'landing_short_line', 'waited', 'fee', 'fee_line', 'amount', 'last4', 'extras', 'card_link', 'hi_name', 'dropoff_to', 'signer', 'contact', 'passenger_name', 'cellphone', 'destination', 'flight_info_line'];
   const INCIDENT_KINDS = { accident: 'Accident', damage: 'Vehicle damage', injury: 'Injury', complaint: 'Complaint', lost_item: 'Lost item', other: 'Other' };
   const DEFAULT_CLIENT_MSGS = { confirmText: true, confirmEmail: true, remind24: true, approach: true, review: true, reviewDelayMin: 0 };
   // Corporate accounts: payment terms in days (0 = due on receipt).
@@ -738,6 +738,8 @@
         call_line: c.phone ? ` Questions? Call ${c.phone}.` : '', wrong_line: c.phone ? ` If this is wrong, call ${c.phone}.` : '',
         dropoff_line: t.dropoff ? ` Drop-off: ${t.dropoff}.` : '',
         hi_name: (t.passengerName || '').trim().split(' ')[0] || 'there', dropoff_to: t.dropoff ? ` to ${t.dropoff}` : '',
+        passenger_name: t.passengerName || '', cellphone: t.passengerPhone || 'Not given', destination: t.dropoff || (t.service === 'hourly' ? `As directed (${t.hours} hours)` : 'As directed'),
+        flight_info_line: t.flight ? `Flight Information: ${t.flight}\n` : '',
         contact: c.phone ? `call us at ${c.phone}` : 'reply to this email',
         signer: c.emailSigner ? `${c.emailSigner} with ${c.name}` : `The ${c.name} team`,
         flight_line: t.flight ? ` Flight ${t.flight}; we track it and adjust pickup if it's late.` : '',
