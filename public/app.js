@@ -4071,7 +4071,7 @@
       const m = openModal({
         title: 'Message wording', wide: true,
         body: `<div class="stack"><p class="small muted">Leave a box empty to use our wording. Words in braces are filled in for each trip: ${WORDS.map((w) => `<code>{${w}}</code>`).join(' ')}. Lines ending in <code>_line</code> in our wording add a whole sentence only when it applies.</p>
-          <label class="field"><span>Sign emails as</span><input id="tpl-signer" maxlength="60" placeholder="A person's name, such as Dawit. Empty: The ${esc(session.company.name)} team" value="${esc(signer || '')}" ${ro}><span class="hint">Emails end with "Sincerely," and this name${signer ? ` with ${esc(session.company.name)}` : ''}.</span></label>
+          <label class="field"><span>Sign emails as</span><input id="tpl-signer" maxlength="60" placeholder="A person's name, such as Dawit. Empty: ${esc(session.company.name)} Team" value="${esc(signer || '')}" ${ro}><span class="hint">Emails end with "Sincerely," and this name${signer ? ` with ${esc(session.company.name)}` : ''}.</span></label>
           ${list.map((t) => `<label class="field"><span>${esc(t.label)}</span><textarea rows="${/\n/.test(t.default) ? 7 : 2}" data-tpl="${t.key}" placeholder="${esc(t.default)}" ${ro}>${esc(t.text)}</textarea>
             ${t.preview ? `<span class="hint" style="white-space:pre-line">Example: ${esc(t.preview)}</span>` : ''}</label>`).join('')}<div id="tpl-err"></div></div>`,
         footer: `<button class="btn" type="button" data-close>${isAdmin ? 'Cancel' : 'Close'}</button>${isAdmin ? '<button class="btn primary" type="button" id="tpl-save">Save wording</button>' : ''}`,

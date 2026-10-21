@@ -741,7 +741,7 @@
         passenger_name: t.passengerName || '', cellphone: t.passengerPhone || 'Not given', destination: t.dropoff || (t.service === 'hourly' ? `As directed (${t.hours} hours)` : 'As directed'),
         flight_info_line: t.flight ? `Flight Information: ${t.flight}\n` : '',
         contact: c.phone ? `call us at ${c.phone}` : 'reply to this email',
-        signer: c.emailSigner ? `${c.emailSigner} with ${c.name}` : `The ${c.name} team`,
+        signer: c.emailSigner ? `${c.emailSigner} with ${c.name}` : `${c.name} Team`,
         flight_line: t.flight ? ` Flight ${t.flight}; we track it and adjust pickup if it's late.` : '',
         flight_short_line: t.flight ? ` We're tracking flight ${t.flight}.` : '',
         flight_track_line: t.flight ? ` We're tracking flight ${t.flight} and will adjust pickup if it's late.` : '',
