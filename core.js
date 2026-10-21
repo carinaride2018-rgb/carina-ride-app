@@ -68,7 +68,7 @@
   // filled in per trip; the *_line ones are whole sentences or empty.
   const MSG_TEMPLATES = {
     confirm_sms: { label: 'Booking confirmed (text)', text: '{company}: booking {ref} confirmed for {pickup_time} from {pickup}. Total {total}.{landing_short_line}{call_line}' },
-    confirm_email: { label: 'Booking confirmed (email)', text: "{company}: your booking {ref} is confirmed. {pickup_time}. {ride}. Pickup: {pickup}.{dropoff_line}{flight_line} Total {total}.{landing_line} We'll send your chauffeur's name and a live tracking link when they set off.{call_line}" },
+    confirm_email: { label: 'Booking confirmed (email)', text: "Hi {hi_name},\n\nYour ride {ref} is confirmed for {pickup_time}, from {pickup}{dropoff_to}. {vehicle_type}, {passengers}. Total {total}.{flight_line}{landing_line} We'll send your chauffeur's name when they set off.\n\nIf you need to change or cancel, {contact}.\n\nSincerely,\n{signer}" },
     reminder_sms: { label: '24-hour reminder (text)', text: "{company}: reminder, your ride {ref} is {pickup_time} from {pickup}.{flight_short_line} Reply or call {phone} to change it." },
     reminder_email: { label: '24-hour reminder (email)', text: "{company}: a reminder that your ride {ref} is {pickup_time}. Pickup: {pickup}.{dropoff_line} {vehicle_type}, {passengers}.{chauffeur_line}{flight_track_line} Need to change something? Call {phone}." },
     accepted: { label: 'Chauffeur confirmed', text: '{company}: your chauffeur for {ref} is {driver}{vehicle_line}.' },
@@ -85,7 +85,7 @@
     card_refund: { label: 'Refund to card', text: '{company}: we refunded {amount} to your card ending {last4} for {ref}.' },
     card_failed: { label: "Card couldn't be charged", text: "{company}: we couldn't charge {amount} to your card ending {last4} for ride {ref}. Please add a card here: {card_link}{call_line}" },
   };
-  const MSG_WORDS = ['company', 'ref', 'passenger', 'pickup_time', 'pickup', 'dropoff', 'vehicle_type', 'passengers', 'ride', 'driver', 'driver_first', 'driver_and', 'vehicle', 'plate', 'vehicle_line', 'car_line', 'total', 'phone', 'flight', 'track_link', 'review_link', 'call_line', 'wrong_line', 'dropoff_line', 'flight_line', 'flight_short_line', 'flight_track_line', 'chauffeur_line', 'track_line', 'landing_line', 'landing_short_line', 'waited', 'fee', 'fee_line', 'amount', 'last4', 'extras', 'card_link'];
+  const MSG_WORDS = ['company', 'ref', 'passenger', 'pickup_time', 'pickup', 'dropoff', 'vehicle_type', 'passengers', 'ride', 'driver', 'driver_first', 'driver_and', 'vehicle', 'plate', 'vehicle_line', 'car_line', 'total', 'phone', 'flight', 'track_link', 'review_link', 'call_line', 'wrong_line', 'dropoff_line', 'flight_line', 'flight_short_line', 'flight_track_line', 'chauffeur_line', 'track_line', 'landing_line', 'landing_short_line', 'waited', 'fee', 'fee_line', 'amount', 'last4', 'extras', 'card_link', 'hi_name', 'dropoff_to', 'signer', 'contact'];
   const INCIDENT_KINDS = { accident: 'Accident', damage: 'Vehicle damage', injury: 'Injury', complaint: 'Complaint', lost_item: 'Lost item', other: 'Other' };
   const DEFAULT_CLIENT_MSGS = { confirmText: true, confirmEmail: true, remind24: true, approach: true, review: true, reviewDelayMin: 0 };
   // Corporate accounts: payment terms in days (0 = due on receipt).
@@ -737,6 +737,9 @@
         track_link: t.trackToken ? trackUrl(t) : '', review_link: t.reviewToken ? reviewUrl(t) : '', card_link: t.cardToken ? cardUrl(t) : '',
         call_line: c.phone ? ` Questions? Call ${c.phone}.` : '', wrong_line: c.phone ? ` If this is wrong, call ${c.phone}.` : '',
         dropoff_line: t.dropoff ? ` Drop-off: ${t.dropoff}.` : '',
+        hi_name: (t.passengerName || '').trim().split(' ')[0] || 'there', dropoff_to: t.dropoff ? ` to ${t.dropoff}` : '',
+        contact: c.phone ? `call us at ${c.phone}` : 'reply to this email',
+        signer: c.emailSigner ? `${c.emailSigner} with ${c.name}` : `The ${c.name} team`,
         flight_line: t.flight ? ` Flight ${t.flight}; we track it and adjust pickup if it's late.` : '',
         flight_short_line: t.flight ? ` We're tracking flight ${t.flight}.` : '',
         flight_track_line: t.flight ? ` We're tracking flight ${t.flight} and will adjust pickup if it's late.` : '',
@@ -752,7 +755,7 @@
       const c = findCompany(t.companyId);
       const own = c.templates && c.templates[key];
       const vars = msgVars(t, extra);
-      return (own || MSG_TEMPLATES[key].text).replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k] : m)).replace(/ {2,}/g, ' ').trim();
+      return (own || MSG_TEMPLATES[key].text).replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k] : m)).replace(/ {2,}/g, ' ').replace(/ +\n/g, '\n').trim();
     }
     function reviewMsgs(t) {
       const out = [];
@@ -2772,7 +2775,7 @@
       const own = ctx.company.templates || {};
       const mine = db.trips.filter((t) => t.companyId === ctx.company.id), soon = mine.filter((t) => t.pickupAt > now().toISOString()).sort((x, y) => x.pickupAt.localeCompare(y.pickupAt));
       const sample = soon.find((t) => t.driverId) || soon[0] || mine[mine.length - 1];
-      return Object.entries(MSG_TEMPLATES).map(([key, m]) => ({ key, label: m.label, default: m.text, text: own[key] || '', preview: sample ? msgText(sample, key) : '' }));
+      return { signer: ctx.company.emailSigner || '', list: Object.entries(MSG_TEMPLATES).map(([key, m]) => ({ key, label: m.label, default: m.text, text: own[key] || '', preview: sample ? msgText(sample, key) : '' })) };
     });
     def('dispatch.saveTemplates', ['admin'], true, (ctx, a) => {
       const out = {};
@@ -2785,6 +2788,7 @@
         out[k] = t;
       }
       ctx.company.templates = out;
+      if ('signer' in a) { const n = str(a.signer, 60); if (n) ctx.company.emailSigner = n; else delete ctx.company.emailSigner; }
       return { ok: true, saved: Object.keys(out).length };
     });
     def('dispatch.clientMsgs', STAFF, false, (ctx) => cmsg(ctx.company));
