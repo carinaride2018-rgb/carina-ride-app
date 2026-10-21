@@ -1698,7 +1698,7 @@
     current = null;
     let info;
     try { info = await api('public.company', { slug }); }
-    catch (e) { const v = shell({}); v.innerHTML = `<div class="panel stack"><h2>Booking page unavailable</h2><p class="muted">${esc(e.message)}</p><a class="btn" href="#signin">Back</a></div>`; return; }
+    catch (e) { const v = shell({}); v.innerHTML = `<div class="panel stack" id="bk-missing"><h2>Booking page unavailable</h2><p class="muted">${esc(e.status === 404 ? `There's no booking page at "${slug}". Check the link with the limo company.` : e.message)}</p><a class="btn" href="#signin">Back</a></div>`; return; }
     const signedHere = session && session.user.role === 'customer' && session.user.companyId === info.company.id;
     if (signedHere && session.user.agent) return go('customer');
     const keep = session;
@@ -1713,6 +1713,14 @@
       <a class="eventlink" href="#agent.${esc(slug)}" id="agent-link"><span>Travel agent, assistant or concierge booking for clients? Earn commission on every ride.</span><b>Agent sign-up or login</b></a>
       <div id="book-host"></div><div id="auth-host"></div>`;
     const pending = { booking: null };
+    // A new company with no cars yet can't take online bookings.
+    if (!info.vehicleTypes.length) {
+      const staff = session && session.user && ['admin', 'dispatcher'].includes(session.user.role) && session.user.companyId === info.company.id;
+      $('#book-host', v).innerHTML = `<div class="panel stack" id="bk-closed" style="margin-top:20px;max-width:560px"><h2>Online booking opens soon</h2>
+        <p class="muted">${esc(info.company.name)} isn't taking online bookings yet.${info.company.phone ? ` To book a ride, call <a href="tel:${esc(info.company.phone)}">${esc(info.company.phone)}</a>.` : ''}</p>
+        ${staff ? '<div class="note warn">Only you see this: add at least one car under <b>Fleet</b> (with its type, such as Sedan or SUV) and this page starts taking bookings.</div>' : ''}</div>`;
+      return;
+    }
     bookingForm($('#book-host', v), {
       info, mode: 'public',
       initial: signedHere ? { passengerName: session.user.name, passengerPhone: session.user.phone } : {},
