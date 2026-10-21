@@ -86,6 +86,14 @@ function createProviders(rawEnv, opts) {
     });
     return r && r.sid;
   }
+  // Twilio's delivery state for one sent text, e.g. delivered, or undelivered with error 30034.
+  async function smsStatus(msgSid) {
+    const sid = env.TWILIO_ACCOUNT_SID;
+    const r = await request('GET', `${url('TWILIO', 'https://api.twilio.com')}/2010-04-01/Accounts/${encodeURIComponent(sid)}/Messages/${encodeURIComponent(msgSid)}.json`, {
+      headers: { Authorization: 'Basic ' + Buffer.from(`${sid}:${env.TWILIO_AUTH_TOKEN}`).toString('base64') },
+    });
+    return { status: (r && r.status) || '', code: (r && r.error_code) || null, message: (r && r.error_message) || '' };
+  }
   async function sendEmail(to, m) {
     const name = String(m.company.name || 'Bookings').replace(/["<>]/g, '');
     const r = await request('POST', `${url('RESEND', 'https://api.resend.com')}/emails`, {
@@ -371,7 +379,7 @@ function createProviders(rawEnv, opts) {
   };
 
   return {
-    on, deliver, e164, verifyTwilio,
+    on, deliver, e164, verifyTwilio, smsStatus,
     route, warmRoutes, geo, warmGeo, places, loadRoutes, saveRoutes,
     // A browser key (restricted to your site) for drawing Google maps; never the server key.
     mapsKey: env.GOOGLE_MAPS_BROWSER_KEY || '',

@@ -151,7 +151,7 @@ function limited(ip) {
 
 // Hosts put the app behind a proxy; only then is X-Forwarded-For the visitor.
 const clientIp = (req) => (TRUST_PROXY && String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()) || req.socket.remoteAddress;
-const LIMITED = new Set(['auth.login', 'auth.signup', 'public.requestQuote', 'public.acceptQuote', 'public.rate', 'public.requestTrial', 'auth.changeEmail', 'public.forgotPassword', 'public.setPassword', 'owner.testEmail', 'public.companySignup', 'public.guestBook']);
+const LIMITED = new Set(['auth.login', 'auth.signup', 'public.requestQuote', 'public.acceptQuote', 'public.rate', 'public.requestTrial', 'auth.changeEmail', 'public.forgotPassword', 'public.setPassword', 'owner.testEmail', 'owner.testSms', 'public.companySignup', 'public.guestBook']);
 
 // ---- Outside services ---------------------------------------------------------
 
@@ -352,6 +352,33 @@ async function testEmail(token, args) {
   return { to, status: r.status, error: r.error || '' };
 }
 
+// Sends one text straight through Twilio, then asks Twilio how it went, so the
+// owner sees carrier blocks (such as an unregistered A2P number) right away.
+const SMS_CODES = {
+  30034: 'Blocked because the number is not yet registered for A2P 10DLC. Finish the A2P brand and campaign in Twilio (Messaging, Regulatory compliance) and link this number to the campaign.',
+  30032: 'Blocked because this toll-free number is not verified yet. Finish toll-free verification in Twilio.',
+  30007: 'The carrier filtered it as spam. Usually fixed by A2P registration.',
+  30003: 'The phone is off or can’t be reached.', 30005: 'That number does not exist.', 30006: 'That number can’t get texts (a landline?).',
+  21610: 'This phone replied STOP earlier. Text START from it to the business number to opt back in.',
+  21608: 'Twilio trial accounts can only text verified numbers. Upgrade the account or verify this number in Twilio.',
+};
+async function testSms(token, args) {
+  const me = await core.call(token, 'auth.me', {});
+  if (me.user.role !== 'owner') { const e = new Error("Your login can't do that."); e.status = 403; throw e; }
+  const to = live.e164((args && args.to) || '');
+  if (!to) { const e = new Error('Enter a mobile number, for example (206) 555-0123.'); e.status = 400; throw e; }
+  if (!live.on.sms) return { to, status: 'off' };
+  const r = await live.deliver({ id: 'test', recipient: to, kind: 'test', company: { name: 'LimoRelay' }, body: `LimoRelay test text, sent ${new Date().toUTCString()}. If you got this, texts from ${base} are working. Reply STOP to opt out.` });
+  if (r.status !== 'sent') return { to, status: r.status, error: r.error || '' };
+  let st = { status: 'queued', code: null, message: '' };
+  for (let i = 0; i < 4; i++) {
+    await new Promise((ok) => setTimeout(ok, 2500));
+    try { st = await live.smsStatus(r.via); } catch (e) { break; }
+    if (['delivered', 'undelivered', 'failed'].includes(st.status)) break;
+  }
+  return { to, status: st.status, code: st.code, error: st.code ? (SMS_CODES[st.code] || st.message || `Twilio error ${st.code}`) : '' };
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   if (url.pathname === '/healthz') return send(res, 200, { ok: true });
@@ -386,6 +413,7 @@ const server = http.createServer((req, res) => {
     try {
       if (method === 'owner.connections') return send(res, 200, { ok: true, data: await connections(token) });
       if (method === 'owner.testEmail') return send(res, 200, { ok: true, data: await testEmail(token, args) });
+      if (method === 'owner.testSms') return send(res, 200, { ok: true, data: await testSms(token, args) });
       await warmFor(args);
       const data = await core.call(token, method, args);
       send(res, 200, { ok: true, data });

@@ -4277,6 +4277,9 @@
         <section class="panel stack" style="margin-top:16px"><h2>Test emails</h2><p class="small muted">Sends one email now, so you can check it arrives.</p>
           <form id="te-form" class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end" novalidate><label class="field" style="flex:1;min-width:220px;margin:0"><span>Send to</span><input name="to" type="email" id="te-to" value="${esc(session.user.email)}"></label><button class="btn primary" type="submit" id="te-send">Send test email</button></form>
           <p class="small" id="te-out" role="status"></p></section>
+        <section class="panel stack" style="margin-top:16px"><h2>Test texts</h2><p class="small muted">Sends one text now and asks Twilio whether it was delivered.</p>
+          <form id="ts-form" class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end" novalidate><label class="field" style="flex:1;min-width:220px;margin:0"><span>Mobile number</span><input name="to" type="tel" id="ts-to" placeholder="(206) 555-0123" value="${esc(session.user.phone || '')}"></label><button class="btn primary" type="submit" id="ts-send">Send test text</button></form>
+          <p class="small" id="ts-out" role="status"></p></section>
         <p class="small faint" style="margin-top:12px">Step-by-step setup for each one is in DEPLOY.md, under “Switching on real services”.</p>`;
       $('#te-form', v).onsubmit = (e) => { e.preventDefault(); const out = $('#te-out', v); busy($('#te-send', v), async () => {
         if (st.demo) { out.textContent = 'This demo runs in your browser, so no email is sent. On limorelay.com this button sends a real one.'; return; }
@@ -4285,6 +4288,17 @@
           out.innerHTML = r.status === 'sent' ? `<b>Sent to ${esc(r.to)}.</b> Check that inbox (and its spam folder).`
             : r.status === 'off' ? 'Emails are not switched on: add RESEND_API_KEY and EMAIL_FROM in Render, Environment, then try again.'
             : `<b>Resend did not send it.</b> ${esc(r.error || r.status)}`;
+        } catch (err) { out.textContent = err.message; }
+      }); };
+      $('#ts-form', v).onsubmit = (e) => { e.preventDefault(); const out = $('#ts-out', v); busy($('#ts-send', v), async () => {
+        if (st.demo) { out.textContent = 'This demo runs in your browser, so no text is sent. On limorelay.com this button sends a real one.'; return; }
+        out.textContent = 'Sending and checking with Twilio…';
+        try {
+          const r = await api('owner.testSms', { to: $('#ts-to', v).value });
+          out.innerHTML = r.status === 'delivered' ? `<b>Delivered to ${esc(r.to)}.</b> Texts are working.`
+            : r.status === 'off' ? 'Texts are not switched on: add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_FROM in Render, Environment, then try again.'
+            : ['queued', 'accepted', 'sending', 'sent'].includes(r.status) ? `<b>Twilio accepted it</b> (status: ${esc(r.status)}). Check your phone. If it doesn't arrive in a minute, open Twilio, Monitor, Messaging logs.`
+            : `<b>Not delivered</b>${r.code ? ` (Twilio error ${esc(String(r.code))})` : ''}. ${esc(r.error || r.status)}`;
         } catch (err) { out.textContent = err.message; }
       }); };
     }
