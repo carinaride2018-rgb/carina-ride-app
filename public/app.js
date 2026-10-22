@@ -3362,7 +3362,7 @@
     }
 
     // Trip import: a CSV saved from Excel or Google Sheets, checked row by row before anything is saved.
-    const IMPORT_COLS = [['date', 'Date'], ['time', 'Time'], ['passengerName', 'Passenger'], ['passengerPhone', 'Phone'], ['passengerEmail', 'Email'], ['pickup', 'Pickup'], ['dropoff', 'Drop-off'], ['vehicleType', 'Vehicle type'], ['passengers', 'Passengers'], ['service', 'Service'], ['hours', 'Hours'], ['flight', 'Flight'], ['account', 'Company account'], ['poNumber', 'PO number'], ['notes', 'Notes']];
+    const IMPORT_COLS = [['date', 'Date'], ['time', 'Time'], ['passengerName', 'Passenger'], ['passengerPhone', 'Phone'], ['passengerEmail', 'Email'], ['pickup', 'Pickup'], ['dropoff', 'Drop-off'], ['vehicleType', 'Vehicle type'], ['passengers', 'Passengers'], ['service', 'Service'], ['hours', 'Hours'], ['flight', 'Flight'], ['account', 'Company account'], ['poNumber', 'PO number'], ['price', 'Price'], ['notes', 'Notes']];
     function parseCsv(text) {
       const rows = []; let row = [], cell = '', q = false;
       for (let i = 0; i < text.length; i++) {
@@ -3376,22 +3376,105 @@
       row.push(cell); if (row.some((x) => x.trim())) rows.push(row);
       return rows;
     }
-    function importRows(text) {
-      const grid = parseCsv(text.replace(/^\ufeff/, ''));
+    // Excel .xlsx without a library: it's a zip of XML files. Reads the first
+    // sheet; date and time cells (Excel day numbers) become 2026-10-25 / 14:30.
+    async function readXlsx(buf) {
+      const dv = new DataView(buf), u8 = new Uint8Array(buf), dec = new TextDecoder();
+      let eocd = -1;
+      for (let i = buf.byteLength - 22; i >= Math.max(0, buf.byteLength - 66000); i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+      if (eocd < 0) throw new Error("This doesn't look like an Excel .xlsx file. Save it as .xlsx or CSV and try again.");
+      const files = {};
+      let p = dv.getUint32(eocd + 16, true);
+      for (let n = dv.getUint16(eocd + 10, true); n > 0; n--) {
+        const method = dv.getUint16(p + 10, true), size = dv.getUint32(p + 20, true), nl = dv.getUint16(p + 28, true), xl = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true), off = dv.getUint32(p + 42, true);
+        files[dec.decode(u8.subarray(p + 46, p + 46 + nl))] = { method, size, off };
+        p += 46 + nl + xl + cl;
+      }
+      const read = async (name) => {
+        const f = files[name]; if (!f) return '';
+        const start = f.off + 30 + dv.getUint16(f.off + 26, true) + dv.getUint16(f.off + 28, true);
+        const data = u8.subarray(start, start + f.size);
+        if (f.method === 0) return dec.decode(data);
+        if (typeof DecompressionStream === 'undefined') throw new Error('This browser can\'t open .xlsx files. Save the sheet as CSV and try again.');
+        return new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
+      };
+      const xml = (t) => new DOMParser().parseFromString(t, 'application/xml');
+      const shared = [...xml(await read('xl/sharedStrings.xml') || '<sst/>').getElementsByTagName('si')].map((si) => [...si.getElementsByTagName('t')].map((t) => t.textContent).join(''));
+      const sheetName = files['xl/worksheets/sheet1.xml'] ? 'xl/worksheets/sheet1.xml' : Object.keys(files).filter((k) => /^xl\/worksheets\/[^/]+\.xml$/.test(k)).sort()[0];
+      if (!sheetName) throw new Error('No sheet found in this Excel file.');
+      const doc = xml(await read(sheetName));
+      const grid = [];
+      for (const row of doc.getElementsByTagName('row')) {
+        const out = [];
+        for (const c of row.getElementsByTagName('c')) {
+          const ref = c.getAttribute('r') || '', letters = (ref.match(/^[A-Z]+/) || [''])[0];
+          const col = letters ? [...letters].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1 : out.length;
+          const t = c.getAttribute('t'), v = c.getElementsByTagName('v')[0];
+          let val = t === 's' ? shared[+(v && v.textContent)] || '' : t === 'inlineStr' ? [...c.getElementsByTagName('t')].map((x) => x.textContent).join('') : v ? v.textContent : '';
+          out[col] = { val, num: !t || t === 'n' ? Number(val) : NaN };
+        }
+        grid.push(out);
+      }
+      return grid;
+    }
+    // Excel day number -> '2026-10-25' and/or '14:30'.
+    const xlDate = (n) => { const d = new Date(Math.round((n - 25569) * 864e5)); return d.toISOString().slice(0, 10); };
+    const xlTime = (n) => { const m = Math.round((n % 1) * 1440) % 1440; return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`; };
+    const IMPORT_ALIAS = { pickupdate: 'date', day: 'date', tripdate: 'date', servicedate: 'date', ridedate: 'date', reservationdate: 'date', pudate: 'date', datetime: 'date', pickupdatetime: 'date', pickupdateandtime: 'date', dateandtime: 'date', dateofservice: 'date', when: 'date',
+      pickuptime: 'time', putime: 'time', ridetime: 'time', starttime: 'time', triptime: 'time',
+      name: 'passengerName', passengername: 'passengerName', customer: 'passengerName', customername: 'passengerName', client: 'passengerName', clientname: 'passengerName', guest: 'passengerName', guestname: 'passengerName', rider: 'passengerName', leadpassenger: 'passengerName', fullname: 'passengerName', contact: 'passengerName',
+      mobile: 'passengerPhone', phonenumber: 'passengerPhone', cell: 'passengerPhone', cellphone: 'passengerPhone', mobilenumber: 'passengerPhone', telephone: 'passengerPhone', tel: 'passengerPhone', contactnumber: 'passengerPhone', passengerphone: 'passengerPhone', customerphone: 'passengerPhone',
+      emailaddress: 'passengerEmail', mail: 'passengerEmail', passengeremail: 'passengerEmail', customeremail: 'passengerEmail',
+      from: 'pickup', pickupaddress: 'pickup', pickuplocation: 'pickup', pu: 'pickup', puaddress: 'pickup', origin: 'pickup', start: 'pickup', startaddress: 'pickup', pickuppoint: 'pickup',
+      to: 'dropoff', dropoffaddress: 'dropoff', dropofflocation: 'dropoff', dropof: 'dropoff', do: 'dropoff', doaddress: 'dropoff', destination: 'dropoff', dest: 'dropoff', end: 'dropoff', endaddress: 'dropoff', drop: 'dropoff',
+      vehicle: 'vehicleType', car: 'vehicleType', cartype: 'vehicleType', vehicletype: 'vehicleType', vehicleclass: 'vehicleType', class: 'vehicleType', model: 'vehicleType', carclass: 'vehicleType',
+      pax: 'passengers', passengercount: 'passengers', ofpassengers: 'passengers', numberofpassengers: 'passengers', people: 'passengers', guests: 'passengers', persons: 'passengers', count: 'passengers',
+      flightnumber: 'flight', flightno: 'flight', airlineflight: 'flight', airline: 'flight',
+      servicetype: 'service', type: 'service', triptype: 'service', ridetype: 'service', duration: 'hours', hoursbooked: 'hours',
+      account: 'account', company: 'account', corporateaccount: 'account', billto: 'account', po: 'poNumber', ponumber: 'poNumber', purchaseorder: 'poNumber',
+      fare: 'price', total: 'price', amount: 'price', rate: 'price', cost: 'price', totalprice: 'price', quote: 'price', charge: 'price', totalfare: 'price',
+      note: 'notes', comments: 'notes', comment: 'notes', instructions: 'notes', specialinstructions: 'notes', specialrequests: 'notes', remarks: 'notes', memo: 'notes', tripnotes: 'notes' };
+    // Turns a sheet (header row + one trip per row) into trips, reading the
+    // column names loosely. Returns { rows, used, ignored }.
+    function importGrid(grid) {
+      grid = grid.filter((r) => r && r.some((x) => x && String(typeof x === 'object' ? x.val : x).trim()));
       if (grid.length < 2) throw new Error('The file needs a header row and at least one trip.');
-      const norm = (h) => h.toLowerCase().replace(/[^a-z]/g, '');
-      const alias = { pickupdate: 'date', day: 'date', pickuptime: 'time', name: 'passengerName', passengername: 'passengerName', mobile: 'passengerPhone', phonenumber: 'passengerPhone', from: 'pickup', pickupaddress: 'pickup', to: 'dropoff', dropoffaddress: 'dropoff', vehicle: 'vehicleType', pax: 'passengers', flightnumber: 'flight', account: 'account', po: 'poNumber' };
-      const keyOf = (h) => { const n = norm(h); const hit = IMPORT_COLS.find(([k, l]) => norm(l) === n || norm(k) === n); return hit ? hit[0] : alias[n] || null; };
-      const keys = grid[0].map(keyOf);
-      if (!keys.includes('date') || !keys.includes('pickup')) throw new Error('Couldn\'t find the Date and Pickup columns. Start from the template.');
-      return grid.slice(1).map((r) => Object.fromEntries(keys.map((k, i) => [k, (r[i] || '').trim()]).filter(([k]) => k)));
+      const cell = (x) => (x && typeof x === 'object' ? x : { val: x == null ? '' : String(x), num: NaN });
+      const norm = (h) => String(h).toLowerCase().replace(/&/g, 'and').replace(/[^a-z]/g, '');
+      const keyOf = (h) => { const n = norm(h); if (!n) return null; const hit = IMPORT_COLS.find(([k, l]) => norm(l) === n || norm(k) === n); return hit ? hit[0] : IMPORT_ALIAS[n] || null; };
+      const head = [...grid[0]].map((x) => cell(x).val.trim());
+      const keys = []; const seen = new Set();
+      head.forEach((h, i) => { const k = keyOf(h); keys[i] = k && !seen.has(k) ? k : null; if (k) seen.add(k); });
+      if (!seen.has('date') || !seen.has('pickup')) throw new Error(`Couldn't find the ${!seen.has('date') ? 'date' : 'pickup address'} column. Name it "Date" or "Pickup" (or start from the template). Columns found: ${head.filter(Boolean).join(', ') || 'none'}.`);
+      const rows = grid.slice(1).map((r) => {
+        const o = {};
+        keys.forEach((k, i) => {
+          if (!k) return;
+          const c = cell(r[i]);
+          let v = c.val.trim();
+          if (!isNaN(c.num) && v !== '') {
+            if (k === 'date' && c.num > 20000) { v = xlDate(c.num); if (c.num % 1) o.time = o.time || xlTime(c.num); }
+            else if (k === 'time' && c.num < 1) v = xlTime(c.num);
+          }
+          if (v !== '') o[k] = v;
+        });
+        return o;
+      }).filter((o) => Object.keys(o).length);
+      return { rows, used: head.map((h, i) => keys[i] ? [h, IMPORT_COLS.find(([k]) => k === keys[i])[1]] : null).filter(Boolean), ignored: head.filter((h, i) => h && !keys[i]) };
+    }
+    async function importFile(file) {
+      if (/\.xls$/i.test(file.name)) throw new Error('Old Excel .xls files can\'t be read. In Excel, choose File > Save As > Excel Workbook (.xlsx) or CSV, then try again.');
+      if (/\.xlsx$/i.test(file.name) || /spreadsheetml/.test(file.type)) return importGrid(await readXlsx(await file.arrayBuffer()));
+      return importGrid(parseCsv((await file.text()).replace(/^\ufeff/, '')));
     }
     function importModal(done) {
       let rows = null;
+      const norm2 = (x) => String(x).toLowerCase().replace(/[^a-z]/g, '');
       const m = openModal({
         title: 'Import trips', wide: true,
-        body: `<div class="stack"><p class="small muted">Save your spreadsheet as CSV (Excel and Google Sheets both can) with one trip per row. Times are ${esc(session.company.name)}'s local time. We check every row first and save nothing until all rows are right.</p>
-          <div class="row"><button class="btn sm" type="button" id="im-tpl">Download the template</button><label class="btn sm"><input type="file" id="im-file" accept=".csv,text/csv,.txt" hidden>Choose a CSV file</label><span class="small faint" id="im-name"></span></div>
+        body: `<div class="stack"><p class="small muted">Choose an Excel (.xlsx) or CSV file with one trip per row and a header row. Your own column names are fine: we match Date, Time, Passenger, Phone, Email, Pickup, Drop-off, Vehicle, Passengers, Flight, Price and Notes, and common names like Customer, From, To or Fare. Times are ${esc(session.company.name)}'s local time. We check every row first and save nothing until all rows are right.</p>
+          <div class="row"><label class="btn sm primary"><input type="file" id="im-file" accept=".xlsx,.csv,.txt,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xls" hidden>Choose Excel or CSV file</label><button class="btn sm" type="button" id="im-tpl">Download the template</button><span class="small faint" id="im-name"></span></div>
+          <div id="im-cols"></div>
           <label class="switch"><input type="checkbox" id="im-confirm"><span>Send each passenger the booking confirmation</span></label>
           <div id="im-out"></div></div>`,
         footer: '<button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="im-go" disabled>Import</button>',
@@ -3399,7 +3482,7 @@
       $('[data-close]', m).onclick = closeModal;
       $('#im-tpl', m).onclick = async () => {
         const d = new Date(Date.now() + 3 * 864e5).toISOString().slice(0, 10);
-        const sample = [IMPORT_COLS.map((c) => c[1]), [d, '14:30', 'Jordan Smith', '(206) 555-0100', 'jordan@example.com', 'Seattle-Tacoma International Airport (SEA)', '1201 3rd Ave, Seattle', 'Sedan', '1', 'Airport transfer', '', 'AS 330', '', '', 'Meet at baggage claim'], [d, '6:00 PM', 'Casey Lee', '(206) 555-0101', '', 'Space Needle, Seattle', '', 'SUV', '4', 'By the hour', '3', '', '', '', '']];
+        const sample = [IMPORT_COLS.map((c) => c[1]), [d, '14:30', 'Jordan Smith', '(206) 555-0100', 'jordan@example.com', 'Seattle-Tacoma International Airport (SEA)', '1201 3rd Ave, Seattle', 'Sedan', '1', 'Airport transfer', '', 'AS 330', '', '', '', 'Meet at baggage claim'], [d, '6:00 PM', 'Casey Lee', '(206) 555-0101', '', 'Space Needle, Seattle', '', 'SUV', '4', 'By the hour', '3', '', '', '', '450.00', '']];
         await saveFile('trip-import-template.csv', sample.map((r) => r.map((x) => /[",]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x).join(',')).join('\r\n'), 'text/csv');
       };
       const show = (res, saved) => {
@@ -3409,7 +3492,13 @@
       $('#im-file', m).onchange = async (e) => {
         const file = e.target.files[0]; if (!file) return;
         $('#im-name', m).textContent = file.name;
-        try { rows = importRows(await file.text()); const res = await api('dispatch.importTrips', { rows, check: true }); show(res); $('#im-go', m).disabled = !!res.bad; }
+        $('#im-cols', m).innerHTML = '';
+        try {
+          const g = await importFile(file); rows = g.rows;
+          $('#im-cols', m).innerHTML = `<p class="small"><b>Columns used:</b> ${g.used.map(([h, l]) => norm2(h) === norm2(l) ? esc(l) : `${esc(h)} → ${esc(l)}`).join(', ')}${g.ignored.length ? `<br><span class="faint">Not used: ${esc(g.ignored.join(', '))}</span>` : ''}</p>`;
+          if (rows.length > 500) throw new Error(`The file has ${rows.length} trips. Import up to 500 at a time.`);
+          const res = await api('dispatch.importTrips', { rows, check: true }); show(res); $('#im-go', m).disabled = !!res.bad;
+        }
         catch (err) { rows = null; $('#im-go', m).disabled = true; $('#im-out', m).innerHTML = `<p class="err-text">${esc(err.message)}</p>`; }
         e.target.value = '';
       };

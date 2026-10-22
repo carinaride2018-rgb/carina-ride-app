@@ -1393,7 +1393,7 @@
         passengerName: booking.passengerName || (customer && !customer.agent && customer.name) || '',
         passengerPhone: booking.passengerPhone || (customer && !customer.agent && customer.phone) || '',
         passengerEmail: booking.passengerEmail || (customer && !customer.agent && customer.email) || '',
-        waitMin: 0, tolls: 0, milesOverride: null, priceOverride: null, adjustment: null, priceCtx: ctx,
+        waitMin: 0, tolls: 0, milesOverride: null, priceOverride: booking.priceOverride != null ? booking.priceOverride : null, adjustment: null, priceCtx: ctx,
         status: 'confirmed', driverId: null, vehicleId: null, flightInfo: null, rating: null,
         payment: { status: 'unpaid', method: booking.accountId ? 'account' : booking.payCash ? 'cash' : cardsOn(company) ? 'card_on_file' : null, paidAt: null },
         source, createdAt: now().toISOString(), history: [],
@@ -2916,27 +2916,65 @@
     // Rows from a spreadsheet. With check set, nothing is saved: each row comes
     // back with its price or what's wrong, so the office can fix the file first.
     const IMPORT_SERVICE = { transfer: 'transfer', 'point to point': 'transfer', airport: 'airport', 'airport transfer': 'airport', hourly: 'hourly', 'by the hour': 'hourly', hour: 'hourly' };
+    // Spreadsheet dates and times as people type them: 2026-10-25, 10/25/26,
+    // Oct 25 2026, Sunday, October 25, 2026, or the date and time in one cell;
+    // 14:30, 2:30 PM, 2:30pm, 2 PM, 14:30:00. Returns ['YYYY-MM-DD', 'H:MM AM'] or null.
+    const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+    function importWhen(dateIn, timeIn) {
+      let date = String(dateIn || '').trim(), time = String(timeIn || '').trim();
+      const tre = /(\d{1,2})(?::(\d{2}))?(?::\d{2})?\s*([ap])\.?\s*m?\.?$|(\d{1,2}):(\d{2})(?::\d{2})?$/i;
+      if (!time) { const m = date.match(/[T\s](\d{1,2}(?::\d{2}){0,2}\s*(?:[ap]\.?\s*m?\.?)?)$/i); if (m && /[:apAP]/.test(m[1])) { time = m[1]; date = date.slice(0, m.index).replace(/[,\s]+$/, ''); } }
+      let y, mo, d, m;
+      const ds = date.replace(/^[a-z]+day,?\s*/i, '');
+      if ((m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(ds))) [y, mo, d] = [+m[1], +m[2], +m[3]];
+      else if ((m = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$/.exec(ds))) [mo, d, y] = [+m[1], +m[2], +m[3]];
+      else if ((m = /^([a-z]{3})[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{2,4})$/i.exec(ds))) [mo, d, y] = [MONTHS.indexOf(m[1].toLowerCase()) + 1, +m[2], +m[3]];
+      else if ((m = /^(\d{1,2})[\s-]([a-z]{3})[a-z]*\.?[\s-](\d{2,4})$/i.exec(ds))) [d, mo, y] = [+m[1], MONTHS.indexOf(m[2].toLowerCase()) + 1, +m[3]];
+      else return null;
+      if (y < 100) y += 2000;
+      const t = tre.exec(time.replace(/\s+/g, ' '));
+      if (!t) return null;
+      let h, mi, ap = '';
+      if (t[4] != null) { h = +t[4]; mi = +t[5]; } else { h = +t[1]; mi = t[2] ? +t[2] : 0; ap = t[3].toLowerCase(); }
+      if (!(mo >= 1 && mo <= 12)) return null;
+      return [`${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`, ap ? `${h}:${String(mi).padStart(2, '0')} ${ap === 'p' ? 'PM' : 'AM'}` : `${h}:${String(mi).padStart(2, '0')}`];
+    }
+    // Vehicle as written in someone else's spreadsheet: a type, a model or a fleet car's name.
+    function importVehicle(c, x) {
+      const v = String(x || '').trim().toLowerCase();
+      if (!v) return 'Sedan';
+      const exact = VEHICLE_TYPES.find((t) => t.toLowerCase() === v);
+      if (exact) return exact;
+      const car = db.vehicles.find((k) => k.companyId === c.id && k.name && k.name.toLowerCase() === v);
+      if (car) return car.type;
+      if (/bus|coach/.test(v)) return 'Party Bus';
+      if (/sprinter|14|executive van|limo van/.test(v)) return 'Sprinter Van';
+      if (/van|transit|10/.test(v)) return 'Business Van';
+      if (/suv|navigator|escalade|suburban|yukon|tahoe|expedition/.test(v)) return 'SUV';
+      if (/sedan|car|ct6|cadillac|continental|s.?class|e.?class|7.?series|lexus|lincoln|town ?car|tesla|xts/.test(v)) return 'Sedan';
+      return null;
+    }
     def('dispatch.importTrips', STAFF, true, (ctx, a) => {
       const rows = Array.isArray(a.rows) ? a.rows.slice(0, 500) : [];
       if (!rows.length) fail('The file has no trips in it.');
       const c = ctx.company, out = [];
-      const vt = (x) => VEHICLE_TYPES.find((t) => t.toLowerCase() === String(x || '').trim().toLowerCase()) || (String(x || '').trim() ? null : 'Sedan');
       const plans = [];
       rows.forEach((r, i) => {
         try {
-          const date = str(r.date, 20), time = str(r.time, 20);
-          const at = localToIso(date, time, c);
-          if (!at) fail('Use a date like 2026-10-14 and a time like 14:30 or 2:30 PM.');
-          const type = vt(r.vehicleType);
-          if (!type) fail(`Vehicle type must be one of: ${VEHICLE_TYPES.join(', ')}.`);
+          const when = importWhen(str(r.date, 60), str(r.time, 30));
+          const at = when && localToIso(when[0], when[1], c);
+          if (!at) fail(`Couldn't read the date and time${r.date ? ` "${str(r.date, 40)}${r.time ? ' ' + str(r.time, 20) : ''}"` : ''}. Use a date like 10/25/2026 and a time like 2:30 PM.`);
+          const type = importVehicle(c, r.vehicleType);
+          if (!type) fail(`Couldn't match the vehicle "${str(r.vehicleType, 40)}". Use one of: ${VEHICLE_TYPES.join(', ')}.`);
           const service = IMPORT_SERVICE[String(r.service || '').trim().toLowerCase()] || (r.hours ? 'hourly' : 'transfer');
           let accountId = '';
           if (r.account) { const acc = db.accounts.find((x) => x.companyId === c.id && x.name.toLowerCase() === str(r.account, 120).toLowerCase()); if (!acc) fail(`No company account named ${str(r.account, 60)}.`); accountId = acc.id; }
           const raw = { service, pickupAt: at, pickup: r.pickup, dropoff: r.dropoff, vehicleType: type, passengers: r.passengers || 1, hours: r.hours, flight: r.flight, passengerName: r.passengerName, passengerPhone: r.passengerPhone, passengerEmail: r.passengerEmail, notes: r.notes, accountId, poNumber: r.poNumber };
           const b = cleanBooking(c, raw, { allowPast: false });
           if (!b.passengerName) fail('Passenger name is missing.');
+          if (r.price != null && String(r.price).trim() !== '') { const pv = num(String(r.price).replace(/[$,\s]/g, ''), NaN); if (!(pv >= 0)) fail(`Couldn't read the price "${str(r.price, 20)}".`); b.priceOverride = round2(pv); }
           if (b.passengerEmail && !emailOk(b.passengerEmail)) fail('Passenger email is not valid.');
-          const price = quote(c, b, priceCtx(c, b, null, ''));
+          const price = b.priceOverride != null ? { total: b.priceOverride } : quote(c, b, priceCtx(c, b, null, ''));
           plans.push({ row: i + 1, b });
           out.push({ row: i + 1, ok: true, pickupAt: b.pickupAt, passengerName: b.passengerName, pickup: b.pickup, dropoff: b.dropoff, vehicleType: b.vehicleType, total: price.total });
         } catch (e) {
