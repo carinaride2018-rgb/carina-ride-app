@@ -1425,6 +1425,15 @@
     const defWait = ad.stopWait == null ? 10 : ad.stopWait;
     let stopWaits = stopList.map((x, i) => (Array.isArray(init.stopWaits) && init.stopWaits[i] != null ? init.stopWaits[i] : defWait));
     const pol = opts.info.policy || null;
+    // Under "Your details and payment": what happens with payment, matching the company's settings.
+    const step2Note = () => {
+      const c0 = opts.info.company || (session && session.company) || {};
+      if (dispatch) return 'Pick a vehicle and enter the passenger details.';
+      if (c0.cards === false) return c0.cash ? `Pick a vehicle and tell us who's riding. You pay ${c0.name || 'the office'} in cash; no card needed.` : "Pick a vehicle and tell us who's riding.";
+      const when = pol && pol.chargeWhen === 'before' ? 'Nothing is charged now.' : 'The fare is charged to your card when you book.';
+      const hasCard = !!(session && session.user && session.user.card);
+      return `Pick a vehicle, tell us who's riding and ${hasCard ? 'check your card' : 'add a card'}${c0.cash ? ' or choose cash' : ''}. ${when}`;
+    };
     const dispatch = opts.mode === 'dispatch';
     const agent = opts.mode === 'agent';
     const clients = opts.clients || [];
@@ -1459,7 +1468,7 @@
           ${twoStep ? `<div id="bk-err1"></div><button class="btn brand big" type="button" id="bk-next">Get my quote</button>` : ''}
           </div>
           ${twoStep ? `<div class="bkstep-sum" id="bk-sum" hidden><div class="stack" style="gap:2px"><span class="label">Your ride</span><span id="bk-sumtext"></span></div><button class="btn sm" type="button" id="bk-back">Change</button></div>
-          <div class="bkstep-head" id="bk-head2" hidden><span class="stepno">2</span><div><h2>Your details and payment</h2><p class="small muted">Pick a vehicle, tell us who's riding and add a card. Nothing is charged now.</p></div></div>` : ''}
+          <div class="bkstep-head" id="bk-head2" hidden><span class="stepno">2</span><div><h2>Your details and payment</h2><p class="small muted">${esc(step2Note())}</p></div></div>` : ''}
           <div class="stack bkstep" id="bk-step2"${twoStep ? ' hidden' : ''}>
           <fieldset class="fs landfs" id="bk-land" hidden><legend><label class="switch"><input type="checkbox" id="bk-land-on" name="landOn" ${state.landOn ? 'checked' : ''}><span id="bk-land-title">${dispatch ? 'Add a pickup when they land' : 'Add a ride when you land'}</span></label></legend>
             <p class="small muted" id="bk-land-info"></p>
@@ -1479,11 +1488,12 @@
             <label class="field"><span>${agent ? "Client's name" : 'Passenger name'}</span><input id="bk-name" name="passengerName" value="${esc(state.passengerName)}" ${dispatch || agent ? 'required' : ''}>${dispatch || agent ? '' : '<span class="hint">Booking for someone else? Put their name and mobile.</span>'}</label>
             <label class="field"><span>${agent ? "Client's mobile" : 'Passenger mobile'}</span><input id="bk-phone" name="passengerPhone" type="tel" value="${esc(state.passengerPhone)}"><span class="hint">The chauffeur texts this number.</span></label>
           </div>
+          ${opts.guest ? `<label class="field"><span>Your email</span><input id="bk-gemail" type="email" autocomplete="email" value="${esc(state.guestEmail || '')}"><span class="hint">Your confirmation goes here. No account needed. <button class="linkbtn" type="button" id="bk-signin">Have an account? Sign in</button></span></label>` : ''}
           <label class="check smsok"><input type="checkbox" id="bk-sms" ${state.smsOk ? 'checked' : ''}> <span>${dispatch ? 'The passenger agreed to get ride texts at this number. Untick if they did not; they then get emails only.' : `<b>${agent ? 'My client agrees' : 'I agree'} to receive SMS/text messages from ${esc((opts.info.company && opts.info.company.name) || 'us')}</b> about ${agent ? 'their' : 'my'} rides (booking confirmations, reminders and driver updates). Message frequency varies. Msg &amp; data rates may apply. Reply STOP to cancel, HELP for help. Consent is not required to book. See our ${privacyLink()} and ${termsLink()}.`}</span></label>
           ${agent ? `<label class="field"><span>Client's email <span class="faint">(optional)</span></span><input id="bk-email" name="passengerEmail" type="email" value="${esc(state.passengerEmail)}"><span class="hint">Your client gets the confirmation and chauffeur details. You get a copy by email.</span></label>
-            <div class="field"><span>Who pays</span><div class="seg" role="radiogroup">
-              <label class="switch"><input type="radio" name="payBy" value="agent" id="bk-payby-agent" ${state.payBy !== 'passenger' ? 'checked' : ''}><span>My card on file</span></label>
-              <label class="switch"><input type="radio" name="payBy" value="passenger" id="bk-payby-passenger" ${state.payBy === 'passenger' ? 'checked' : ''}><span>My client: text them a link to add their card</span></label></div></div></div>` : ''}
+            <div class="field"><span>Who pays</span><div class="stack" role="radiogroup" style="gap:6px">
+              <label class="check"><input type="radio" name="payBy" value="agent" id="bk-payby-agent" ${state.payBy !== 'passenger' ? 'checked' : ''}><span>My card on file</span></label>
+              <label class="check"><input type="radio" name="payBy" value="passenger" id="bk-payby-passenger" ${state.payBy === 'passenger' ? 'checked' : ''}><span>My client: text them a link to add their card</span></label></div></div></div>` : ''}
           ${dispatch ? `<label class="field"><span>Passenger email</span><input id="bk-email" name="passengerEmail" type="email" value="${esc(state.passengerEmail)}"><span class="hint">Links the trip to a customer account and applies their account discount. Leave blank for a one-off.</span></label>` : ''}
           ${accts.length ? `<div class="grid3">
             <label class="field"><span>Bill to</span><select id="bk-acct" name="accountId"><option value="">${dispatch ? 'Passenger pays' : "I'll pay myself"}</option>${accts.map((a) => `<option value="${a.id}" ${state.accountId === a.id ? 'selected' : ''}>${esc(a.name)} (monthly invoice)</option>`).join('')}</select></label>
@@ -1651,6 +1661,7 @@
       if (repOn) out.repeat = { on: true, days: $$('[data-rday]:checked', host).map((x) => x.dataset.rday), until: repUntil };
       if (retOn && state.service !== 'hourly') { out.returnAt = rwhen && !isNaN(rwhen) ? rwhen.toISOString() : 'missing'; out.returnFlight = retFlight; }
       delete out.cardNo; delete out.cardExp; delete out.payDriver;
+      if (opts.guest) { const ge = $('#bk-gemail', host); out.guestEmail = ge ? ge.value.trim() : ''; }
       if (!agent) delete out.payBy;
       const crb = $('#bk-credit', host); out.useCredit = !!(crb && crb.checked && !out.accountId);
       if ($('#bk-cardno', host) && !(agent && state.payBy === 'passenger')) out.card = { number: state.cardNo || $('#bk-cardno', host).value, exp: state.cardExp || $('#bk-cardexp', host).value };
@@ -1717,6 +1728,7 @@
       if (tc) b.agreeTerms = tc.checked;
       try { await opts.onSubmit(b); } catch (err) { showErr($('#bk-err', host), err); $('#bk-err', host).scrollIntoView({ block: 'nearest' }); }
     });
+    const si = $('#bk-signin', host); if (si && opts.onSignin) si.onclick = () => opts.onSignin(booking());
     // Two steps: check the quote first, then open the rest of the form.
     let vpKey = '';
     // The PO number is asked in step 2, so a required one can't block the quote.
@@ -1793,12 +1805,26 @@
       quoteFn: (b) => api('public.quote', { slug, booking: b }),
       onSubmit: async (b) => {
         if (signedHere) { const t = await api('customer.book', { booking: b }); await afterBook(t, b); toast(bookedMsg(t)); go('customer'); return; }
-        pending.booking = b; showAuth();
+        // A guest gives an email in the form and books in one step.
+        const { guestEmail, ...rest } = b;
+        if (!guestEmail) throw new Error('Enter your email so we can send your confirmation.');
+        await guestBook(rest, { name: rest.passengerName, phone: rest.passengerPhone, email: guestEmail });
       },
+      guest: !signedHere,
+      onSignin: (b) => { const { guestEmail, ...rest } = b; pending.booking = rest; showAuth('signin'); },
     });
-    function showAuth() {
+    async function guestBook(booking, who) {
+      const t = await api('public.guestBook', { slug, name: who.name, phone: who.phone, email: who.email, booking });
+      if (t.pay && t.pay.needsCard && info.company.payMode === 'stripe') {
+        toast(`${bookedMsg(t)} Next, save your card.`);
+        const r = await payApi('checkout', { kind: 'card', token: t.cardToken });
+        location.href = r.url; await new Promise(() => {});
+      }
+      return guestDone(t);
+    }
+    function showAuth(start) {
       const host = $('#auth-host', v);
-      let mode = 'guest';
+      let mode = start || 'guest';
       const draw = () => {
         const t = { guest: 'Your details to confirm', signup: 'Create your account to confirm', signin: 'Sign in to confirm' }[mode];
         host.innerHTML = `<div class="panel stack" style="margin-top:20px;max-width:560px">
@@ -1820,15 +1846,7 @@
           const f = formData(e.target);
           await busy($('button[type=submit]', e.target), async () => {
             try {
-              if (mode === 'guest') {
-                const t = await api('public.guestBook', { slug, name: f.name, phone: f.phone, email: f.email, booking: pending.booking });
-                if (t.pay && t.pay.needsCard && info.company.payMode === 'stripe') {
-                  toast(`${bookedMsg(t)} Next, save your card.`);
-                  const r = await payApi('checkout', { kind: 'card', token: t.cardToken });
-                  location.href = r.url; await new Promise(() => {});
-                }
-                return guestDone(t);
-              }
+              if (mode === 'guest') return await guestBook(pending.booking, f);
               const res = mode === 'signup' ? await api('auth.signup', { ...f, slug }) : await api('auth.login', { ...f, slug });
               if (res.user.role !== 'customer' || res.user.companyId !== info.company.id) throw new Error(`That login isn't a ${info.company.name} customer account.`);
               setSession(res);
@@ -1847,8 +1865,8 @@
       $('#book-host', v).hidden = true;
       const host = $('#auth-host', v);
       host.innerHTML = `<div class="panel stack" style="margin-top:20px;max-width:560px" id="guest-done">
-        <h2>You're booked</h2>
-        <p>${esc(bookedMsg(t))}</p>
+        <h2>Thank you, your ride is booked</h2>
+        <p>Reference number <b class="mono">${esc(t.ref)}</b>${t.returnTrip ? `, return ride <b class="mono">${esc(t.returnTrip.ref)}</b>` : ''}${t.landingTrip ? `, ride when you land <b class="mono">${esc(t.landingTrip.ref)}</b>` : ''}</p>
         <dl class="kv"><dt>Pickup</dt><dd>${esc(fmtDT(t.pickupAt))}<div class="small faint">${esc(t.pickup || '')}</div></dd>${t.dropoff ? `<dt>Drop-off</dt><dd class="small">${esc(t.dropoff)}</dd>` : ''}${t.price ? `<dt>Total</dt><dd class="num">${money(t.price.total)}</dd>` : ''}</dl>
         <p class="small muted">We emailed your confirmation to <b>${esc(t.email)}</b>.${t.accountEmail ? ' We also sent a link to set up your account, so you can see and change your rides any time.' : ' Sign in with that email to see your rides.'}</p>
         <div class="row"><a class="btn" href="#book.${esc(slug)}" id="guest-again">Book another ride</a>${info.company.phone ? `<a class="btn" href="tel:${esc(info.company.phone)}">Call ${esc(info.company.name)}</a>` : ''}</div></div>`;

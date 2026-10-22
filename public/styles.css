@@ -200,8 +200,9 @@ td.mono, td .mono, td .num, .ref { white-space: nowrap; }
   .tablewrap tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 14px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
   .tablewrap tbody tr:last-child, .tablewrap tfoot tr:last-child { border-bottom: 0; }
   .tablewrap tfoot tr { background: var(--surface-2); }
-  .tablewrap td { padding: 0; border: 0; min-width: 0; overflow-wrap: anywhere; }
+  .tablewrap td { padding: 0; border: 0; min-width: 0 !important; overflow-wrap: anywhere; }
   .tablewrap td.r { text-align: left; }
+  .tablewrap td.mono, .tablewrap td .mono { white-space: normal; }
   .tablewrap td:first-child, .tablewrap td[colspan] { grid-column: 1 / -1; }
   .tablewrap td[data-label]:not(:first-child)::before { content: attr(data-label); display: block; font-size: 11px; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; margin-bottom: 2px; }
   .tablewrap td[data-label=""] { grid-column: 1 / -1; }
@@ -316,7 +317,7 @@ td.mono, td .mono, td .num, .ref { white-space: nowrap; }
 .role span { font-size: 13px; color: var(--ink-2); }
 .role .mono { font-size: 12px; color: var(--ink-3); }
 
-.msg { display: grid; grid-template-columns: 70px 1fr; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.msg { display: grid; grid-template-columns: 70px minmax(0, 1fr); overflow-wrap: anywhere; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
 .msg:last-child { border-bottom: 0; }
 /* Inbox: passenger texts and replies */
 .inbox { display: grid; grid-template-columns: minmax(240px, 340px) 1fr; gap: 16px; align-items: start; }
@@ -722,7 +723,7 @@ a.quotecard:hover { border-color: var(--brand); }
 .aflist li > .row { float: right; }
 .aflist li.off { color: var(--ink-3); }
 .aflist li.off b { color: var(--ink-2); font-weight: 550; }
-.check input[type="checkbox"] { accent-color: var(--brand); }
+.check input[type="checkbox"], .check input[type="radio"] { accent-color: var(--brand); }
 
 /* Chauffeur photo and car */
 .face { width: 52px; height: 52px; border-radius: 50%; object-fit: cover; flex: none; display: grid; place-items: center; background: var(--surface); border: 1px solid var(--line); font-weight: 650; font-size: 16px; color: var(--ink-2); }
