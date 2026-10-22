@@ -67,10 +67,12 @@ function createProviders(rawEnv, opts) {
     return null;
   }
   const fromAddress = () => { const m = String(env.EMAIL_FROM).match(/<([^>]+)>/); return (m ? m[1] : String(env.EMAIL_FROM)).trim(); };
-  const SUBJECTS = { reminder: 'Ride reminder', quote: 'Your quote', invoice: 'Your invoice', login: 'Your LimoRelay login', reset: 'Reset your password', test: 'LimoRelay test email', signup: 'LimoRelay sign-up', approved: 'Your LimoRelay account is approved', declined: 'Your LimoRelay sign-up', planinvoice: 'Your LimoRelay invoice', billing: 'Your LimoRelay membership' };
+  const SUBJECTS = { confirm: 'Ride confirmed', office_new: 'New booking', reminder: 'Ride reminder', quote: 'Your quote', invoice: 'Your invoice', login: 'Your LimoRelay login', reset: 'Reset your password', test: 'LimoRelay test email', signup: 'LimoRelay sign-up', approved: 'Your LimoRelay account is approved', declined: 'Your LimoRelay sign-up', planinvoice: 'Your LimoRelay invoice', billing: 'Your LimoRelay membership' };
   function subjectOf(m) {
     if (SUBJECTS[m.kind]) return `${SUBJECTS[m.kind]}${m.ref ? ' ' + m.ref : ''}`;
-    const body = String(m.body || '').replace(new RegExp('^' + escapeRe(m.company.name) + ':\\s*'), '');
+    // One line only: a greeting ("Hi Tsion,") is skipped and line breaks become
+    // spaces, since a subject with line breaks is refused by the email service.
+    const body = String(m.body || '').replace(new RegExp('^' + escapeRe(m.company.name) + ':\\s*'), '').replace(/^\s*(hi|hello|dear)\b[^\n]*\n+/i, '').replace(/\s+/g, ' ').trim();
     const first = body.split(/(?<=[.!?])\s/)[0] || body;
     const sub = first.length > 78 ? first.slice(0, 75).replace(/\s+\S*$/, '') + '…' : first;
     return sub.charAt(0).toUpperCase() + sub.slice(1);

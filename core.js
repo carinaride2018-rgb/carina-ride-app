@@ -87,7 +87,7 @@
   };
   const MSG_WORDS = ['company', 'ref', 'passenger', 'pickup_time', 'pickup', 'dropoff', 'vehicle_type', 'passengers', 'ride', 'driver', 'driver_first', 'driver_and', 'vehicle', 'plate', 'vehicle_line', 'car_line', 'total', 'phone', 'flight', 'track_link', 'review_link', 'call_line', 'wrong_line', 'dropoff_line', 'flight_line', 'flight_short_line', 'flight_track_line', 'chauffeur_line', 'track_line', 'landing_line', 'landing_short_line', 'waited', 'fee', 'fee_line', 'amount', 'last4', 'extras', 'card_link', 'hi_name', 'dropoff_to', 'signer', 'contact', 'passenger_name', 'cellphone', 'destination', 'flight_info_line', 'vehicle_choice', 'passenger_count', 'bag_count'];
   const INCIDENT_KINDS = { accident: 'Accident', damage: 'Vehicle damage', injury: 'Injury', complaint: 'Complaint', lost_item: 'Lost item', other: 'Other' };
-  const DEFAULT_CLIENT_MSGS = { confirmText: true, confirmEmail: true, remind24: true, approach: true, review: true, reviewDelayMin: 0 };
+  const DEFAULT_CLIENT_MSGS = { confirmText: true, confirmEmail: true, officeNew: true, remind24: true, approach: true, review: true, reviewDelayMin: 0 };
   // Corporate accounts: payment terms in days (0 = due on receipt).
   const ACCOUNT_TERMS = [0, 15, 30, 45];
   // Smart dispatch: auto-assign, accept timer, reminders, late-start alert.
@@ -699,6 +699,21 @@
     async function setPassword(u, pw) { u.salt = randomId(8); u.passHash = await hashPw(pw, u.salt); }
     // Each company has one master login: the only one who can open payment
     // settings, after entering the payment PIN. It starts as the first admin.
+    // Where the office's own emails go: the company email (Rates & brand), else the main admin.
+    function officeEmail(c) {
+      if (c && /@/.test(c.email || '')) return c.email;
+      const m = masterOf(c);
+      return m && m.email ? m.email : '';
+    }
+    function officeNewText(t, c) {
+      const v = msgVars(t);
+      const lines = [`New booking ${t.ref}${t.agent ? ` by travel agent ${t.agent.name}${t.agent.agency ? ` (${t.agent.agency})` : ''}` : ''}.`, '',
+        `Passenger: ${v.passenger_name}`, `Cellphone: ${v.cellphone || '-'}`, `Email: ${t.passengerEmail || '-'}`, `Pickup Date and Time: ${v.pickup_time}`,
+        `Pickup Address: ${t.pickup}`, `Destination: ${v.destination}`];
+      if (t.flight) lines.push(`Flight: ${t.flight}`);
+      lines.push(`Vehicle: ${v.vehicle_choice}`, `Passengers: ${v.passenger_count}`, `Bags: ${v.bag_count}`, `Total: ${v.total}`, '', `Open the dispatch board to assign a chauffeur.`);
+      return lines.join('\n');
+    }
     function masterOf(c) {
       const admins = db.users.filter((u) => c && u.companyId === c.id && u.role === 'admin' && u.active !== false);
       return admins.find((u) => u.id === c.masterId) || admins[0] || null;
@@ -800,16 +815,19 @@
       // A trip taken from a partner: the partner's office talks to the passenger
       // under its own brand, so only driver messages go out from here.
       const passenger = [to, trip.passengerPhone, trip.passengerEmail].filter(Boolean);
-      const say = (recipient, ch, body) => { if (trip.farmIn && passenger.includes(recipient)) return; msgs.push({ recipient, channel: ch, body }); };
+      const say = (recipient, ch, body, mk) => { if (trip.farmIn && passenger.includes(recipient)) return; msgs.push({ recipient, channel: ch, body, ...(mk ? { kind: mk } : {}) }); };
       if (kind === 'booked') {
         const cm = cmsg(c);
         const sent = [];
         if (cm.confirmText && trip.passengerPhone) { say(trip.passengerPhone, 'sms', msgText(trip, 'confirm_sms')); sent.push(1); }
         if (cm.confirmEmail && trip.passengerEmail) {
-          say(trip.passengerEmail, 'email', msgText(trip, 'confirm_email'));
+          say(trip.passengerEmail, 'email', msgText(trip, 'confirm_email'), 'confirm');
           sent.push(1);
         }
         if (!sent.length && !trip.passengerPhone && !trip.passengerEmail) say(to, channel, `${c.name}: booking ${trip.ref} confirmed for ${when} from ${trip.pickup}.`);
+        // The office hears about every booking made online (customers, guests, agents).
+        const office = officeEmail(c);
+        if (cm.officeNew && office && trip.source === 'online' && !trip.farmIn && !trip.landingOf) say(office, 'email', officeNewText(trip, c), 'office_new');
       }
       if (kind === 'assigned' && driver && trip.driverId) say(driver.phone || driver.email, 'sms', `New trip ${trip.ref} ${when}: pickup ${trip.pickup}. Open the driver app to accept${extra && extra.minutes ? ` within ${extra.minutes} min` : ''}.`);
       if (kind === 'accepted' && driver) {
@@ -2598,8 +2616,8 @@
       if (t.status === 'cancelled') fail('This ride is cancelled.');
       if (!t.passengerEmail && !t.passengerPhone) fail('Add a passenger email or mobile first.');
       const sent = [];
-      const put = (recipient, channel, body) => { db.messages.unshift({ id: id('msg'), companyId: t.companyId, tripId: t.id, ref: t.ref, at: now().toISOString(), recipient, channel, body }); sent.push(recipient); };
-      if (t.passengerEmail) put(t.passengerEmail, 'email', msgText(t, 'confirm_email'));
+      const put = (recipient, channel, body, kind) => { db.messages.unshift({ id: id('msg'), companyId: t.companyId, tripId: t.id, ref: t.ref, at: now().toISOString(), recipient, channel, body, ...(kind ? { kind } : {}) }); sent.push(recipient); };
+      if (t.passengerEmail) put(t.passengerEmail, 'email', msgText(t, 'confirm_email'), 'confirm');
       if (t.passengerPhone && t.smsOk !== false) put(t.passengerPhone, 'sms', msgText(t, 'confirm_sms'));
       if (!sent.length) fail("This passenger didn't agree to texts and has no email. Add an email first.");
       log(t, 'confirm_resent', ctx.user.name, `Confirmation sent again to ${sent.join(' and ')}`);
@@ -2824,7 +2842,7 @@
     def('dispatch.saveClientMsgs', ['admin'], true, (ctx, a) => {
       const r = a.settings || {}, cur = cmsg(ctx.company);
       const b = (k) => (k in r ? !!r[k] : cur[k]);
-      ctx.company.clientMsgs = { confirmText: b('confirmText'), confirmEmail: b('confirmEmail'), remind24: b('remind24'), approach: b('approach'), review: b('review'), reviewDelayMin: Math.min(1440, Math.max(0, Math.round(num(r.reviewDelayMin, cur.reviewDelayMin)))) };
+      ctx.company.clientMsgs = { confirmText: b('confirmText'), confirmEmail: b('confirmEmail'), officeNew: b('officeNew'), remind24: b('remind24'), approach: b('approach'), review: b('review'), reviewDelayMin: Math.min(1440, Math.max(0, Math.round(num(r.reviewDelayMin, cur.reviewDelayMin)))) };
       return clone(ctx.company.clientMsgs);
     });
     def('dispatch.saveRules', ['admin'], true, (ctx, a) => {

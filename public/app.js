@@ -4056,6 +4056,7 @@
               ${sw('remind24', 'Reminder by text and email 24 hours before pickup')}
               ${sw('approach', 'Text when the car is about 10 minutes away')}
               ${sw('review', 'Review request by text and email after the trip')}
+              ${sw('officeNew', 'Email the office about each new online booking')}
             </div>
             <label class="field" style="max-width:420px"><span>Send the review request this many minutes after the trip ends (0 = right away)</span><input class="input" type="number" name="reviewDelayMin" min="0" max="1440" value="${cm.reviewDelayMin}" ${ro}></label>
             <p class="small faint">The 24-hour reminder goes to trips booked more than a day ahead. Passengers of trips taken from a partner company hear from that company. ${isAdmin ? '' : 'Only a company admin can change these.'}</p>
