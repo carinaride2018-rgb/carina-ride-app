@@ -1173,8 +1173,10 @@
         <dt>Terminal</dt><dd>${esc(f.terminal)}${f.claim ? ` · baggage claim ${f.claim}` : ''}</dd></dl>
       ${opts && opts.note ? `<p class="small faint">${esc(opts.note)}</p>` : ''}</div>`;
   }
-  function quoteLines(q) {
-    return q.lines.map((l) => `<div class="qline ${l.kind === 'discount' || l.kind === 'credit' ? 'disc' : ''}"><span>${esc(l.label)}</span><span class="num">${l.amount == null ? '' : (l.amount < 0 ? '−' + money(-l.amount) : money(l.amount))}</span></div>`).join('');
+  // Customers see the fare as one "Ride fare" line; the office sees how it was worked out.
+  function quoteLines(q, simple) {
+    if (simple == null) simple = !(session && session.user && ['admin', 'dispatcher', 'owner'].includes(session.user.role));
+    return q.lines.map((l) => `<div class="qline ${l.kind === 'discount' || l.kind === 'credit' ? 'disc' : ''}"><span>${esc(!simple ? l.label : l.kind === 'fare' ? 'Ride fare' : l.stop != null ? l.label.replace(/ \(.*\)$/, '') : l.label)}</span><span class="num">${l.amount == null ? '' : (l.amount < 0 ? '−' + money(-l.amount) : money(l.amount))}</span></div>`).join('');
   }
   // Address autofill. Suggestions come from places.suggest (simulated today,
   // Google Places later). Picking one fills the field and fires 'input'.
@@ -2364,7 +2366,7 @@
         <dl class="kv"><dt>Date</dt><dd>${esc(fmtDT(t.pickupAt))}</dd><dt>Passenger</dt><dd>${esc(t.passengerName)}</dd>
           <dt>From</dt><dd>${esc(t.pickup)}</dd>${t.dropoff ? `<dt>To</dt><dd>${esc(t.dropoff)}</dd>` : ''}
           <dt>Vehicle</dt><dd>${esc(t.vehicle ? t.vehicle.name : t.vehicleType)}</dd>${t.driver ? `<dt>Chauffeur</dt><dd>${esc(t.driver.name)}</dd>` : ''}</dl>
-        <div>${quoteLines(t.price)}
+        <div>${quoteLines(t.price, true)}
           <div class="qline" style="border-bottom:0;font-weight:700"><span style="color:var(--ink)">Total</span><span class="num">${money(t.price.total)}</span></div></div>
         <p class="small muted">${t.account && t.payment.status !== 'paid' ? `Billed to ${esc(t.account.name)} on the monthly invoice${t.poNumber ? `, PO ${esc(t.poNumber)}` : ''}.` : t.payment.status === 'paid' ? `Paid by ${esc(t.payment.method === 'card_on_file' ? 'card' : t.payment.method)}${t.payment.last4 ? ' ending ' + esc(t.payment.last4) : ''} on ${esc(fmtDT(t.payment.paidAt))}.` : t.payment.method === 'cash' ? 'Cash, paid to the office. Not paid yet.' : 'Not paid yet.'}</p></div>`,
       footer: '<button class="btn" type="button" data-close>Close</button>',
