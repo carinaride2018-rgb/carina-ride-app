@@ -111,7 +111,7 @@
   // Travel agents and other bookers who book rides for their clients earn a
   // commission on the ride price (before gratuity and tax).
   const DEFAULT_AGENTS = { commissionPct: 10, on: true };
-  const DEFAULT_POLICY = { cancelHours: 24, cancelFeePct: 100, waitAirport: 60, waitOther: 15, noShowFeePct: 100, chargeWhen: 'booking', chargeHours: 24 };
+  const DEFAULT_POLICY = { editHours: 24, cancelHours: 24, cancelFeePct: 100, waitAirport: 60, waitOther: 15, noShowFeePct: 100, chargeWhen: 'booking', chargeHours: 24 };
   // Ride preferences a passenger can ask for; saved on their profile.
   const TEMPS = { '': 'No preference', cool: 'Cool', warm: 'Warm' };
   const MUSIC = { '': 'No preference', soft: 'Soft music', none: 'No music', own: 'Own music by Bluetooth' };
@@ -931,6 +931,7 @@
         wait: waitInfo(t),
         commission: t.agent ? commissionOf(t) : 0,
         cancelTerms: ['confirmed', 'assigned', 'accepted'].includes(t.status) ? cancelTerms(t) : null,
+        editTerms: ['confirmed', 'assigned', 'accepted'].includes(t.status) ? editTerms(t) : null,
         landing: (() => { const o = (t.landingId || t.landingOf) && db.trips.find((x) => x.id === (t.landingId || t.landingOf)); return o ? { kind: t.landingId ? 'landing' : 'outbound', id: o.id, ref: o.ref, pickupAt: o.pickupAt, status: o.status, city: (o.outOfTown || t.outOfTown || {}).city || '' } : null; })(),
         awayTime: t.outOfTown ? `${fmtLocal(t.pickupAt, { timezone: t.outOfTown.tz }, true)} ${t.outOfTown.city} time` : '',
         pair: (() => { const o = (t.returnId || t.returnOf) && db.trips.find((x) => x.id === (t.returnId || t.returnOf)); return o ? { kind: t.returnId ? 'return' : 'outbound', id: o.id, ref: o.ref, pickupAt: o.pickupAt } : null; })(),
@@ -1039,6 +1040,30 @@
       const freeUntil = new Date(new Date(t.pickupAt).getTime() - pol.cancelHours * 3600e3);
       const late = now() > freeUntil;
       return { freeUntil: freeUntil.toISOString(), late, fee: late && pol.cancelFeePct > 0 ? round2(t.price.total * pol.cancelFeePct / 100) : 0, hours: pol.cancelHours, pct: pol.cancelFeePct };
+    }
+
+    // Customers (and travel agents) change their own ride online until
+    // policy.editHours before pickup; after that they call the office.
+    function editTerms(t) {
+      const c = findCompany(t.companyId), h = pcfg(c).editHours;
+      const until = new Date(new Date(t.pickupAt).getTime() - h * 3600e3);
+      const call = `call ${c.name}${c.phone ? ` at ${c.phone}` : ''}`;
+      let why = '';
+      if (!['confirmed', 'assigned', 'accepted'].includes(t.status)) why = `This ride is already under way. To change it, ${call}.`;
+      else if (t.farmout || t.farmIn || t.outOfTown || t.landingId || t.landingOf) why = `To change this ride, ${call}.`;
+      else if (t.invoiceId) why = `This ride is on an invoice. To change it, ${call}.`;
+      else if (now() >= until) why = `Online changes close ${h} hours before pickup. To change this ride, ${call}.`;
+      return { until: until.toISOString(), hours: h, open: !why, why };
+    }
+    function officeChangedText(t, was) {
+      const v = msgVars(t);
+      const lines = [`Booking ${t.ref} was changed online by ${t.agent ? `travel agent ${t.agent.name}` : 'the customer'}.`, ''];
+      for (const [label, b, a] of was) lines.push(`${label}: ${b || '-'} → ${a || '-'}`);
+      lines.push('', `Passenger: ${v.passenger_name}`, `Cellphone: ${v.cellphone || '-'}`, `Pickup Date and Time: ${v.pickup_time}`, `Pickup Address: ${t.pickup}`, `Destination: ${v.destination}`);
+      if (t.flight) lines.push(`Flight: ${t.flight}`);
+      lines.push(`Vehicle: ${v.vehicle_choice}`, `Passengers: ${v.passenger_count}`, `Bags: ${v.bag_count}`, `Total: ${v.total}`);
+      if (!t.driverId && t.status === 'confirmed') lines.push('', 'The ride needs a chauffeur. Open the dispatch board to assign one.');
+      return lines.join('\n');
     }
 
     // Free waiting at pickup. It starts when the driver arrives, or at the
@@ -2387,6 +2412,61 @@
       if (!['completed', 'cancelled'].includes(t.status)) fail('Only past or cancelled rides can be deleted.');
       t.hiddenByCustomer = now().toISOString();
       return { ok: true };
+    });
+    // The customer changes their own ride (until policy.editHours before pickup).
+    // preview: true returns the new price without saving. On save the card is
+    // charged or refunded the difference when the fare was already paid, the
+    // passenger gets a new confirmation and the office an email.
+    const EDITABLE = ['pickupAt', 'pickup', 'dropoff', 'hours', 'service', 'passengers', 'bags', 'vehicleType', 'flight', 'notes', 'childSeats', 'meetGreet', 'signName', 'passengerName', 'passengerPhone', 'stopList', 'stopWaits'];
+    def('customer.editTrip', ['customer'], true, (ctx, a) => {
+      const t = db.trips.find((x) => x.id === a.id && x.customerId === ctx.user.id && !x.hiddenByCustomer);
+      if (!t) fail('Trip not found.', 404);
+      const et = editTerms(t);
+      if (!et.open) fail(et.why);
+      const x = a.booking || {}, patch = {};
+      for (const k of EDITABLE) if (k in x) patch[k] = x[k];
+      if (t.agent && 'passengerName' in patch && !str(patch.passengerName)) fail("Enter your client's name.");
+      const b = cleanBooking(ctx.company, { ...t, ...patch });
+      if ('signName' in patch) b.signName = str(patch.signName, 60);
+      const h = et.hours;
+      if (new Date(b.pickupAt).getTime() < now().getTime() + h * 3600e3 - 60e3) fail(`Online changes need the new pickup at least ${h} hours away. For a sooner pickup, call ${ctx.company.name}${ctx.company.phone ? ` at ${ctx.company.phone}` : ''}.`);
+      const tt = { ...clone(t), ...b };
+      const price = quote(ctx.company, tt, tt.priceCtx);
+      const diff = round2(price.total - t.price.total);
+      if (a.preview) return { price, diff, fareCharged: onFile(t) && payState(t).fare };
+      const show = (o) => ({ when: fmtLocal(o.pickupAt, ctx.company, true), pickup: o.pickup, dropoff: o.service === 'hourly' ? `${o.hours} h as directed` : o.dropoff, flight: o.flight, vehicle: o.vehicleType, pax: String(o.passengers), bags: String(o.bags || 0), seats: String(o.childSeats || 0), mg: o.meetGreet ? 'Yes' : 'No', name: o.passengerName, phone: o.passengerPhone, stops: (o.stopList || []).join('; '), notes: o.notes });
+      const before = show(t), oldPick = t.pickupAt, oldType = t.vehicleType, oldTotal = t.price.total;
+      Object.assign(t, b);
+      if (t.pickupAt !== oldPick) t.scheduledPickupAt = t.pickupAt;
+      const after = show(t);
+      const LABELS = { when: 'Pickup Date and Time', pickup: 'Pickup Address', dropoff: 'Destination', flight: 'Flight', vehicle: 'Vehicle', pax: 'Passengers', bags: 'Bags', seats: 'Child seats', mg: 'Meet and greet', name: 'Passenger', phone: 'Cellphone', stops: 'Stops', notes: 'Notes' };
+      const changed = Object.keys(LABELS).filter((k) => (before[k] || '') !== (after[k] || '')).map((k) => [LABELS[k], before[k], after[k]]);
+      if (!changed.length) fail('Nothing was changed.');
+      // A new time or vehicle goes back to dispatch for a chauffeur.
+      if (t.driverId && (t.pickupAt !== oldPick || t.vehicleType !== oldType)) {
+        log(t, 'unassigned', ctx.user.name, 'Ride changed by the customer');
+        t.driverId = null; t.vehicleId = null; t.offer = null; t.status = 'confirmed';
+        t.needsDriver = { at: now().toISOString(), why: 'Customer changed the ride' }; t.passedBy = [];
+      } else if (t.pickupAt !== oldPick && t.status === 'confirmed') { t.needsDriver = null; t.passedBy = []; }
+      reprice(t);
+      if (t.flight) checkFlight(t, false);
+      log(t, 'edited', ctx.user.name, changed.map(([l]) => l).join(', ') + (t.price.total !== oldTotal ? ` · price ${money(oldTotal)} → ${money(t.price.total)}` : ''));
+      // The fare is already on the card: charge or refund the difference now.
+      if (onFile(t) && cardsOn(ctx.company)) {
+        const s = payState(t);
+        if (s.fare && !s.pending) {
+          if (s.balance > 0.004 && t.card) queueCharge(t, 'extra', s.balance, ctx.user.name);
+          else if (s.balance < -0.004) queueRefund(t, -s.balance, ctx.user.name);
+        } else payStep(t);
+      }
+      const put = (recipient, channel, body, kind) => db.messages.unshift({ id: id('msg'), companyId: t.companyId, tripId: t.id, ref: t.ref, at: now().toISOString(), recipient, channel, body, ...(kind ? { kind } : {}) });
+      const mail = (() => { const body = msgText(t, 'confirm_email'), note = 'Your booking has been changed. Here are the new details.'; const m = body.match(/^(\s*(dear|hi|hello)\b[^\n]*\n)/i); return (m ? m[1] + '\n' + note + '\n' + body.slice(m[1].length) : note + '\n\n' + body) + confirmFooter(t); })();
+      if (t.passengerEmail) put(t.passengerEmail, 'email', mail, 'changed');
+      if (t.passengerPhone && t.smsOk !== false) put(t.passengerPhone, 'sms', msgText(t, 'confirm_sms'));
+      if (t.agent && ctx.user.email && ctx.user.email !== t.passengerEmail) put(ctx.user.email, 'email', mail, 'changed');
+      const office = officeEmail(ctx.company);
+      if (office && cmsg(ctx.company).officeNew) put(office, 'email', officeChangedText(t, changed), 'office_changed');
+      return { trip: tripView(t), diff: round2(t.price.total - oldTotal), changed: changed.map(([l]) => l) };
     });
     def('customer.cancel', ['customer'], true, (ctx, a) => {
       const t = db.trips.find((x) => x.id === a.id && x.customerId === ctx.user.id);
@@ -4169,7 +4249,7 @@
       if (a.policy) {
         const pol = pcfg(c), pa = a.policy;
         const whole = (k, max, label) => { if (k in pa) { const n = Math.round(num(pa[k], NaN)); if (!(n >= 0 && n <= max)) fail(`Check the ${label}.`); pol[k] = n; } };
-        whole('cancelHours', 168, 'free cancellation hours'); whole('cancelFeePct', 100, 'late cancellation fee');
+        whole('editHours', 168, 'hours before pickup customers can change a ride'); whole('cancelHours', 168, 'free cancellation hours'); whole('cancelFeePct', 100, 'late cancellation fee');
         whole('waitAirport', 180, 'free waiting at airports'); whole('waitOther', 120, 'free waiting elsewhere'); whole('noShowFeePct', 100, 'no-show fee');
         whole('chargeHours', 168, 'hours before pickup to charge the card');
         if ('chargeWhen' in pa) pol.chargeWhen = pa.chargeWhen === 'before' ? 'before' : 'booking';

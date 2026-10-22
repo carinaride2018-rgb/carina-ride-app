@@ -889,6 +889,7 @@
     session = keep;
     const p = info.policy || {}, fee = (pct) => pct >= 100 ? 'the full fare' : `${pct}% of the fare`;
     const rules = [
+      p.editHours ? `You can change your booking online until ${p.editHours} hours before pickup. After that, call us.` : '',
       p.cancelHours ? `Free cancellation until ${p.cancelHours} hours before pickup${p.cancelFeePct ? `; after that, cancelling costs ${fee(p.cancelFeePct)}` : ''}.` : (p.cancelFeePct ? `Cancelling costs ${fee(p.cancelFeePct)}.` : 'Rides can be cancelled free of charge.'),
       `Free waiting time: ${p.waitAirport} minutes after the flight lands for airport pickups, ${p.waitOther} minutes for other pickups. Waiting after that is charged at the posted rate.`,
       p.noShowFeePct ? `If the passenger doesn't show up, ${fee(p.noShowFeePct)} is charged.` : '',
@@ -2065,13 +2066,74 @@
             ${t.pay && (t.pay.needsCard || t.pay.failed) && t.status !== 'cancelled' ? (t.agent && t.agent.payBy === 'passenger' ? `<span class="small muted">Waiting for ${esc((t.passengerName || 'your client').split(' ')[0])} to add a card. <a href="#card.${esc(t.cardToken)}">Add it for them</a></span>` : `<a class="btn brand sm" href="#card.${esc(t.cardToken)}">${t.pay.needsCard ? 'Add a card' : 'Update card'}</a>`) : ''}
             ${!t.pay && t.status !== 'cancelled' && t.payment.status !== 'paid' && !t.account && session.company.cards !== false ? `<button class="btn brand sm" type="button" data-act="pay" data-id="${t.id}">Pay ${money(t.price.total - (t.payment.deposit || 0))}${t.payment.deposit ? ' balance' : ''}</button>` : ''}
             ${t.payment.status === 'paid' || t.status === 'completed' ? `<button class="btn sm" type="button" data-act="receipt" data-id="${t.id}">Receipt</button>` : ''}
+            ${t.editTerms && t.editTerms.open ? `<button class="btn sm" type="button" data-act="edit" data-id="${t.id}">Change ride</button>` : ''}
             ${canCancel ? `<button class="btn sm danger" type="button" data-act="cancel" data-id="${t.id}">Cancel ride</button>` : ''}
             ${canCancel && t.series && !t.returnOf ? `<button class="btn sm" type="button" data-act="cancelseries" data-id="${t.id}">Cancel this and later rides</button>` : ''}
           </div>
           ${t.pay && cardLine(t, 'customer') ? `<div class="small ${t.pay.failed ? 'err-text' : 'muted'}">${cardLine(t, 'customer')}</div>` : ''}
+          ${t.editTerms && t.editTerms.hours ? `<div class="small faint">${t.editTerms.open ? `You can change this ride online until ${esc(fmtDT(t.editTerms.until))}.` : esc(t.editTerms.why)}</div>` : ''}
           ${canCancel && t.cancelTerms ? `<div class="small faint">${t.cancelTerms.fee ? `Free cancellation ended ${esc(fmtDT(t.cancelTerms.freeUntil))}. Cancelling now costs ${money(t.cancelTerms.fee)}.` : `Free cancellation until ${esc(fmtDT(t.cancelTerms.freeUntil))}.`}</div>` : ''}
           ${t.status === 'cancelled' && t.cancelFee ? `<div class="small muted">Late cancellation fee: ${money(t.cancelFee)}</div>` : ''}
           ${t.noShow ? `<div class="small muted">Your chauffeur waited${t.noShow.waitedMin ? ` ${t.noShow.waitedMin} min` : ''} at pickup.${t.noShow.fee ? ` No-show fee: ${money(t.noShow.fee)}.` : ''}${session.company.phone ? ` If this is wrong, call ${esc(session.company.phone)}.` : ''}</div>` : ''}</article>`;
+      }
+      // Change ride: the customer edits their own booking until the cut-off
+      // (policy.editHours before pickup). The new price shows before saving.
+      async function editRide(t) {
+        try { ui.info = ui.info || await api('public.company', { slug: session.company.slug }); } catch (e) { return toast(e.message, true); }
+        const vts = ui.info.vehicleTypes || [], hourly = t.service === 'hourly', ad = ui.info.addons || {};
+        const m = openModal({
+          title: `Change ${t.ref}`,
+          body: `<form id="ed-form" class="stack" novalidate>
+            <p class="small muted">Changes are open until ${esc(fmtDT(t.editTerms.until))}. After that, call ${esc(session.company.name)}${session.company.phone ? ` at ${esc(session.company.phone)}` : ''}.</p>
+            <label class="field"><span>Pickup date and time</span><input name="pickupAt" type="datetime-local" value="${toLocalInput(new Date(t.pickupAt))}"></label>
+            <label class="field"><span>Pickup address</span><input name="pickup" id="ed-pickup" value="${esc(t.pickup)}"></label>
+            ${hourly ? `<label class="field"><span>Hours</span><input name="hours" type="number" min="${ui.info.rates.minHours || 1}" max="24" value="${t.hours}"></label>`
+              : `<label class="field"><span>Drop-off address</span><input name="dropoff" id="ed-dropoff" value="${esc(t.dropoff)}"></label>
+            <label class="field"><span>Stops on the way <span class="faint">(one per line)</span></span><textarea name="stopList" rows="2">${esc((t.stopList || []).join('\n'))}</textarea></label>`}
+            <label class="field"><span>Flight number <span class="faint">(airport pickups)</span></span><input name="flight" value="${esc(t.flight || '')}" placeholder="AS 331"></label>
+            <label class="field"><span>Vehicle</span><select name="vehicleType">${vts.map((v) => `<option value="${esc(v.type)}" ${v.type === t.vehicleType ? 'selected' : ''}>${esc(v.type)} · up to ${v.capacity} passengers, ${v.bags} suitcases</option>`).join('')}</select></label>
+            <div class="grid2"><label class="field"><span>Passengers</span><input name="passengers" type="number" min="1" max="60" value="${t.passengers}"></label><label class="field"><span>Suitcases</span><input name="bags" type="number" min="0" max="40" value="${t.bags || 0}"></label></div>
+            <div class="grid2"><label class="field"><span>Child seats${ad.childSeat ? ` (${money(ad.childSeat)} each)` : ''}</span><input name="childSeats" type="number" min="0" max="4" value="${t.childSeats || 0}"></label>
+              <label class="check" style="align-self:end;padding-bottom:10px"><input type="checkbox" name="meetGreet" ${t.meetGreet ? 'checked' : ''}><span>Meet &amp; greet${ad.meetGreet ? ` (${money(ad.meetGreet)})` : ''}</span></label></div>
+            <div class="grid2"><label class="field"><span>${t.agent ? "Client's name" : 'Passenger name'}</span><input name="passengerName" value="${esc(t.passengerName || '')}"></label><label class="field"><span>${t.agent ? "Client's mobile" : 'Passenger mobile'}</span><input name="passengerPhone" type="tel" value="${esc(t.passengerPhone || '')}"></label></div>
+            <label class="field"><span>Notes for the chauffeur</span><textarea name="notes" rows="2">${esc(t.notes || '')}</textarea></label>
+            <div class="panel" id="ed-price" style="padding:12px 14px"><div class="spread"><span class="muted">Price</span><b class="num">${money(t.price.total)}</b></div></div>
+            <div id="ed-err"></div></form>`,
+          footer: '<button class="btn" type="button" data-close>Keep as is</button><button class="btn brand" type="button" id="ed-save">Save changes</button>',
+        });
+        $('[data-close]', m).onclick = closeModal;
+        addressAutocomplete($('#ed-pickup', m), session.company.slug);
+        const dr = $('#ed-dropoff', m); if (dr) addressAutocomplete(dr, session.company.slug);
+        const read = () => {
+          const f = $('#ed-form', m), b = {};
+          for (const el of f.elements) { if (!el.name) continue; b[el.name] = el.type === 'checkbox' ? el.checked : el.value; }
+          const w = new Date(b.pickupAt); b.pickupAt = isNaN(w) ? '' : w.toISOString();
+          if ('stopList' in b) { b.stopList = b.stopList.split('\n').map((x) => x.trim()).filter(Boolean); const old = t.stopList || []; b.stopWaits = b.stopList.map((x) => { const i = old.indexOf(x); return i >= 0 && t.stopWaits ? t.stopWaits[i] : ''; }); }
+          return b;
+        };
+        const box = $('#ed-price', m), err = $('#ed-err', m);
+        let n = 0, timer = null;
+        const priceLine = (r) => {
+          const d = r.diff, card = r.fareCharged;
+          const how = Math.abs(d) < 0.01 ? 'Same price.' : d > 0 ? (card ? `${money(d)} more, charged to your card when you save.` : `${money(d)} more.`) : (card ? `${money(-d)} less, refunded to your card when you save.` : `${money(-d)} less.`);
+          box.innerHTML = `<div class="spread"><span class="muted">New price</span><b class="num">${money(r.price.total)}</b></div><div class="small muted">${how}</div>`;
+        };
+        const check = () => { clearTimeout(timer); timer = setTimeout(async () => {
+          const my = ++n;
+          try { const r = await api('customer.editTrip', { id: t.id, preview: true, booking: read() }); if (my !== n) return; err.innerHTML = ''; priceLine(r); }
+          catch (e) { if (my === n) showErr(err, e); }
+        }, 400); };
+        $('#ed-form', m).addEventListener('input', check);
+        $('#ed-form', m).addEventListener('change', check);
+        $('#ed-form', m).onsubmit = (e) => e.preventDefault();
+        $('#ed-save', m).onclick = (e) => busy(e.currentTarget, async () => {
+          try {
+            const r = await api('customer.editTrip', { id: t.id, booking: read() });
+            closeModal();
+            toast(`${t.ref} changed.${Math.abs(r.diff) >= 0.01 ? ` New price ${money(r.trip.price.total)}.` : ''} We sent you a new confirmation.`);
+            last = ''; refresh();
+          } catch (x) { showErr(err, x); }
+        });
       }
       async function act(kind, t, btn) {
         if (kind === 'cancel') {
@@ -2088,6 +2150,7 @@
             last = ''; refresh();
           });
         }
+        if (kind === 'edit') await editRide(t);
         if (kind === 'hide') {
           if (!btn.dataset.armed) { btn.dataset.armed = '1'; btn.textContent = 'Tap again to delete'; setTimeout(() => { if (btn.isConnected) { delete btn.dataset.armed; btn.textContent = 'Delete'; } }, 5000); return; }
           await busy(btn, async () => { try { await api('customer.hideTrip', { id: t.id }); toast(`${t.ref} deleted from your list.`); last = ''; refresh(); } catch (e) { toast(e.message, true); } });
@@ -4222,6 +4285,7 @@
           </div>
           <div class="panel stack"><h2>Cancellation, waiting and no-shows</h2><p class="small muted">Shown to customers when they book and on their trips.</p>
             <div class="grid2">
+              <label class="field"><span>Customers can change a ride online until (hours before pickup)</span><input name="pol_editHours" type="number" min="0" max="168" value="${s.company.policy.editHours == null ? 24 : s.company.policy.editHours}" ${ro}></label>
               <label class="field"><span>Free cancellation until (hours before pickup)</span><input name="pol_cancelHours" type="number" min="0" max="168" value="${s.company.policy.cancelHours}" ${ro}></label>
               <label class="field"><span>Late cancellation fee (% of fare)</span><input name="pol_cancelFeePct" type="number" min="0" max="100" value="${s.company.policy.cancelFeePct}" ${ro}></label>
               <label class="field"><span>Free waiting at airports (minutes after landing)</span><input name="pol_waitAirport" type="number" min="0" max="180" value="${s.company.policy.waitAirport}" ${ro}></label>
@@ -4285,7 +4349,7 @@
         rates.bags = {}; $$('[data-bags]', v).forEach((i) => { rates.bags[i.dataset.bags] = i.value; });
         for (const k of ['base', 'perMile', 'hourly']) rates[k + 'By'] = {};
         $$('[data-rate]', v).forEach((i) => { rates[i.dataset.rate + 'By'][i.dataset.type] = i.value; });
-        const policy = { cancelHours: f.pol_cancelHours, cancelFeePct: f.pol_cancelFeePct, waitAirport: f.pol_waitAirport, waitOther: f.pol_waitOther, noShowFeePct: f.pol_noShowFeePct, chargeWhen: f.pol_chargeWhen, chargeHours: f.pol_chargeHours };
+        const policy = { editHours: f.pol_editHours, cancelHours: f.pol_cancelHours, cancelFeePct: f.pol_cancelFeePct, waitAirport: f.pol_waitAirport, waitOther: f.pol_waitOther, noShowFeePct: f.pol_noShowFeePct, chargeWhen: f.pol_chargeWhen, chargeHours: f.pol_chargeHours };
         await busy($('button[type=submit]', e.target), async () => {
           try {
             const res = await api('dispatch.saveSettings', { name: f.name, color: f.color, tagline: f.tagline, phone: f.phone, email: f.email, rates, policy, terms: f.terms, payOptions: { card: !!f.payCard, cash: !!f.payCash } });

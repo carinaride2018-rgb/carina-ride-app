@@ -67,7 +67,7 @@ function createProviders(rawEnv, opts) {
     return null;
   }
   const fromAddress = () => { const m = String(env.EMAIL_FROM).match(/<([^>]+)>/); return (m ? m[1] : String(env.EMAIL_FROM)).trim(); };
-  const SUBJECTS = { confirm: 'Ride confirmed', office_new: 'New booking', late_driver: 'Driver not on the way',  reminder: 'Ride reminder', quote: 'Your quote', invoice: 'Your invoice', login: 'Your LimoRelay login', reset: 'Reset your password', test: 'LimoRelay test email', signup: 'LimoRelay sign-up', approved: 'Your LimoRelay account is approved', declined: 'Your LimoRelay sign-up', planinvoice: 'Your LimoRelay invoice', billing: 'Your LimoRelay membership' };
+  const SUBJECTS = { confirm: 'Ride confirmed', changed: 'Ride changed', office_new: 'New booking', office_changed: 'Booking changed', late_driver: 'Driver not on the way',  reminder: 'Ride reminder', quote: 'Your quote', invoice: 'Your invoice', login: 'Your LimoRelay login', reset: 'Reset your password', test: 'LimoRelay test email', signup: 'LimoRelay sign-up', approved: 'Your LimoRelay account is approved', declined: 'Your LimoRelay sign-up', planinvoice: 'Your LimoRelay invoice', billing: 'Your LimoRelay membership' };
   function subjectOf(m) {
     if (SUBJECTS[m.kind]) return `${SUBJECTS[m.kind]}${m.ref ? ' ' + m.ref : ''}`;
     // One line only: a greeting ("Hi Tsion,") is skipped and line breaks become
