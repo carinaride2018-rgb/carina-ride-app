@@ -2188,6 +2188,41 @@
       u.email = email;
       return { user: pubUser(u) };
     });
+    def('auth.changePassword', 'any', true, async (ctx, a) => {
+      const u = ctx.user;
+      if (u.passHash && (await hashPw(String(a.current || ''), u.salt)) !== u.passHash) fail('Your current password is not right.', 401);
+      if (String(a.password || '').length < 8) fail('Use a new password of at least 8 characters.');
+      await setPassword(u, String(a.password));
+      return { ok: true };
+    });
+    // Customer profile: name, mobile, email (password needed to change it),
+    // ride preferences and the name for the chauffeur's sign.
+    def('customer.saveProfile', ['customer'], true, async (ctx, a) => {
+      const u = ctx.user;
+      const name = str(a.name, 80);
+      if (!name) fail('Enter your name.');
+      const email = 'email' in a ? str(a.email, 120).toLowerCase() : u.email;
+      if (email !== u.email) {
+        if (!emailOk(email)) fail('Enter a valid email address.');
+        if (u.passHash && (await hashPw(String(a.password || ''), u.salt)) !== u.passHash) fail('Enter your current password to change your email.', 401);
+        if (db.users.some((x) => x.id !== u.id && x.email === email && x.companyId === u.companyId && x.active !== false)) fail('Another account here already uses that email.');
+        u.email = email;
+      }
+      u.name = name;
+      if ('phone' in a) u.phone = str(a.phone, 30);
+      if (a.prefs) {
+        const pr = a.prefs;
+        u.prefs = { temp: TEMPS[pr.temp] ? pr.temp : '', music: MUSIC[pr.music] ? pr.music : '', quiet: !!pr.quiet && pr.quiet !== 'false', signName: str(pr.signName, 60) };
+      }
+      return { user: pubUser(u) };
+    });
+    // Takes the saved card off the profile. Rides already booked keep the card
+    // they were booked with, for extras after the ride.
+    def('customer.removeCard', ['customer'], true, (ctx) => {
+      if (!ctx.user.card) fail('There is no saved card.');
+      delete ctx.user.card;
+      return { user: pubUser(ctx.user) };
+    });
     def('auth.deleteAccount', 'any', true, async (ctx, a) => {
       const u = ctx.user;
       if (!u.passHash || (await hashPw(String(a.password || ''), u.salt)) !== u.passHash) fail('That password is not right.', 401);
@@ -5265,6 +5300,14 @@
           const due = round2(t.price.total - (t.payment.deposit || 0));
           return { account: c.stripe.accountId, amount: cents(due), description: `${c.name}, ride ${t.ref}${t.payment.deposit ? ' (balance)' : ''}`, email: u.email, meta: { kind: 'trip', id: t.id, ref: t.ref }, back: '' };
         }
+        // The customer saving a card on their profile, for future bookings.
+        if (a.kind === 'mycard') {
+          const u = sessionUser(token);
+          if (u.role !== 'customer') fail('Only customers save a card here.', 403);
+          const c = findCompany(u.companyId);
+          if (!cardsOn(c)) fail(`${c.name} doesn't take cards online yet.`);
+          return { mode: 'setup', account: c.stripe.accountId, description: `${c.name}, card on file`, email: u.email, name: u.name, meta: { kind: 'mycard', user: u.id }, back: '#account' };
+        }
         // Saving a card for a ride: from the booking form, the card link, or after a decline.
         if (a.kind === 'card') {
           const t = str(a.token, 40) && db.trips.find((x) => x.cardToken === str(a.token, 40));
@@ -5309,7 +5352,14 @@
             meterTexts(); save(db);
             return { back: '#account', ref: 'your LimoRelay membership' };
           }
-          if (m.kind === 'card') {
+          if (m.kind === 'mycard') {
+            const u = findUser(m.user);
+            if (!u || u.role !== 'customer') fail('Customer not found.', 404);
+            const c = findCompany(u.companyId);
+            if (!c.stripe || c.stripe.accountId !== p.account) fail('Payment account does not match.', 403);
+            if (!same(u.card)) saveCustomerCard(u, card(u.name));
+            out = { back: '#account', ref: 'your card' };
+          } else if (m.kind === 'card') {
             const t = db.trips.find((x) => x.cardToken === m.token);
             if (!t) fail('Trip not found.', 404);
             const c = findCompany(t.companyId);

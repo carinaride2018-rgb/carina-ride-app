@@ -591,23 +591,25 @@
       });
     };
     const del = $('#acct-del', v);
-    if (del) del.onclick = () => {
-      const m = openModal({
-        title: 'Delete your account?',
-        body: `<form id="del-form" class="stack" novalidate><p>${esc(u.email)} will be deleted and you will be signed out. This can't be undone.</p>
-          <label class="field"><span>Enter your password to confirm</span><input id="del-pass" name="password" type="password" autocomplete="current-password"></label><div id="del-err"></div></form>`,
-        footer: '<button class="btn" type="button" data-close>Keep my account</button><button class="btn danger" type="button" id="del-go">Delete my account</button>',
-      });
-      $('[data-close]', m).onclick = closeModal;
-      $('#del-go', m).onclick = (e) => busy(e.currentTarget, async () => {
-        try {
-          const ep = await pushEndpoint();
-          await api('auth.deleteAccount', { password: $('#del-pass', m).value });
-          if (NATIVE && ep) { /* the server already dropped this phone's notifications */ }
-          closeModal(); setSession(null); go('signin'); toast('Your account is deleted.');
-        } catch (err) { showErr($('#del-err', m), err); }
-      });
-    };
+    if (del) del.onclick = () => deleteAccountModal(u);
+  }
+
+  function deleteAccountModal(u) {
+    const m = openModal({
+      title: 'Delete your account?',
+      body: `<form id="del-form" class="stack" novalidate><p>${esc(u.email)} will be deleted and you will be signed out. This can't be undone.</p>
+        <label class="field"><span>Enter your password to confirm</span><input id="del-pass" name="password" type="password" autocomplete="current-password"></label><div id="del-err"></div></form>`,
+      footer: '<button class="btn" type="button" data-close>Keep my account</button><button class="btn danger" type="button" id="del-go">Delete my account</button>',
+    });
+    $('[data-close]', m).onclick = closeModal;
+    $('#del-go', m).onclick = (e) => busy(e.currentTarget, async () => {
+      try {
+        const ep = await pushEndpoint();
+        await api('auth.deleteAccount', { password: $('#del-pass', m).value });
+        if (NATIVE && ep) { /* the server already dropped this phone's notifications */ }
+        closeModal(); setSession(null); go('signin'); toast('Your account is deleted.');
+      } catch (err) { showErr($('#del-err', m), err); }
+    });
   }
 
   async function demoLogin(key) {
@@ -638,7 +640,7 @@
     if (route.startsWith('setpw.')) return viewSetPassword(route.slice(6));
     if (!session) return viewSignin();
     if (!seenInit) { watchFeed(); syncPush(); }
-    if (route === 'account') return viewAccount();
+    if (route === 'account') return session.user.role === 'customer' ? viewCustomer('profile') : viewAccount();
     const home = HOME[session.user.role];
     if (route === 'signin' || route === '' || route !== home) {
       if (route !== home) { history.replaceState(null, '', '#' + home); }
@@ -1955,14 +1957,89 @@
 
   // ---- Customer -------------------------------------------------------------
   const STEP_OF = { confirmed: 0, assigned: 1, accepted: 1, en_route: 2, arrived: 3, on_board: 4, completed: 5 };
-  async function viewCustomer() {
-    let tab = 'trips';
+  async function viewCustomer(start) {
+    let tab = start || 'trips';
     const ui = { trips: null, info: null };
     const AG = session.user.agent;
     const draw = () => {
-      const v = shell({ tabs: AG ? [{ key: 'trips', label: 'Bookings' }, { key: 'book', label: 'Book a ride' }, { key: 'commission', label: 'Commission' }] : [{ key: 'trips', label: 'My trips' }, { key: 'book', label: 'Book a ride' }], active: tab, onTab: (t) => { tab = t; draw(); } });
-      if (tab === 'book') drawBook(v); else if (tab === 'commission' && AG) drawCommission(v); else drawTrips(v);
+      const v = shell({ tabs: AG ? [{ key: 'trips', label: 'Bookings' }, { key: 'book', label: 'Book a ride' }, { key: 'commission', label: 'Commission' }, { key: 'profile', label: 'Profile' }] : [{ key: 'trips', label: 'My trips' }, { key: 'book', label: 'Book a ride' }, { key: 'profile', label: 'Profile' }], active: tab, onTab: (t) => { tab = t; if (location.hash === '#account') history.replaceState(null, '', '#customer'); draw(); } });
+      if (tab === 'book') drawBook(v); else if (tab === 'commission' && AG) drawCommission(v); else if (tab === 'profile') drawProfile(v); else drawTrips(v);
     };
+    // Profile: details, ride preferences, card on file, password, account.
+    function drawProfile(v) {
+      current = { poll: false };
+      const u = session.user, co = session.company, pr = u.prefs || {};
+      const cardsOk = co.cards !== false, stripe = co.payMode === 'stripe';
+      v.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Profile</h1><p class="muted">Your details with ${esc(co.name)}. They fill in your bookings for you.</p></div></div>
+        <div class="stack" style="max-width:640px">
+        <form class="panel stack" id="pf-form" novalidate><h2>Your details</h2>
+          <label class="field"><span>Name</span><input name="name" autocomplete="name" value="${esc(u.name || '')}"></label>
+          <div class="grid2"><label class="field"><span>Mobile</span><input name="phone" type="tel" autocomplete="tel" value="${esc(u.phone || '')}"></label>
+            <label class="field"><span>Email</span><input name="email" id="pf-email" type="email" autocomplete="email" value="${esc(u.email || '')}"><span class="hint">You sign in with this.</span></label></div>
+          <label class="field" id="pf-passwrap" hidden><span>Current password <span class="faint">(needed to change your email)</span></span><input name="password" type="password" autocomplete="current-password"></label>
+          ${AG ? `<p class="small muted">Agency: ${esc(AG.agency)}</p>` : `<h3 style="margin:8px 0 0">Ride preferences</h3>
+          <div class="grid2"><label class="field"><span>Temperature</span><select name="temp">${Object.entries(C.TEMPS).map(([k, l]) => `<option value="${k}" ${(pr.temp || '') === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
+            <label class="field"><span>Music</span><select name="music">${Object.entries(C.MUSIC).map(([k, l]) => `<option value="${k}" ${(pr.music || '') === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label></div>
+          <label class="check"><input type="checkbox" name="quiet" ${pr.quiet ? 'checked' : ''}><span>Quiet ride, no small talk</span></label>
+          <label class="field"><span>Name on the chauffeur's sign <span class="faint">(airport meet &amp; greet)</span></span><input name="signName" value="${esc(pr.signName || '')}" placeholder="${esc(u.name || '')}"></label>`}
+          <div id="pf-err"></div><div><button class="btn primary" type="submit" id="pf-save">Save details</button></div></form>
+        <section class="panel stack" id="pf-pay"><h2>Payment</h2>${cardsOk ? `
+          <div id="pf-card"></div>` : `<p class="small muted">${esc(co.name)} doesn't take cards online${co.cash ? '; rides are paid to the office' : ''}.</p>`}</section>
+        <form class="panel stack" id="pw-form" novalidate><h2>Password</h2>
+          <div class="grid2"><label class="field"><span>Current password</span><input name="current" type="password" autocomplete="current-password"></label>
+            <label class="field"><span>New password</span><input name="password" type="password" autocomplete="new-password"><span class="hint">At least 8 characters.</span></label></div>
+          <div id="pw-err"></div><div><button class="btn" type="submit">Change password</button></div></form>
+        <section class="panel stack"><h2>Your privacy</h2><p class="small muted">What we keep and why is in the ${privacyLink()}.</p>
+          <div><button class="btn danger" type="button" id="pf-del">Delete my account</button></div></section>
+        </div>`;
+      const f = $('#pf-form', v), em = $('#pf-email', v);
+      em.oninput = () => { $('#pf-passwrap', v).hidden = em.value.trim().toLowerCase() === u.email; };
+      f.onsubmit = (e) => { e.preventDefault(); busy($('#pf-save', v), async () => {
+        const d = {}; for (const el of f.elements) if (el.name) d[el.name] = el.type === 'checkbox' ? el.checked : el.value;
+        const body = { name: d.name, phone: d.phone, email: d.email, password: d.password };
+        if (!AG) body.prefs = { temp: d.temp, music: d.music, quiet: d.quiet, signName: d.signName };
+        try { const r = await api('customer.saveProfile', body); setSession({ ...session, user: { ...session.user, ...r.user } }); $('#pf-err', v).innerHTML = ''; toast('Your details are saved.'); drawProfile(v); } catch (x) { showErr($('#pf-err', v), x); }
+      }); };
+      const pw = $('#pw-form', v);
+      pw.onsubmit = (e) => { e.preventDefault(); busy($('button', pw), async () => {
+        try { await api('auth.changePassword', { current: pw.current.value, password: pw.password.value }); pw.reset(); $('#pw-err', v).innerHTML = ''; toast('Your password is changed.'); } catch (x) { showErr($('#pw-err', v), x); }
+      }); };
+      $('#pf-del', v).onclick = () => deleteAccountModal(u);
+      const box = $('#pf-card', v);
+      if (!box) return;
+      const k = session.user.card;
+      const drawCardBox = (adding) => {
+        if (k && !adding) {
+          box.innerHTML = `<div class="cardbox"><div class="spread"><span><b>${esc(cardName(k))}</b>${k.exp ? `<br><span class="small muted">Expires ${esc(k.exp)}</span>` : ''}</span><span class="pill paid">On file</span></div></div>
+            <p class="small muted">Your bookings use this card. The fare is charged ${ui.info && ui.info.policy && ui.info.policy.chargeWhen === 'before' ? 'shortly before pickup' : 'when you book'}, and extras like waiting time after the ride. Chauffeurs never take payment.</p>
+            <div class="row"><button class="btn" type="button" id="pf-replace">Replace card</button><button class="btn danger" type="button" id="pf-remove">Remove card</button></div>`;
+          $('#pf-replace', box).onclick = () => drawCardBox(true);
+          const rm = $('#pf-remove', box);
+          rm.onclick = () => {
+            if (!rm.dataset.armed) { rm.dataset.armed = '1'; rm.textContent = 'Tap again to remove'; setTimeout(() => { if (rm.isConnected) { delete rm.dataset.armed; rm.textContent = 'Remove card'; } }, 5000); return; }
+            busy(rm, async () => { try { const r = await api('customer.removeCard', {}); setSession({ ...session, user: { ...session.user, ...r.user, card: null } }); toast('Card removed. Rides already booked keep the card they were booked with.'); drawProfile(v); } catch (x) { toast(x.message, true); } });
+          };
+          return;
+        }
+        if (stripe) {
+          box.innerHTML = `<p class="small muted">${k ? 'Add a new card to use instead of ' + esc(cardName(k)) + '.' : 'Save a card so booking is one tap.'} You enter it on Stripe's secure page; nothing is charged now.</p>
+            <div class="row"><button class="btn brand" type="button" id="pf-stripe">${k ? 'Add new card' : 'Add a card'}</button>${k ? '<button class="btn" type="button" id="pf-keep">Keep current card</button>' : ''}</div><div id="pf-cerr"></div>`;
+          $('#pf-stripe', box).onclick = (e) => busy(e.currentTarget, async () => { try { const r = await payApi('checkout', { kind: 'mycard' }); location.href = r.url; await new Promise(() => {}); } catch (x) { showErr($('#pf-cerr', box), x); } });
+        } else {
+          box.innerHTML = `<form id="pf-cform" class="stack" novalidate><p class="small muted">${k ? 'Enter the new card to use instead of ' + esc(cardName(k)) + '.' : 'Save a card so booking is one tap.'} Nothing is charged now.</p>
+            <label class="field"><span>Card number</span><input name="number" class="mono" inputmode="numeric" autocomplete="cc-number" placeholder="4242 4242 4242 4242"></label>
+            <div class="grid2"><label class="field"><span>Expiry</span><input name="exp" class="mono" placeholder="MM/YY" autocomplete="cc-exp"></label><label class="field"><span>CVC</span><input name="cvc" class="mono" inputmode="numeric" autocomplete="cc-csc"></label></div>
+            ${co.payMode === 'demo' ? '<p class="note small">Demo: no card is charged.</p>' : ''}
+            <div id="pf-cerr"></div><div class="row"><button class="btn brand" type="submit">Save card</button>${k ? '<button class="btn" type="button" id="pf-keep">Keep current card</button>' : ''}</div></form>`;
+          const cf = $('#pf-cform', box);
+          cf.onsubmit = (e) => { e.preventDefault(); busy($('button[type=submit]', cf), async () => {
+            try { const r = await api('customer.saveCard', { number: cf.number.value, exp: cf.exp.value }); setSession({ ...session, user: { ...session.user, ...r } }); toast('Card saved. Your next bookings use it.'); drawProfile(v); } catch (x) { showErr($('#pf-cerr', box), x); }
+          }); };
+        }
+        const keep = $('#pf-keep', box); if (keep) keep.onclick = () => drawCardBox(false);
+      };
+      drawCardBox(false);
+    }
     // Travel agent: commission by month, paid and owed.
     async function drawCommission(v) {
       current = { poll: false };
@@ -4723,7 +4800,7 @@
     render();
     // Coming back from Stripe.
     const qs = new URLSearchParams(location.search);
-    const back = qs.get('paid') ? [`Payment received for ${qs.get('paid')}. Thank you.`]
+    const back = qs.get('paid') === 'your card' ? ['Card saved. Your next bookings use it. Nothing was charged.'] : qs.get('paid') ? [`Payment received for ${qs.get('paid')}. Thank you.`]
       : qs.get('cardsaved') && location.hash === '#account' ? ['Card saved. Your LimoRelay invoices are now paid automatically.']
       : qs.get('cardsaved') ? [`Card saved for ${qs.get('cardsaved')}. Nothing is charged until shortly before pickup.`]
       : qs.get('payment') === 'cancelled' ? ['Payment cancelled. Nothing was charged.']
