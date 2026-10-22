@@ -754,6 +754,16 @@
     const cmsg = (c) => ({ ...DEFAULT_CLIENT_MSGS, ...(c.clientMsgs || {}) });
     const reviewUrl = (t) => `${opts.publicUrl || ''}#review.${t.reviewToken}`;
     const cardUrl = (t) => `${opts.publicUrl || ''}#card.${t.cardToken}`;
+    // Bottom of the booking confirmation email: how to pay, then the terms.
+    function confirmFooter(t) {
+      const c = findCompany(t.companyId), lines = [];
+      if (t.payment.status === 'paid') lines.push('Payment: paid. Thank you.');
+      else if (t.payment.method === 'account') lines.push('Payment: billed to your company account.');
+      else if (t.payment.method === 'cash') lines.push(`Payment: cash, paid to ${c.name} before your ride.`);
+      else if (onFile(t) && t.cardToken) lines.push(`Payment link: ${cardUrl(t)}`);
+      lines.push(`Terms and Conditions: ${(opts.publicUrl || 'https://limorelay.com/').replace(/#.*$/, '')}#terms.${c.slug}`);
+      return '\n\n' + lines.join('\n');
+    }
     // The words a template can use, for one trip.
     function msgVars(t, extra) {
       const c = findCompany(t.companyId);
@@ -833,7 +843,7 @@
         const sent = [];
         if (cm.confirmText && trip.passengerPhone) { say(trip.passengerPhone, 'sms', msgText(trip, 'confirm_sms')); sent.push(1); }
         if (cm.confirmEmail && trip.passengerEmail) {
-          say(trip.passengerEmail, 'email', msgText(trip, 'confirm_email'), 'confirm');
+          say(trip.passengerEmail, 'email', msgText(trip, 'confirm_email') + confirmFooter(trip), 'confirm');
           sent.push(1);
         }
         if (!sent.length && !trip.passengerPhone && !trip.passengerEmail) say(to, channel, `${c.name}: booking ${trip.ref} confirmed for ${when} from ${trip.pickup}.`);
@@ -1359,7 +1369,7 @@
         passengerEmail: booking.passengerEmail || (customer && !customer.agent && customer.email) || '',
         waitMin: 0, tolls: 0, milesOverride: null, priceOverride: null, adjustment: null, priceCtx: ctx,
         status: 'confirmed', driverId: null, vehicleId: null, flightInfo: null, rating: null,
-        payment: { status: 'unpaid', method: booking.accountId ? 'account' : cardsOn(company) ? 'card_on_file' : null, paidAt: null },
+        payment: { status: 'unpaid', method: booking.accountId ? 'account' : booking.payCash ? 'cash' : cardsOn(company) ? 'card_on_file' : null, paidAt: null },
         source, createdAt: now().toISOString(), history: [],
       };
       if (t.payment.method === 'card_on_file') { t.cardToken = randomId(6); if (customer && customer.card) t.card = clone(customer.card); }
@@ -2221,6 +2231,7 @@
       const card = cardIn && !cash && !payByPassenger && payMode === 'demo' && !b.accountId && cardsOn(ctx.company) ? demoCard(cardIn, ctx.user.name) : null;
       if (!card && !cash && !payByPassenger && !ctx.user.card && !b.accountId && cardsOn(ctx.company) && payMode === 'demo') fail(`Add a card. ${chargeNote(ctx.company)}.`);
       if (card) ctx.user.card = card;
+      if (cash) { b.payCash = true; if (rb) rb.payCash = true; }
       const wantsLanding = !!((a.booking || {}).landing && a.booking.landing.on);
       const t = newTrip(ctx.company, b, ctx.user, 'online', ctx.user.name, (a.booking || {}).promoCode, wantsLanding);
       let r = null;
@@ -2665,7 +2676,7 @@
       if (!t.passengerEmail && !t.passengerPhone) fail('Add a passenger email or mobile first.');
       const sent = [];
       const put = (recipient, channel, body, kind) => { db.messages.unshift({ id: id('msg'), companyId: t.companyId, tripId: t.id, ref: t.ref, at: now().toISOString(), recipient, channel, body, ...(kind ? { kind } : {}) }); sent.push(recipient); };
-      if (t.passengerEmail) put(t.passengerEmail, 'email', msgText(t, 'confirm_email'), 'confirm');
+      if (t.passengerEmail) put(t.passengerEmail, 'email', msgText(t, 'confirm_email') + confirmFooter(t), 'confirm');
       if (t.passengerPhone && t.smsOk !== false) put(t.passengerPhone, 'sms', msgText(t, 'confirm_sms'));
       if (!sent.length) fail("This passenger didn't agree to texts and has no email. Add an email first.");
       log(t, 'confirm_resent', ctx.user.name, `Confirmation sent again to ${sent.join(' and ')}`);

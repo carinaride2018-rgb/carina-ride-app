@@ -631,6 +631,7 @@
     if (route.startsWith('track.')) return viewTrack(route.slice(6));
     if (route.startsWith('review.')) return viewReview(route.slice(7));
     if (route.startsWith('card.')) return viewCard(route.slice(5));
+    if (route.startsWith('terms.')) return viewTerms(route.slice(6));
     if (route.startsWith('request.')) return viewRequest(route.slice(8));
     if (route.startsWith('quote.')) return viewQuote(route.slice(6));
     if (route.startsWith('agent.')) return viewAgentSignup(route.slice(6));
@@ -877,6 +878,30 @@
 
   // ---- Card link (#card.<token>) ---------------------------------------------
   // The passenger adds or replaces the card for one ride, no login needed.
+  // A company's terms and conditions, linked from its confirmation emails:
+  // its own booking terms, then its cancellation, waiting and no-show rules.
+  async function viewTerms(slug) {
+    current = null;
+    let info;
+    try { info = await api('public.company', { slug }); } catch (e) { const v = shell({}); v.innerHTML = `<div class="panel stack"><h2>Page unavailable</h2><p class="muted">${esc(e.message)}</p></div>`; return; }
+    const keep = session; session = { company: info.company, user: null };
+    const v = shell({ narrow: true });
+    session = keep;
+    const p = info.policy || {}, fee = (pct) => pct >= 100 ? 'the full fare' : `${pct}% of the fare`;
+    const rules = [
+      p.cancelHours ? `Free cancellation until ${p.cancelHours} hours before pickup${p.cancelFeePct ? `; after that, cancelling costs ${fee(p.cancelFeePct)}` : ''}.` : (p.cancelFeePct ? `Cancelling costs ${fee(p.cancelFeePct)}.` : 'Rides can be cancelled free of charge.'),
+      `Free waiting time: ${p.waitAirport} minutes after the flight lands for airport pickups, ${p.waitOther} minutes for other pickups. Waiting after that is charged at the posted rate.`,
+      p.noShowFeePct ? `If the passenger doesn't show up, ${fee(p.noShowFeePct)} is charged.` : '',
+      'Payment goes to the company, never to the chauffeur.',
+    ].filter(Boolean);
+    v.innerHTML = `<div class="stack">
+      <div><h1 style="font-size:24px">${esc(info.company.name)} Terms and Conditions</h1><p class="muted small">For rides booked with ${esc(info.company.name)}${info.company.phone ? ` · ${esc(info.company.phone)}` : ''}${info.company.email ? ` · ${esc(info.company.email)}` : ''}</p></div>
+      ${info.terms ? `<div class="panel"><h2>Booking terms</h2><div class="small" style="white-space:pre-line">${esc(info.terms)}</div></div>` : ''}
+      <div class="panel"><h2>Cancellation, waiting and no-shows</h2><ul class="small" style="margin:0;padding-left:18px">${rules.map((r) => `<li>${esc(r)}</li>`).join('')}</ul></div>
+      <p class="small muted">Booking and text messages are handled by LimoRelay: see the <a href="terms.html" target="_blank" rel="noopener">LimoRelay Terms &amp; Conditions</a> and <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</p>
+      <div><a class="btn" href="#book.${esc(info.company.slug)}">Book a ride</a></div>
+    </div>`;
+  }
   async function viewCard(token) {
     current = null;
     let d;
