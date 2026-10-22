@@ -1609,7 +1609,6 @@
       const crf = $('#bk-creditf', form); if (crf) crf.hidden = !!acc;
       const pol = $('#bk-po-label', form); if (pol) pol.innerHTML = acc && acc.requirePo ? 'PO number <span class="faint">(required)</span>' : 'PO number <span class="faint">(optional)</span>';
       const airport = C.isAirport(state.pickup) || C.isAirport(state.dropoff);
-      $('#bk-service-hint', form).textContent = state.service !== 'hourly' && airport ? 'Airport flat rate applies' : '';
       // Step 1 asks the flight only for an airport pickup (it times the ride);
       // a flight out (drop-off at the airport) is asked in step 2.
       if (twoStep) $('#bk-flightf', form).hidden = step === 1 ? !C.isAirport(state.pickup) : !airport && !state.flight;
@@ -4534,16 +4533,14 @@
               <span class="hint">Link to this from your website, or embed it as a booking widget.</span></div>
           </div>
           <div class="panel stack"><h2>Rates</h2>
-            <div class="grid3">${num('minFare', 'Minimum fare ($)')}${num('minHours', 'Minimum hours (by the hour)', 1)}${num('airportFlat', 'Airport flat rate ($)')}
+            <div class="grid3">${num('minHours', 'Minimum hours (by the hour)', 1)}
               ${num('gratuityPct', 'Gratuity (%)', 0.5)}${num('taxPct', 'Tax (%)', 0.1)}${num('waitPerMin', 'Wait time per minute ($)')}</div>
-            <h3 style="margin-top:6px">Vehicle multipliers</h3><p class="small muted">The minimum fare and airport flat rate above are for a sedan. Each vehicle type multiplies them.</p>
-            <div class="grid3">${C.VEHICLE_TYPES.map((t) => `<label class="field"><span>${t}</span><input id="rs-m-${t.replace(/\W/g, '')}" data-mult="${t}" type="number" min="0.1" step="0.05" value="${r.multipliers[t]}" ${ro}></label>`).join('')}</div>
-            <h3 style="margin-top:6px">Rates by vehicle</h3><p class="small muted">Base fare and per mile price a ride from A to B; the hourly rate prices a ride booked by the hour. Each vehicle has its own. The multipliers above still apply to the minimum fare and the airport flat rate.</p>
-            <div class="tablewrap"><table class="ratetable"><thead><tr><th>Vehicle</th><th>Base fare ($)</th><th>Per mile ($)</th><th>Hourly ($ per hour)</th></tr></thead><tbody>
-              ${C.VEHICLE_TYPES.map((t) => `<tr><td><b>${t}</b></td>${['base', 'perMile', 'hourly'].map((k) => { const own = r[k + 'By'] && r[k + 'By'][t]; const v0 = own > 0 ? own : Math.round(r[k] * (r.multipliers[t] || 1) * 100) / 100; return `<td><input class="input" data-rate="${k}" data-type="${t}" aria-label="${t} ${k}" type="number" min="0" step="${k === 'perMile' ? 0.05 : 1}" value="${v0}" ${ro}></td>`; }).join('')}</tr>`).join('')}
+            <h3 style="margin-top:6px">Rates by vehicle</h3><p class="small muted">Each vehicle has its own base fare, per mile and minimum fare for a ride from A to B (airport rides included), and its own hourly rate for a ride booked by the hour. A ride never costs less than that vehicle's minimum fare.</p>
+            <div class="tablewrap"><table class="ratetable"><thead><tr><th>Vehicle</th><th>Base fare ($)</th><th>Per mile ($)</th><th>Minimum fare ($)</th><th>Hourly ($ per hour)</th></tr></thead><tbody>
+              ${C.VEHICLE_TYPES.map((t) => `<tr><td><b>${t}</b></td>${['base', 'perMile', 'minFare', 'hourly'].map((k) => { const own = r[k + 'By'] && r[k + 'By'][t]; const v0 = own > 0 ? own : Math.round(r[k] * (r.multipliers[t] || 1) * 100) / 100; return `<td><input class="input" data-rate="${k}" data-type="${t}" aria-label="${t} ${k}" type="number" min="0" step="${k === 'perMile' ? 0.05 : 1}" value="${v0}" ${ro}></td>`; }).join('')}</tr>`).join('')}
             </tbody></table></div>
             ${isAdmin ? `<div class="row" id="rs-hadj" style="gap:8px;align-items:flex-end;flex-wrap:wrap">
-              <label class="field" style="margin:0"><span>Change</span><select id="rs-hadj-k"><option value="all">All rates</option><option value="base">Base fares</option><option value="perMile">Per mile rates</option><option value="hourly">Hourly rates</option></select></label>
+              <label class="field" style="margin:0"><span>Change</span><select id="rs-hadj-k"><option value="all">All rates</option><option value="base">Base fares</option><option value="perMile">Per mile rates</option><option value="minFare">Minimum fares</option><option value="hourly">Hourly rates</option></select></label>
               <label class="field" style="margin:0"><span>for every vehicle by</span><div class="row" style="gap:6px;flex-wrap:nowrap"><input id="rs-hadj-n" type="number" step="1" value="10" style="width:90px"><select id="rs-hadj-u"><option value="pct">%</option><option value="usd">$</option></select></div></label>
               <button class="btn" type="button" id="rs-hadj-up">Raise</button><button class="btn" type="button" id="rs-hadj-down">Lower</button><span class="small muted">Then press Save rates and brand.</span></div>` : ''}
             <h3 style="margin-top:6px">Suitcases per vehicle</h3><p class="small muted">Customers see this when they choose a vehicle, and can't book more suitcases than fit.</p>
@@ -4609,11 +4606,10 @@
       $('#rs', v).onsubmit = async (e) => {
         e.preventDefault();
         const f = formData(e.target);
-        const rates = { multipliers: {} };
-        for (const k of ['minFare', 'minHours', 'airportFlat', 'gratuityPct', 'taxPct', 'waitPerMin']) rates[k] = f[k];
-        $$('[data-mult]', v).forEach((i) => { rates.multipliers[i.dataset.mult] = i.value; });
+        const rates = {};
+        for (const k of ['minHours', 'gratuityPct', 'taxPct', 'waitPerMin']) rates[k] = f[k];
         rates.bags = {}; $$('[data-bags]', v).forEach((i) => { rates.bags[i.dataset.bags] = i.value; });
-        for (const k of ['base', 'perMile', 'hourly']) rates[k + 'By'] = {};
+        for (const k of ['base', 'perMile', 'minFare', 'hourly']) rates[k + 'By'] = {};
         $$('[data-rate]', v).forEach((i) => { rates[i.dataset.rate + 'By'][i.dataset.type] = i.value; });
         const policy = { editHours: f.pol_editHours, cancelHours: f.pol_cancelHours, cancelFeePct: f.pol_cancelFeePct, waitAirport: f.pol_waitAirport, waitOther: f.pol_waitOther, noShowFeePct: f.pol_noShowFeePct, chargeWhen: f.pol_chargeWhen, chargeHours: f.pol_chargeHours };
         await busy($('button[type=submit]', e.target), async () => {

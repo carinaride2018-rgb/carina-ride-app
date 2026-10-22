@@ -44,7 +44,7 @@
   const TRIAL_DAYS = 30;
   const DEFAULT_RATES = {
     currency: 'USD', base: 15, perMile: 3.75, minFare: 85, hourly: 95, minHours: 3,
-    airportFlat: 125, gratuityPct: 20, taxPct: 0, waitPerMin: 1.5,
+    gratuityPct: 20, taxPct: 0, waitPerMin: 1.5,
     multipliers: { 'Sedan': 1, 'SUV': 1.3, 'Business Van': 1.9, 'Sprinter Van': 1.7, 'Party Bus': 2.6 },
   };
   // Automatic price adjustments, add-ons and promo codes for each company.
@@ -103,7 +103,7 @@
   // Hourly rate for a vehicle type: its own rate when the company set one,
   // otherwise the sedan hourly rate times the type's multiplier.
   // Same for base fare and per-mile rate (rates.baseBy, rates.perMileBy).
-  const RATE_BY = ['base', 'perMile', 'hourly'];
+  const RATE_BY = ['base', 'perMile', 'hourly', 'minFare'];
   const rateBy = (r, key, type) => { const own = num(r[key + 'By'] && r[key + 'By'][type], 0); return own > 0 ? own : round2(num(r[key], 0) * num(r.multipliers && r.multipliers[type], 1)); };
   const hourlyRate = (r, type) => rateBy(r, 'hourly', type);
   const DEFAULT_BAGS = { 'Sedan': 2, 'SUV': 5, 'Business Van': 8, 'Sprinter Van': 12, 'Party Bus': 4 };
@@ -466,7 +466,6 @@
     const r = company.rates;
     const p = company.pricing || DEFAULT_PRICING;
     const type = VEHICLE_TYPES.includes(b.vehicleType) ? b.vehicleType : 'Sedan';
-    const mult = num(r.multipliers && r.multipliers[type], 1);
     let service = SERVICES[b.service] ? b.service : 'transfer';
     if (service === 'transfer' && (isAirport(b.pickup) || isAirport(b.dropoff))) service = 'airport';
     const via = service !== 'hourly' && Array.isArray(b.stopList) ? b.stopList.filter(Boolean) : [];
@@ -492,12 +491,10 @@
       const perHr = hourlyRate(r, type);
       fare = hours * perHr;
       lines.push({ label: `${hours} hours × $${money(perHr)}/hr (${type})`, amount: round2(fare), kind: 'fare' });
-    } else if (service === 'airport') {
-      fare = r.airportFlat * mult;
-      lines.push({ label: `Airport flat rate (${type})`, amount: round2(fare), kind: 'fare' });
     } else {
+      // Airport rides price like any ride from A to B (no airport flat rate).
       const baseF = rateBy(r, 'base', type), perMi = rateBy(r, 'perMile', type);
-      fare = Math.max(baseF + fareMiles * perMi, r.minFare * mult);
+      fare = Math.max(baseF + fareMiles * perMi, rateBy(r, 'minFare', type));
       lines.push({ label: `${fareMiles} mi at $${money(perMi)}/mi + $${money(baseF)} base (${type})`, amount: round2(fare), kind: 'fare' });
     }
     fare = round2(fare);
@@ -4400,11 +4397,11 @@
       const r = a.rates || {};
       const pos = (k, max) => { if (k in r) { const n = num(r[k], NaN); if (!(n >= 0 && n <= max)) fail(`Check the value for ${k}.`); c.rates[k] = round2(n); } };
       pos('base', 1000); pos('perMile', 100); pos('minFare', 5000); pos('hourly', 2000); pos('minHours', 24);
-      pos('airportFlat', 5000); pos('gratuityPct', 50); pos('taxPct', 30); pos('waitPerMin', 20);
+      pos('gratuityPct', 50); pos('taxPct', 30); pos('waitPerMin', 20);
       if (r.multipliers) for (const t of VEHICLE_TYPES) if (t in r.multipliers) {
         const n = num(r.multipliers[t], NaN); if (!(n > 0 && n <= 10)) fail(`Check the multiplier for ${t}.`); c.rates.multipliers[t] = round2(n);
       }
-      const RATE_NAME = { base: 'base fare', perMile: 'per-mile rate', hourly: 'hourly rate' };
+      const RATE_NAME = { base: 'base fare', perMile: 'per-mile rate', hourly: 'hourly rate', minFare: 'minimum fare' };
       for (const key of RATE_BY) {
         const given = r[key + 'By'];
         if (!given) continue;
