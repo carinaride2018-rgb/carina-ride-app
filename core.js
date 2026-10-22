@@ -2376,8 +2376,17 @@
     });
     def('customer.trips', ['customer'], false, (ctx) => {
       if (monitorFlights(ctx.company)) ctx.dirty = true;
-      return db.trips.filter((t) => t.customerId === ctx.user.id).sort((x, y) => y.pickupAt.localeCompare(x.pickupAt))
+      return db.trips.filter((t) => t.customerId === ctx.user.id && !t.hiddenByCustomer).sort((x, y) => y.pickupAt.localeCompare(x.pickupAt))
         .map((t) => (['assigned', 'accepted', 'en_route', 'arrived', 'on_board'].includes(t.status) ? withPhoto(tripView(t), t) : tripView(t)));
+    });
+    // Delete a finished or cancelled ride from the customer's own list. The
+    // company keeps the trip for its records, invoices and payments.
+    def('customer.hideTrip', ['customer'], true, (ctx, a) => {
+      const t = db.trips.find((x) => x.id === a.id && x.customerId === ctx.user.id);
+      if (!t) fail('Trip not found.', 404);
+      if (!['completed', 'cancelled'].includes(t.status)) fail('Only past or cancelled rides can be deleted.');
+      t.hiddenByCustomer = now().toISOString();
+      return { ok: true };
     });
     def('customer.cancel', ['customer'], true, (ctx, a) => {
       const t = db.trips.find((x) => x.id === a.id && x.customerId === ctx.user.id);

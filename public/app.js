@@ -2036,7 +2036,7 @@
             <div class="small muted">${t.agent ? `${esc(t.passengerName || 'Client')} · ` : ''}${esc(t.pickup.split(',')[0])} → ${esc(to)}${t.commission ? ` · commission ${money(t.commission)}` : ''}</div>
             ${t.rating ? `<span class="stars sm">${stars(t.rating.stars)}</span>` : rate ? `<span class="row small"><span class="muted">Rate ${esc(t.driver.name.split(' ')[0])}:</span><span class="stars rate sm">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-act="rate" data-id="${t.id}" data-stars="${n}" aria-label="${n} star${n > 1 ? 's' : ''}">★</button>`).join('')}</span></span>` : ''}
             ${t.pay && t.status === 'cancelled' && cardLine(t, 'customer') ? `<div class="small muted">${cardLine(t, 'customer')}</div>` : ''}${t.noShow ? `<div class="small muted">No-show${t.noShow.fee ? `, fee ${money(t.noShow.fee)}` : ''}</div>` : ''}${t.cancelFee && !t.pay ? `<div class="small muted">Late cancellation fee ${money(t.cancelFee)}</div>` : ''}</div>
-          <div class="pr-side"><b class="num">${money(t.price.total)}</b>${t.status === 'completed' || t.payment.status === 'paid' ? `<button class="linkbtn small" type="button" data-act="receipt" data-id="${t.id}">Receipt</button>` : ''}</div></div>`;
+          <div class="pr-side"><b class="num">${money(t.price.total)}</b>${t.status === 'completed' || t.payment.status === 'paid' ? `<button class="linkbtn small" type="button" data-act="receipt" data-id="${t.id}">Receipt</button>` : ''}<button class="linkbtn small danger" type="button" data-act="hide" data-id="${t.id}">Delete</button></div></div>`;
       }
       function tripCard(t) {
         const step = STEP_OF[t.status];
@@ -2087,6 +2087,10 @@
             catch (e) { if (e.status === 409 && confirm(e.message + ' Cancel anyway?')) { try { const n = await go(true); toast(`Cancelled ${n} ride${n === 1 ? '' : 's'}.`); } catch (e2) { toast(e2.message, true); } } else if (e.status !== 409) toast(e.message, true); }
             last = ''; refresh();
           });
+        }
+        if (kind === 'hide') {
+          if (!btn.dataset.armed) { btn.dataset.armed = '1'; btn.textContent = 'Tap again to delete'; setTimeout(() => { if (btn.isConnected) { delete btn.dataset.armed; btn.textContent = 'Delete'; } }, 5000); return; }
+          await busy(btn, async () => { try { await api('customer.hideTrip', { id: t.id }); toast(`${t.ref} deleted from your list.`); last = ''; refresh(); } catch (e) { toast(e.message, true); } });
         }
         if (kind === 'pay') payModal(t, () => { last = ''; refresh(); });
         if (kind === 'receipt') receiptModal(t);

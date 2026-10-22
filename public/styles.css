@@ -139,6 +139,7 @@ main.narrow { max-width: 600px; }
 .btn.primary:hover { opacity: .9; }
 .btn.brand { background: var(--brand); color: #fff; border-color: var(--brand); }
 .btn.danger { color: var(--bad); }
+.linkbtn.danger { color: var(--bad); }
 .btn.big { padding: 14px 18px; font-size: 16px; width: 100%; }
 .btn.sm { padding: 4px 10px; font-size: 13px; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
