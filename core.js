@@ -693,7 +693,7 @@
     const commissionOf = (t) => (t.agent && t.status === 'completed' ? round2(((t.price && t.price.subtotal) || 0) * (t.agent.pct || 0) / 100) : 0);
     const pubUserPrefs = (u) => (u && u.prefs ? clone(u.prefs) : null);
     const cardsOn = (c) => payMode === 'demo' || (payMode === 'stripe' && !!(c.stripe && c.stripe.ready));
-    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), payMode });
+    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), payMode, logo: c.logo || '' });
 
     async function hashPw(pw, salt) { return hash(String(pw), salt); }
     async function setPassword(u, pw) { u.salt = randomId(8); u.passHash = await hashPw(pw, u.salt); }
@@ -4057,6 +4057,12 @@
       return pubUser(who);
     });
     def('dispatch.settings', STAFF, false, (ctx) => ({ company: { ...pubCompany(ctx.company), refPrefix: ctx.company.refPrefix, plan: ctx.company.plan, planInfo: planInfo(ctx.company), terms: ctx.company.terms || '', policy: pcfg(ctx.company), bags: bagsCfg(ctx.company), stripe: ctx.company.stripe ? { ready: !!ctx.company.stripe.ready, since: ctx.company.stripe.connectedAt || null } : null }, rates: clone(ctx.company.rates), addons: clone(ctx.company.pricing.addons), vehicleTypes: VEHICLE_TYPES }));
+    // The company's logo (a small picture, shown in the header and on its booking pages).
+    def('dispatch.setLogo', ['admin'], true, (ctx, a) => {
+      const logo = cleanPhoto(a.logo);
+      if (logo) ctx.company.logo = logo; else delete ctx.company.logo;
+      return { company: pubCompany(ctx.company) };
+    });
     def('dispatch.saveSettings', ['admin'], true, (ctx, a) => {
       const c = ctx.company;
       const name = str(a.name, 80);

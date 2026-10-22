@@ -63,6 +63,25 @@
       img.src = url;
     });
   }
+  // A logo keeps its shape and transparency: fitted inside w x h, saved as PNG
+  // (JPEG on white if the PNG is too big to store).
+  function logoFrom(file, w = 480, h = 240) {
+    return new Promise((resolve, reject) => {
+      if (!file || !/^image\//.test(file.type)) return reject(new Error('Choose a picture (PNG or JPEG).'));
+      const url = URL.createObjectURL(file), img = new Image();
+      img.onload = () => {
+        const k = Math.min(1, w / img.naturalWidth, h / img.naturalHeight), cw = Math.max(1, Math.round(img.naturalWidth * k)), ch = Math.max(1, Math.round(img.naturalHeight * k));
+        const c = document.createElement('canvas'); c.width = cw; c.height = ch;
+        const g = c.getContext('2d'); g.drawImage(img, 0, 0, cw, ch);
+        let out = c.toDataURL('image/png');
+        if (out.length > 190000) { g.globalCompositeOperation = 'destination-over'; g.fillStyle = '#fff'; g.fillRect(0, 0, cw, ch); out = c.toDataURL('image/jpeg', 0.9); }
+        URL.revokeObjectURL(url); resolve(out);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('That file couldn\'t be read as a picture.')); };
+      img.src = url;
+    });
+  }
+  const coLogo = (co, cls) => co && co.logo ? `<img class="${cls}" src="${esc(co.logo)}" alt="${esc(co.name)} logo">` : '';
   // Photo picker block used by the driver app and the office.
   const photoField = (name, photo, id) => `<div class="photofield">${face(name, photo, 'lg')}<div class="stack" style="gap:6px"><span class="small muted">Passengers see this photo with the car and plate once the trip is theirs.</span><div class="row"><label class="btn sm"><input type="file" id="${id}" accept="image/jpeg,image/png,image/webp" hidden>${photo ? 'Change photo' : 'Add photo'}</label>${photo ? `<button class="btn sm" type="button" id="${id}-rm">Remove</button>` : ''}</div></div></div>`;
   function wirePhoto(host, id, save) {
@@ -272,7 +291,7 @@
     const demoKey = u ? (u.role === 'admin' || u.role === 'dispatcher' ? 'dispatch' : (DEMO_LOGINS.find((d) => d.email === u.email) || {}).key || u.role) : '';
     app.innerHTML = `
       <header class="topbar">
-        ${co ? `<div class="wordmark"><span class="seal">${esc(initials(co.name))}</span>
+        ${co ? `<div class="wordmark">${co.logo ? coLogo(co, 'cologo') : `<span class="seal">${esc(initials(co.name))}</span>`}
           <div>${esc(co.name)}<small>on ${PLATFORM}</small></div></div>` : `<div class="wordmark brandlogo"><img class="logo-l" src="${LOGO.light}" alt="${PLATFORM}" width="160" height="34"><img class="logo-d" src="${LOGO.dark}" alt="${PLATFORM}" width="160" height="34"></div>`}
         <div class="navrow"><nav class="tabs" aria-label="Sections">${(tabs || []).map((t) => `<button type="button" data-tab="${t.key}" aria-current="${t.key === active}">${esc(t.label)}</button>`).join('')}</nav>
           ${tabs && tabs.length > 4 ? `<button type="button" class="tabmore" aria-haspopup="true" aria-expanded="false" hidden>More<span aria-hidden="true"> ▾</span></button>
@@ -1247,7 +1266,7 @@
     document.documentElement.style.setProperty('--brand', info.company.color);
     const me = signedHere ? session.user : {};
     v.innerHTML = `
-      <div class="brandhead"><div class="stack" style="gap:6px"><h1>Request a quote</h1><p>${esc(info.company.name)} · weddings, proms, corporate events and groups</p></div>
+      <div class="brandhead">${info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : ''}<div class="stack" style="gap:6px"><h1>Request a quote</h1><p>${esc(info.company.name)} · weddings, proms, corporate events and groups</p></div>
         <div class="small" style="opacity:.9">${esc(info.company.phone || '')} · <a href="#book.${esc(slug)}" style="color:#fff">Book a single ride instead</a></div></div>
       <form id="rq" class="stack" novalidate style="max-width:860px">
         <section class="panel stack"><h2>Your event</h2>
@@ -1719,7 +1738,7 @@
     session = keep;
     document.documentElement.style.setProperty('--brand', info.company.color);
     v.innerHTML = `
-      <div class="brandhead"><div class="stack" style="gap:6px"><h1>${esc(info.company.name)}</h1><p>${esc(info.company.tagline || 'Book your ride')}</p></div>
+      <div class="brandhead">${info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : ''}<div class="stack" style="gap:6px"><h1>${esc(info.company.name)}</h1><p>${esc(info.company.tagline || 'Book your ride')}</p></div>
         <div class="small" style="opacity:.9">${esc(info.company.phone || '')}${signedHere ? ` · Signed in as ${esc(session.user.name)} · <a href="#customer" style="color:#fff">My trips</a>` : ''}</div></div>
       <a class="eventlink" href="#request.${esc(slug)}"><span>Planning a wedding, prom, corporate event or group trip?</span><b>Request a quote</b></a>
       <a class="eventlink" href="#agent.${esc(slug)}" id="agent-link"><span>Travel agent, assistant or concierge booking for clients? Earn commission on every ride.</span><b>Agent sign-up or login</b></a>
@@ -1860,7 +1879,7 @@
     // Signed-in office staff get back to their dashboard; everyone else to the booking page.
     const me = session && session.user, back = me && HOME[me.role] && me.role !== 'customer' ? { href: '#' + HOME[me.role], label: 'Back to dashboard' } : { href: '#book.' + slug, label: 'Back to booking page' };
     v.innerHTML = `<div style="margin-bottom:12px"><a class="btn" id="ag-back" href="${back.href}">&larr; ${back.label}</a></div>
-      <div class="brandhead"><div class="stack" style="gap:6px"><h1>${esc(info.company.name)} for travel agents</h1><p>Book chauffeured rides for your clients and earn commission.</p></div></div>
+      <div class="brandhead">${info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : ''}<div class="stack" style="gap:6px"><h1>${esc(info.company.name)} for travel agents</h1><p>Book chauffeured rides for your clients and earn commission.</p></div></div>
       <div class="panel stack" style="max-width:600px">
         <ul class="small muted" style="margin:0;padding-left:18px"><li>Book for any client: they get the chauffeur's texts, you get a copy.</li><li>Charge your card on file, or text your client a link to pay with their own card.</li><li>Commission on every completed ride, shown month by month.</li><li>Your clients are saved, so the next booking takes seconds.</li></ul>
         <form id="ag-form" class="stack" novalidate>
@@ -4117,6 +4136,9 @@
           <div class="panel stack"><h2>Brand</h2>
             <div class="grid2"><label class="field"><span>Company name</span><input id="rs-name" name="name" value="${esc(s.company.name)}" ${ro}></label>
               <label class="field"><span>Brand color</span><input id="rs-color" name="color" type="color" value="${esc(s.company.color)}" ${ro} style="padding:4px;height:40px"></label></div>
+            <div class="field"><span>Logo</span><div class="row" id="rs-logo">${s.company.logo ? coLogo(s.company, 'logo-prev') : '<span class="small muted">No logo yet. Your initials are shown instead.</span>'}
+              ${isAdmin ? `<label class="btn sm"><input type="file" id="rs-logo-file" accept="image/png,image/jpeg,image/webp" hidden>${s.company.logo ? 'Change logo' : 'Upload logo'}</label>${s.company.logo ? '<button class="btn sm" type="button" id="rs-logo-rm">Remove</button>' : ''}` : ''}</div>
+              <span class="hint">Shown at the top of your dashboard, booking page and travel agent page. A PNG with a transparent background looks best.</span></div>
             <label class="field"><span>Tagline on your booking page</span><input id="rs-tagline" name="tagline" value="${esc(s.company.tagline)}" ${ro}></label>
             <div class="grid2"><label class="field"><span>Phone</span><input id="rs-phone" name="phone" value="${esc(s.company.phone)}" ${ro}></label>
               <label class="field"><span>Email</span><input id="rs-email" name="email" value="${esc(s.company.email)}" ${ro}></label></div>
@@ -4164,6 +4186,11 @@
         try { await navigator.clipboard.writeText(inp.value); toast('Link copied.'); } catch (e) { inp.select(); toast('Press Ctrl+C or ⌘C to copy.'); }
       };
       const pw = $('#pol-when', v); if (pw) pw.onchange = () => { $('#pol-hoursf', v).hidden = pw.value !== 'before'; };
+      const setLogo = async (logo) => {
+        try { const res = await api('dispatch.setLogo', { logo }); setSession({ ...session, company: { ...session.company, ...res.company } }); toast(logo ? 'Logo saved.' : 'Logo removed.'); draw(); } catch (err) { toast(err.message, true); }
+      };
+      const lf = $('#rs-logo-file', v); if (lf) lf.onchange = async () => { try { await setLogo(await logoFrom(lf.files[0])); } catch (err) { toast(err.message, true); } };
+      const lr = $('#rs-logo-rm', v); if (lr) lr.onclick = () => setLogo('');
       $('#rs', v).onsubmit = async (e) => {
         e.preventDefault();
         const f = formData(e.target);
