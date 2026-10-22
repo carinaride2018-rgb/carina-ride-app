@@ -91,7 +91,7 @@
   // Corporate accounts: payment terms in days (0 = due on receipt).
   const ACCOUNT_TERMS = [0, 15, 30, 45];
   // Smart dispatch: auto-assign, accept timer, reminders, late-start alert.
-  const DEFAULT_DISPATCH = { autoAssign: false, horizonHours: 24, acceptMin: 20, onNoAnswer: 'next', remindEvening: true, eveningHour: 18, remindBeforeMin: 120, lateStartMin: 20, minNoticeHours: 3 };
+  const DEFAULT_DISPATCH = { autoAssign: false, horizonHours: 24, acceptMin: 20, onNoAnswer: 'next', remindEvening: true, eveningHour: 18, remindBeforeMin: 120, lateStartMin: 20, lateAlert1: 60, lateAlert2: 30, minNoticeHours: 3 };
   // Automatic farm-out: send a trip to network partners, in the company's order,
   // when its own drivers can't cover it. Off until the company turns it on.
   const DEFAULT_AUTOFARM = { on: false, noDriver: true, lastCallHours: 2, ratePct: 87.5, answerMin: 15, partners: [] };
@@ -1609,6 +1609,29 @@
       if (dcfg(c).onNoAnswer === 'next' && !t.farmout && autoAssign(t, 'Auto-dispatch')) return;
       t.needsDriver = { at: now().toISOString(), why };
     }
+    // Driver hasn't tapped "On the way": the office gets an email and a dashboard
+    // notification at each alert time (default 60 and 30 minutes before pickup).
+    // Only the latest due alert goes out, and only for trips assigned before it was due.
+    function lateAlert(company, cfg, t, d, nowMs, pickMs) {
+      if (nowMs >= pickMs) return false;
+      t.lateAlerts = t.lateAlerts || {};
+      const due = [cfg.lateAlert1, cfg.lateAlert2].filter((m) => m > 0 && nowMs >= pickMs - m * 60e3 && !t.lateAlerts[m]).sort((a, b) => a - b);
+      if (!due.length) return false;
+      const stamp = now().toISOString();
+      const assignedAt = (t.history.filter((h) => h.status === 'assigned' || h.status === 'accepted')[0] || {}).at || t.createdAt;
+      const send = due[0];
+      for (const m of due) t.lateAlerts[m] = stamp;
+      if (new Date(assignedAt).getTime() > pickMs - send * 60e3) return true;
+      const office = officeEmail(company);
+      const left = Math.max(1, Math.round((pickMs - nowMs) / 60e3));
+      t.lateAlerts.last = { min: send, at: stamp };
+      log(t, 'late_alert', 'System', `${d.name} hasn't tapped On the way, ${left} min before pickup`);
+      if (office) db.messages.unshift({ id: id('msg'), companyId: company.id, tripId: t.id, ref: t.ref, at: stamp, recipient: office, channel: 'email', kind: 'late_driver',
+        body: [`${d.name} hasn't tapped "On the way" for ${t.ref}. Pickup is in ${left} minutes.`, '',
+          `Pickup Date and Time: ${fmtLocal(t.pickupAt, company, true)}`, `Pickup Address: ${t.pickup}`, `Passenger: ${t.passengerName || '-'} ${t.passengerPhone ? `(${t.passengerPhone})` : ''}`.trim(),
+          `Driver: ${d.name}${d.phone ? ` (${d.phone})` : ''}`, `Vehicle: ${t.vehicleType}`, '', 'Call the driver, or open the dispatch board to reassign the ride.'].join('\n') });
+      return true;
+    }
     function sweepDispatch(company, force) {
       const n = now();
       if (!force && company.dispatchRun && n.getTime() - new Date(company.dispatchRun).getTime() < 30000) return false;
@@ -1660,6 +1683,7 @@
         if (!t.driverId || !['assigned', 'accepted'].includes(t.status)) continue;
         const d = findUser(t.driverId);
         if (!d) continue;
+        if (lateAlert(company, cfg, t, d, nowMs, pickMs)) changed = true;
         t.reminders = t.reminders || {};
         const to = d.phone || d.email;
         const lp = localParts(t.pickupAt, company.timezone);
@@ -1996,6 +2020,8 @@
         for (const t of db.trips) {
           if (t.companyId !== c.id) continue;
           if (t.source === 'online' && !t.farmIn && !t.landingOf && recent(t.createdAt, 3) && t.status !== 'cancelled') add(`booked:${t.id}`, `New booking ${t.ref}`, `${t.passengerName || 'Passenger'}, ${at(t)}, ${t.vehicleType}. $${money(t.price.total)}.${(() => { const l = t.landingId && db.trips.find((x) => x.id === t.landingId); return l ? ` Plus a pickup when they land${l.outOfTown ? ` in ${l.outOfTown.city}` : ''} (${l.ref}${l.farmout ? `, sent to ${l.farmout.toName}` : l.outOfTown ? ', needs a local company' : ''}).` : ''; })()}`, '#dispatch', t.createdAt);
+          const la = t.lateAlerts && t.lateAlerts.last;
+          if (la && ['assigned', 'accepted'].includes(t.status) && recent(la.at, 2)) { const dd = findUser(t.driverId); add(`late:${t.id}:${la.min}`, `Driver not on the way: ${t.ref}`, `${dd ? dd.name : 'The driver'} hasn't tapped On the way. Pickup ${at(t)} from ${t.pickup}.`, '#dispatch', la.at); }
           if (t.status === 'confirmed' && t.needsDriver && !t.farmout && recent(t.needsDriver.at)) add(`need:${t.id}:${t.needsDriver.at}`, `${t.ref} needs a driver`, `${t.needsDriver.why}. Pickup ${at(t)}.`, '#dispatch', t.needsDriver.at);
           const cx = lastOf(t, 'cancelled');
           if (t.noShow && recent(t.noShow.at, 3) && t.noShow.by !== u.name) add(`noshow:${t.id}`, `No-show on ${t.ref}`, `${t.passengerName || 'Passenger'}. ${t.noShow.waitedMin ? `Driver waited ${t.noShow.waitedMin} min.` : ''}${t.noShow.fee ? ` Fee $${money(t.noShow.fee)}.` : ''}`.trim(), '#dispatch', t.noShow.at);
@@ -2866,6 +2892,8 @@
         eveningHour: int(r.eveningHour, 12, 23, cur.eveningHour),
         remindBeforeMin: int(r.remindBeforeMin, 0, 720, cur.remindBeforeMin),
         lateStartMin: int(r.lateStartMin, 0, 240, cur.lateStartMin),
+        lateAlert1: int(r.lateAlert1, 0, 240, cur.lateAlert1),
+        lateAlert2: int(r.lateAlert2, 0, 240, cur.lateAlert2),
         minNoticeHours: int(r.minNoticeHours, 0, 72, cur.minNoticeHours),
       };
       // Trips parked for lack of a driver get another try under the new rules.

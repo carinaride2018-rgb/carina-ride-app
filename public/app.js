@@ -201,7 +201,7 @@
 
   // ---- UI primitives --------------------------------------------------------
   let toastTimer = null;
-  const HIST_LABELS = { confirm_resent: 'Confirmation sent again', paid: 'Charged', refunded: 'Refunded', card_failed: 'Card declined', card_saved: 'Card saved', card_link: 'Card link sent', no_show: 'No-show', pickup_moved: 'Pickup moved', flight_cancelled: 'Flight cancelled', declined: 'Declined', edited: 'Edited', unassigned: 'Unassigned', no_answer: 'No answer in time', farm_offered: 'Offered to partner', farm_accepted: 'Partner accepted', farm_declined: 'Partner declined', farm_cancelled: 'Taken back from partner', farm_returned: 'Partner handed it back', farm_expired: 'Partner offer expired', farm_completed: 'Partner completed', auto_farm_none: 'Automatic farm-out stopped' };
+  const HIST_LABELS = { late_alert: 'Office alerted: driver not on the way', confirm_resent: 'Confirmation sent again', paid: 'Charged', refunded: 'Refunded', card_failed: 'Card declined', card_saved: 'Card saved', card_link: 'Card link sent', no_show: 'No-show', pickup_moved: 'Pickup moved', flight_cancelled: 'Flight cancelled', declined: 'Declined', edited: 'Edited', unassigned: 'Unassigned', no_answer: 'No answer in time', farm_offered: 'Offered to partner', farm_accepted: 'Partner accepted', farm_declined: 'Partner declined', farm_cancelled: 'Taken back from partner', farm_returned: 'Partner handed it back', farm_expired: 'Partner offer expired', farm_completed: 'Partner completed', auto_farm_none: 'Automatic farm-out stopped' };
   function toast(text, bad, ms) {
     let el = $('.toast');
     if (!el) { el = document.createElement('div'); el.className = 'toast'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
@@ -3376,6 +3376,8 @@
             <label class="field"><span>Send the evening text from (hour, 24-hour clock)</span><input class="input" type="number" name="eveningHour" min="12" max="23" value="${r.eveningHour}" ${ro}></label>
             <label class="field"><span>Text the driver this many minutes before pickup (0 = off)</span><input class="input" type="number" name="remindBeforeMin" min="0" max="720" value="${r.remindBeforeMin}" ${ro}></label>
             <label class="field"><span>Alert dispatch if the driver hasn't tapped "On the way" this many minutes before pickup (0 = off)</span><input class="input" type="number" name="lateStartMin" min="0" max="240" value="${r.lateStartMin}" ${ro}></label>
+            <label class="field"><span>Email and notify the office if the driver hasn't tapped "On the way": first alert, minutes before pickup (0 = off)</span><input class="input" type="number" name="lateAlert1" min="0" max="240" value="${r.lateAlert1}" ${ro}></label>
+            <label class="field"><span>Second alert, minutes before pickup (0 = off)</span><input class="input" type="number" name="lateAlert2" min="0" max="240" value="${r.lateAlert2}" ${ro}></label>
           </fieldset>
           <div id="ad-err"></div>
           ${isAdmin ? '<div><button class="btn primary" type="submit">Save</button></div>' : '<p class="small faint">Only a company admin can change these.</p>'}
