@@ -852,4 +852,10 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 .modesw button[aria-checked="true"] { color: var(--bg); }
 .modesw-co { font-size: 11px; font-weight: 500; opacity: .8; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .modesw-knob { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc(50% - 3px); border-radius: 999px; background: var(--ink); transition: transform .2s ease; }
-.modesw:has(button[data-mode="business"][aria-checked="true"]) .modesw-knob { transform: translateX(100%); }
+.modesw:has(button[data-mode="business"][aria-checked="true"]) .modesw-knob, .modesw:has(button[data-bkmode="business"][aria-checked="true"]) .modesw-knob { transform: translateX(100%); }
+/* Business rides: set-up box for customers, and requests the office approves. */
+.bizsetup { margin-bottom: 12px; }
+.bizreq { border-top: 1px solid var(--line); padding-top: 10px; gap: 10px; flex-wrap: wrap; }
+.bizreq > .stack { min-width: 0; overflow-wrap: anywhere; }
+#bk-bizf .modesw { margin-top: 2px; }
+#bk-biznote:empty { display: none; }

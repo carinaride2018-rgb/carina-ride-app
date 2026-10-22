@@ -692,7 +692,7 @@
     const findCompany = (cid) => db.companies.find((c) => c.id === cid);
     const findVehicle = (vid) => db.vehicles.find((v) => v.id === vid);
     const findAccount = (c, aid) => aid ? (db.accounts || []).find((x) => x.id === aid && x.companyId === c.id) : null;
-    const pubUser = (u) => u && ({ id: u.id, name: u.name, email: u.email, phone: u.phone, role: u.role, companyId: u.companyId, active: u.active !== false, vehicleId: u.vehicleId || null, available: !!u.available, ...(u.role === 'customer' ? { prefs: pubUserPrefs(u), card: pubCard(u.card), agent: u.agent ? { agency: u.agent.agency, commissionPct: agentPct(u), commissionOn: u.agent.commissionOn !== false } : null, credit: u.credit ? u.credit.balance : 0 } : {}), ...(u.role === 'driver' ? { photo: u.photo || '' } : {}), ...(u.role === 'admin' || u.role === 'dispatcher' ? { perms: staffPerms(u) } : {}), ...(u.role === 'admin' ? { master: isMaster(u) } : {}) });
+    const pubUser = (u) => u && ({ id: u.id, name: u.name, email: u.email, phone: u.phone, role: u.role, companyId: u.companyId, active: u.active !== false, vehicleId: u.vehicleId || null, available: !!u.available, ...(u.role === 'customer' ? { prefs: pubUserPrefs(u), card: pubCard(u.card), agent: u.agent ? { agency: u.agent.agency, commissionPct: agentPct(u), commissionOn: u.agent.commissionOn !== false } : null, credit: u.credit ? u.credit.balance : 0, bizRequest: u.bizRequest && u.bizRequest.status !== 'approved' ? { company: u.bizRequest.company, status: u.bizRequest.status, at: u.bizRequest.at } : null } : {}), ...(u.role === 'driver' ? { photo: u.photo || '' } : {}), ...(u.role === 'admin' || u.role === 'dispatcher' ? { perms: staffPerms(u) } : {}), ...(u.role === 'admin' ? { master: isMaster(u) } : {}) });
     const bagsCfg = (c) => ({ ...DEFAULT_BAGS, ...((c.rates && c.rates.bags) || {}) });
     const pcfg = (c) => ({ ...DEFAULT_POLICY, ...(c.policy || {}) });
     const agentCfg = (c) => ({ ...DEFAULT_AGENTS, ...((c && c.agents) || {}) });
@@ -1848,7 +1848,7 @@
       bookings: ['dispatch.createTrip', 'dispatch.updateTrip', 'dispatch.resendConfirmation', 'dispatch.setStatus', 'dispatch.cancelSeries', 'dispatch.noShow', 'dispatch.importTrips', 'dispatch.applyFlight', 'dispatch.sendCardLink', 'dispatch.inboxSend', 'dispatch.saveQuote', 'dispatch.sendQuote', 'dispatch.quoteAction'],
       assign: ['dispatch.assign', 'dispatch.autoAssign', 'network.offer', 'network.respond', 'network.cancelOffer', 'network.handBack'],
       payments: ['dispatch.chargeCard', 'dispatch.markPaid', 'network.settle'],
-      customers: ['dispatch.saveCustomer', 'dispatch.sendCustomerLogin', 'dispatch.saveAccount', 'dispatch.accountBooker', 'dispatch.createInvoice', 'dispatch.invoiceAction', 'dispatch.invoices', 'dispatch.invoice'],
+      customers: ['dispatch.saveCustomer', 'dispatch.sendCustomerLogin', 'dispatch.saveAccount', 'dispatch.accountBooker', 'dispatch.bizRequests', 'dispatch.reviewBiz', 'dispatch.createInvoice', 'dispatch.invoiceAction', 'dispatch.invoices', 'dispatch.invoice'],
       drivers: ['dispatch.saveDriver', 'dispatch.setDriverPhoto', 'dispatch.saveVehicle', 'dispatch.setVehiclePhoto', 'dispatch.addMaintenance', 'dispatch.deleteMaintenance'],
       pay: ['dispatch.payroll', 'dispatch.markPayout'],
       reports: ['dispatch.reports'],
@@ -2113,6 +2113,7 @@
           else if (pv && pv.needsCard && !['completed', 'cancelled'].includes(t.status) && n >= new Date(pv.chargeAt).getTime()) add(`nocard:${t.id}`, `No card on file for ${t.ref}`, `${t.passengerName || 'Passenger'}, pickup ${at(t)}. Text them the card link or collect another way.`, '#dispatch', pv.chargeAt);
           if (t.status === 'cancelled' && cx && recent(cx.at, 3) && cx.by !== u.name) add(`cancel:${t.id}`, `${t.ref} was cancelled`, `By ${cx.by || 'the customer'}. Pickup was ${at(t)}.`, '#dispatch', cx.at);
         }
+        for (const x of db.users) if (x.companyId === c.id && x.role === 'customer' && x.bizRequest && x.bizRequest.status === 'pending' && recent(x.bizRequest.at, 48)) add(`biz:${x.id}:${x.bizRequest.at}`, `Business rides request: ${x.bizRequest.company}`, `${x.name} wants to book business rides. Open Customers > Company accounts to approve.`, '#dispatch', x.bizRequest.at);
         for (const f of db.farmouts || []) {
           if (f.toCompanyId === c.id && f.status === 'offered') add(`farm:${f.id}`, `Trip offer from ${f.fromName}`, `${f.ref}: $${money(f.rate)}. Open Network to accept or decline.`, '#dispatch', f.createdAt);
           if (f.fromCompanyId === c.id && f.status === 'returned' && !f.seenReturn) add(`ret:${f.id}`, `${f.toName} handed back ${f.ref}`, 'Assign it or send it to another partner.', '#dispatch');
@@ -2304,6 +2305,23 @@
     def('customer.accounts', ['customer'], false, (ctx) => {
       const acc = findAccount(ctx.company, ctx.user.accountId);
       return acc && acc.active !== false ? [{ id: acc.id, name: acc.name, requirePo: !!acc.requirePo, reward: acc.reward === 'credit' ? 'credit' : 'discount', pct: acc.discountPct || 0 }] : [];
+    });
+    // A customer who isn't on a company account asks the office to set up
+    // business rides: the office approves it under Customers > Company accounts.
+    def('customer.bizRequest', ['customer'], true, (ctx, a) => {
+      const u = ctx.user, c = ctx.company;
+      if (u.agent) fail('Travel agents book for clients from their own login.');
+      if (findAccount(c, u.accountId)) fail('You are already set up for business rides.');
+      const company = str(a.company, 80);
+      if (!company) fail('Enter your company name.');
+      const email = str(a.billingEmail, 120).toLowerCase();
+      if (!emailOk(email)) fail('Enter the email where invoices should go.');
+      const stamp = now().toISOString();
+      u.bizRequest = { company, billingEmail: email, phone: str(a.phone, 30), note: str(a.note, 300), at: stamp, status: 'pending' };
+      const office = officeEmail(c);
+      if (office) db.messages.unshift({ id: id('msg'), companyId: c.id, tripId: null, ref: '', at: stamp, recipient: office, channel: 'email', kind: 'biz_request',
+        body: [`${u.name} asked to book business rides.`, '', `Company: ${company}`, `Invoices to: ${email}`, `Phone: ${u.bizRequest.phone || '-'}`, `Booker: ${u.name} (${u.email})`, ...(u.bizRequest.note ? ['', `Note: ${u.bizRequest.note}`] : []), '', 'Open Customers > Company accounts to approve it.'].join('\n') });
+      return { user: pubUser(u) };
     });
     // The booker's credit from business rides, and what earned or used it.
     def('customer.credit', ['customer'], false, (ctx) => {
@@ -4070,6 +4088,32 @@
       if (other) fail(`${u.name} already books for ${other.name}. Remove them there first.`);
       u.accountId = acc.id;
       return pubUser(u);
+    });
+    // Customers asking for business rides (see customer.bizRequest).
+    def('dispatch.bizRequests', STAFF, false, (ctx) => db.users.filter((u) => u.companyId === ctx.company.id && u.role === 'customer' && u.bizRequest && u.bizRequest.status === 'pending')
+      .map((u) => ({ userId: u.id, name: u.name, email: u.email, phone: u.phone || '', ...clone(u.bizRequest) })).sort((x, y) => y.at.localeCompare(x.at)));
+    // Approve: link the customer to an existing account, or open a new one with
+    // the company's usual terms. Decline: tell the customer. Both email them.
+    def('dispatch.reviewBiz', STAFF, true, (ctx, a) => {
+      const c = ctx.company;
+      const u = db.users.find((x) => x.id === a.userId && x.companyId === c.id && x.role === 'customer' && x.bizRequest && x.bizRequest.status === 'pending');
+      if (!u) fail('That request was already handled.', 404);
+      const r = u.bizRequest, stamp = now().toISOString();
+      const put = (body) => u.email && db.messages.unshift({ id: id('msg'), companyId: c.id, tripId: null, ref: '', at: stamp, recipient: u.email, channel: 'email', kind: 'biz_reply', body });
+      if (a.approve === false || a.approve === 'false') {
+        Object.assign(r, { status: 'declined', decidedAt: stamp, by: ctx.user.name });
+        put([`Hello ${u.name.split(' ')[0]},`, '', `${c.name} couldn't set up business rides for ${r.company} right now.${c.phone ? ` Call us at ${c.phone} with any questions.` : ''} You can keep booking personal rides as usual.`, '', `Sincerely, ${c.name}`].join('\n'));
+        return { declined: true };
+      }
+      let acc = a.accountId ? ownAccount(ctx, a.accountId) : db.accounts.find((x) => x.companyId === c.id && x.name.toLowerCase() === r.company.toLowerCase());
+      if (!acc) {
+        acc = { id: id('acct'), companyId: c.id, createdAt: stamp, name: r.company, contact: u.name, billingEmail: r.billingEmail, phone: r.phone, address: '', terms: 30, discountPct: 0, reward: 'discount', requirePo: false, notes: r.note ? `Request note: ${r.note}` : '', active: true };
+        db.accounts.push(acc);
+      }
+      u.accountId = acc.id;
+      Object.assign(r, { status: 'approved', decidedAt: stamp, by: ctx.user.name, accountId: acc.id });
+      put([`Hello ${u.name.split(' ')[0]},`, '', `Business rides for ${acc.name} are ready. Sign in, slide the switch to Business, and your rides go on the ${acc.name} monthly invoice instead of your own card.`, '', `Sincerely, ${c.name}`].join('\n'));
+      return accountSummary(acc);
     });
     def('dispatch.createInvoice', STAFF, true, (ctx, a) => {
       const acc = ownAccount(ctx, a.accountId);

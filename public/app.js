@@ -594,6 +594,35 @@
     if (del) del.onclick = () => deleteAccountModal(u);
   }
 
+  // A customer asks the office to set up business rides (billed to their
+  // company on a monthly invoice). The office approves it in Customers.
+  function bizSetupModal(done) {
+    const u = session.user;
+    const m = openModal({
+      title: 'Set up business rides',
+      body: `<form id="bz" class="stack" novalidate><p class="muted">Business rides go on your company's monthly invoice instead of your own card. Send your company details and ${esc(session.company.name)} sets it up. We'll email you when it's ready.</p>
+        <label class="field"><span>Company name</span><input id="bz-co" name="company" autocomplete="organization"></label>
+        <div class="grid2"><label class="field"><span>Email for invoices</span><input id="bz-email" name="billingEmail" type="email" value="${esc(u.email || '')}"></label>
+          <label class="field"><span>Company phone <span class="faint">(optional)</span></span><input id="bz-phone" name="phone" type="tel"></label></div>
+        <label class="field"><span>Note <span class="faint">(optional)</span></span><input id="bz-note" name="note" placeholder="For example: who approves invoices, PO numbers"></label><div id="bz-err"></div></form>`,
+      footer: '<button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="bz-go">Send request</button>',
+    });
+    $('[data-close]', m).onclick = closeModal;
+    const send = (e) => busy($('#bz-go', m), async () => {
+      if (e) e.preventDefault();
+      try {
+        const r = await api('customer.bizRequest', formData($('#bz', m)));
+        setSession({ ...session, user: r.user });
+        closeModal(); toast(`Sent. ${session.company.name} will email you when business rides are ready.`);
+        if (done) done();
+      } catch (err) { showErr($('#bz-err', m), err); }
+    });
+    $('#bz-go', m).onclick = () => send(); $('#bz', m).onsubmit = send;
+    $('#bz-co', m).focus();
+  }
+  // Business side of the Personal / Business switch when there's no company account yet.
+  const bizWaitText = (r) => `Waiting for ${esc(session.company.name)} to approve business rides for <b>${esc(r.company)}</b>. We'll email you when it's ready.`;
+  const bizSetupBox = (id) => { const r = session.user.bizRequest; return `<div class="panel stack bizsetup" id="${id}">${r && r.status === 'pending' ? `<p class="muted small" style="margin:0">${bizWaitText(r)}</p>` : `<div class="spread"><div class="stack" style="gap:2px"><b>Book rides for work?</b><span class="small muted">${r && r.status === 'declined' ? `${esc(session.company.name)} couldn't set up business rides for ${esc(r.company)}. You can send a new request.` : 'Have them billed to your company on a monthly invoice, not your own card.'}</span></div><button class="btn brand sm" type="button" data-bizsetup>Set up business rides</button></div>`}</div>`; };
   function deleteAccountModal(u) {
     const m = openModal({
       title: 'Delete your account?',
@@ -1420,6 +1449,8 @@
     const dflt = defaultPickup();
     const init = Object.assign({ service: 'transfer', date: dflt.slice(0, 10), time: dflt.slice(11, 16), pickup: '', dropoff: '', hours: opts.info.rates.minHours, passengers: 1, vehicleType: (vt[0] || {}).type, flight: '', notes: '', passengerName: '', passengerPhone: '', passengerEmail: '', smsOk: opts.mode === 'dispatch', childSeats: 0, meetGreet: false, stops: 0, promoCode: '', accountId: '', poNumber: '', costCenter: '' }, opts.initial || {});
     const accts = opts.accounts || [];
+    // opts.biz: the Personal / Business switch for a signed-in customer.
+    const biz = opts.biz || null;
     const creditBal = opts.mode === 'customer' ? (opts.credit || 0) : 0;
     if (init.service === 'airport') init.service = 'transfer';
     const pr = init.prefs || {};
@@ -1498,8 +1529,9 @@
               <label class="check"><input type="radio" name="payBy" value="agent" id="bk-payby-agent" ${state.payBy !== 'passenger' ? 'checked' : ''}><span>My card on file</span></label>
               <label class="check"><input type="radio" name="payBy" value="passenger" id="bk-payby-passenger" ${state.payBy === 'passenger' ? 'checked' : ''}><span>My client: text them a link to add their card</span></label></div></div></div>` : ''}
           ${dispatch ? `<label class="field"><span>Passenger email</span><input id="bk-email" name="passengerEmail" type="email" value="${esc(state.passengerEmail)}"><span class="hint">Links the trip to a customer account and applies their account discount. Leave blank for a one-off.</span></label>` : ''}
+          ${biz ? `<div class="field" id="bk-bizf"><span>This ride is</span><div class="modesw" role="radiogroup" aria-label="Personal or business ride"><button type="button" role="radio" data-bkmode="personal" aria-checked="${!state.accountId}">Personal</button><button type="button" role="radio" data-bkmode="business" aria-checked="${!!state.accountId}">Business${biz.account ? `<span class="modesw-co">${esc(biz.account.name)}</span>` : ''}</button><span class="modesw-knob" aria-hidden="true"></span></div><div id="bk-biznote" class="small muted"></div></div>` : ''}
           ${accts.length ? `<div class="grid3">
-            <label class="field" ${opts.lockAccount ? 'hidden' : ''}><span>Bill to</span><select id="bk-acct" name="accountId"><option value="">${dispatch ? 'Passenger pays' : "I'll pay myself"}</option>${accts.map((a) => `<option value="${a.id}" ${state.accountId === a.id ? 'selected' : ''}>${esc(a.name)} (monthly invoice)</option>`).join('')}</select></label>
+            <label class="field" ${biz ? 'hidden' : ''}><span>Bill to</span><select id="bk-acct" name="accountId"><option value="">${dispatch ? 'Passenger pays' : "I'll pay myself"}</option>${accts.map((a) => `<option value="${a.id}" ${state.accountId === a.id ? 'selected' : ''}>${esc(a.name)} (monthly invoice)</option>`).join('')}</select></label>
             <label class="field" data-acct><span id="bk-po-label">PO number</span><input id="bk-po" name="poNumber" value="${esc(state.poNumber)}" autocomplete="off"></label>
             <label class="field" data-acct><span>Cost center <span class="faint">(optional)</span></span><input id="bk-cc" name="costCenter" value="${esc(state.costCenter)}" autocomplete="off"></label>
           </div>` : ''}
@@ -1547,6 +1579,26 @@
         </aside>
       </div>`;
     const form = $('#bk-form', host);
+    const bizNote = (business) => {
+      const el = $('#bk-biznote', form); if (!el) return;
+      const r = session.user && session.user.bizRequest;
+      el.innerHTML = biz.account ? (business ? `Billed to ${esc(biz.account.name)} on the monthly invoice. Nothing goes on your card.` : 'Paid with your own card.')
+        : business ? (r && r.status === 'pending' ? bizWaitText(r) + ' Until then, rides are personal.' : 'Business rides need a company account. <button class="linkbtn" type="button" id="bk-bizsetup">Set up business rides</button>') : '';
+      const b = $('#bk-bizsetup', el); if (b) b.onclick = () => bizSetupModal(() => bizNote(true));
+    };
+    if (biz) {
+      const pick = (m) => {
+        const business = m === 'business';
+        if (business && !biz.account) return bizNote(true);
+        $$('[data-bkmode]', form).forEach((x) => x.setAttribute('aria-checked', String(x.dataset.bkmode === m)));
+        const sel = $('#bk-acct', form);
+        if (sel && biz.account) { sel.value = business ? biz.account.id : ''; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+        bizNote(business);
+        if (biz.onMode) biz.onMode(m);
+      };
+      $$('[data-bkmode]', form).forEach((b) => { b.onclick = () => pick(b.dataset.bkmode); });
+      bizNote(!!state.accountId);
+    }
     const sync = () => {
       Object.assign(state, formData(form));
       $$('[data-show]', form).forEach((el) => { el.hidden = el.dataset.show !== state.service; });
@@ -1802,9 +1854,16 @@
         ${staff ? '<div class="note warn">Only you see this: add at least one car under <b>Fleet</b> (with its type, such as Sedan or SUV) and this page starts taking bookings.</div>' : ''}</div>`;
       return;
     }
+    // A signed-in customer gets the Personal / Business switch here too.
+    let accounts = [];
+    const modeKey = signedHere && `bizmode:${session.user.id}`;
+    if (signedHere) { try { accounts = await api('customer.accounts'); } catch (e) { accounts = []; } }
+    const picked = (() => { try { return (modeKey && localStorage.getItem(modeKey)) || ''; } catch (e) { return ''; } })();
+    const business = !!accounts[0] && picked !== 'personal';
     bookingForm($('#book-host', v), {
-      info, mode: 'public',
-      initial: signedHere ? { passengerName: session.user.name, passengerPhone: session.user.phone } : {},
+      info, mode: signedHere ? 'customer' : 'public', accounts, credit: 0,
+      biz: signedHere ? { account: accounts[0] || null, onMode: (m) => { try { localStorage.setItem(modeKey, m); } catch (e) {} } } : null,
+      initial: signedHere ? { passengerName: session.user.name, passengerPhone: session.user.phone, accountId: business ? accounts[0].id : '' } : {},
       quoteFn: (b) => api('public.quote', { slug, booking: b }),
       onSubmit: async (b) => {
         if (signedHere) { const t = await api('customer.book', { booking: b }); await afterBook(t, b); toast(bookedMsg(t)); go('customer'); return; }
@@ -1961,14 +2020,20 @@
     let tab = start || 'trips';
     const ui = { trips: null, info: null, accounts: null };
     const AG = session.user.agent;
-    // Bookers on a company account switch between Personal and Business here,
-    // without signing out: it sets who pays and which trips show.
+    // Customers switch between Personal and Business here and on the booking
+    // form, without signing out: it sets who pays and which trips show.
+    // Every customer sees it; without a company account, Business offers to set one up.
     const modeKey = `bizmode:${session.user.id}`;
-    let mode = (() => { try { return localStorage.getItem(modeKey) || 'business'; } catch (e) { return 'business'; } })();
+    let picked = (() => { try { return localStorage.getItem(modeKey) || ''; } catch (e) { return ''; } })();
     const bizAcct = () => (!AG && ui.accounts && ui.accounts[0]) || null;
+    const curMode = () => picked || (bizAcct() ? 'business' : 'personal');
+    const setMode = (m) => { picked = m; try { localStorage.setItem(modeKey, m); } catch (e) {} };
     const loadAccounts = async () => { if (!ui.accounts) ui.accounts = await api('customer.accounts'); return ui.accounts; };
-    const modeSwitch = () => { const a = bizAcct(); return a ? `<div class="modesw" role="radiogroup" aria-label="Personal or business"><button type="button" role="radio" data-mode="personal" aria-checked="${mode === 'personal'}">Personal</button><button type="button" role="radio" data-mode="business" aria-checked="${mode === 'business'}">Business<span class="modesw-co">${esc(a.name)}</span></button><span class="modesw-knob" aria-hidden="true"></span></div>` : ''; };
-    const wireMode = (v) => { $$('[data-mode]', v).forEach((b) => { b.onclick = () => { if (mode === b.dataset.mode) return; mode = b.dataset.mode; try { localStorage.setItem(modeKey, mode); } catch (e) {} draw(); }; }); };
+    const modeSwitch = () => AG ? '' : `<div class="modesw" role="radiogroup" aria-label="Personal or business"><button type="button" role="radio" data-mode="personal" aria-checked="${curMode() === 'personal'}">Personal</button><button type="button" role="radio" data-mode="business" aria-checked="${curMode() === 'business'}">Business${bizAcct() ? `<span class="modesw-co">${esc(bizAcct().name)}</span>` : ''}</button><span class="modesw-knob" aria-hidden="true"></span></div>`;
+    const wireMode = (v) => {
+      $$('[data-mode]', v).forEach((b) => { b.onclick = () => { if (curMode() === b.dataset.mode) return; setMode(b.dataset.mode); draw(); }; });
+      $$('[data-bizsetup]', v).forEach((b) => { b.onclick = () => bizSetupModal(draw); });
+    };
     const draw = () => {
       const v = shell({ tabs: AG ? [{ key: 'trips', label: 'Bookings' }, { key: 'book', label: 'Book a ride' }, { key: 'commission', label: 'Commission' }, { key: 'profile', label: 'Profile' }] : [{ key: 'trips', label: 'My trips' }, { key: 'book', label: 'Book a ride' }, { key: 'profile', label: 'Profile' }], active: tab, onTab: (t) => { tab = t; if (location.hash === '#account') history.replaceState(null, '', '#customer'); draw(); } });
       if (tab === 'book') drawBook(v); else if (tab === 'commission' && AG) drawCommission(v); else if (tab === 'profile') drawProfile(v); else drawTrips(v);
@@ -2070,14 +2135,14 @@
       let accounts = [];
       let clients = [];
       let credit = 0;
-      if (ui.personal) { mode = 'personal'; try { localStorage.setItem(modeKey, mode); } catch (e) {} }
+      if (ui.personal) setMode('personal');
       ui.personal = false;
       try { ui.info = ui.info || await api('public.company', { slug: session.company.slug }); accounts = await loadAccounts(); if (AG) clients = await api('customer.clients'); else credit = (await api('customer.credit')).balance; } catch (e) { return showErr(v, e); }
-      const personal = !!bizAcct() && mode === 'personal';
-      v.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Book a ride</h1>${bizAcct() ? `<p class="muted">${personal ? 'A personal ride, paid with your own card.' : `A business ride, billed to ${esc(bizAcct().name)} on the monthly invoice.`}</p>` : ''}${AG ? `<p class="muted">For a client of ${esc(AG.agency)}. They get the texts from the chauffeur; you get a copy of the confirmation.</p>` : ''}</div>${modeSwitch()}</div><div id="bk"></div>`;
-      wireMode(v);
+      const personal = curMode() === 'personal';
+      v.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Book a ride</h1>${AG ? `<p class="muted">For a client of ${esc(AG.agency)}. They get the texts from the chauffeur; you get a copy of the confirmation.</p>` : ''}</div></div><div id="bk"></div>`;
       bookingForm($('#bk', v), {
-        info: ui.info, mode: AG ? 'agent' : 'customer', accounts, clients, credit, lockAccount: !!bizAcct(),
+        info: ui.info, mode: AG ? 'agent' : 'customer', accounts, clients, credit,
+        biz: AG ? null : { account: bizAcct(), onMode: setMode },
         initial: AG ? { accountId: accounts[0] ? accounts[0].id : '' } : { passengerName: session.user.name, passengerPhone: session.user.phone, accountId: accounts[0] && !personal ? accounts[0].id : '', prefs: session.user.prefs || null, signName: (session.user.prefs && session.user.prefs.signName) || '' },
         quoteFn: (b) => api('customer.quote', { booking: b }),
         onSubmit: async (b) => { const t = await api('customer.book', { booking: b }); await afterBook(t, b); if (AG) { toast(bookedMsg(t) + (b.payBy === 'passenger' ? ` We texted ${b.passengerName.split(' ')[0]} a link to add a card.` : '')); tab = 'trips'; draw(); return; } if (b.prefs) setSession({ ...session, user: { ...session.user, prefs: { ...b.prefs, signName: b.signName || '' } } }); toast(bookedMsg(t)); tab = 'trips'; draw(); },
@@ -2088,19 +2153,22 @@
       const refresh = async (silent) => {
         let trips, quotes, cr = null;
         try { [trips, quotes, cr] = await Promise.all([api('customer.trips'), api('customer.quotes'), AG ? null : api('customer.credit'), AG ? null : loadAccounts()]); } catch (e) { if (!silent) showErr(v, e); return; }
-        if (bizAcct()) trips = trips.filter((t) => (mode === 'business') === !!t.accountId);
-        const sig = JSON.stringify([trips, quotes, cr, mode]);
+        const mode = curMode();
+        if (!AG) trips = trips.filter((t) => (mode === 'business') === !!t.accountId);
+        const setup = !AG && mode === 'business' && !bizAcct();
+        const sig = JSON.stringify([trips, quotes, cr, mode, setup && session.user.bizRequest]);
         const openQuotes = quotes.filter((q) => ['new', 'sent'].includes(q.status) || (q.status === 'accepted' && q.trips.some((t) => !['completed', 'cancelled'].includes(t.status))));
         if (sig === last) return; last = sig;
         const upcoming = trips.filter((t) => !['completed', 'cancelled'].includes(t.status)).reverse();
         const past = trips.filter((t) => ['completed', 'cancelled'].includes(t.status));
         v.innerHTML = `
-          <div class="pagehead"><div class="stack" style="gap:4px"><h1>${AG ? 'Bookings' : 'My trips'}</h1><p class="muted">Hello ${esc(session.user.name.split(' ')[0])}. ${AG ? `Rides you booked for ${esc(AG.agency)} clients with ${esc(session.company.name)}.` : bizAcct() ? (mode === 'business' ? `Your business rides for ${esc(bizAcct().name)}.` : `Your personal rides with ${esc(session.company.name)}.`) : `Your rides with ${esc(session.company.name)}.`}</p>${modeSwitch()}</div>
+          <div class="pagehead"><div class="stack" style="gap:4px"><h1>${AG ? 'Bookings' : 'My trips'}</h1><p class="muted">Hello ${esc(session.user.name.split(' ')[0])}. ${AG ? `Rides you booked for ${esc(AG.agency)} clients with ${esc(session.company.name)}.` : mode === 'business' ? (bizAcct() ? `Your business rides for ${esc(bizAcct().name)}.` : 'Your business rides.') : `Your personal rides with ${esc(session.company.name)}.`}</p>${modeSwitch()}</div>
             <div class="row"><a class="btn" href="#request.${esc(session.company.slug)}">Request an event quote</a><button class="btn brand" type="button" id="new-trip">Book a ride</button></div></div>
           ${cr && (cr.balance > 0 || cr.account || cr.log.length) && !(bizAcct() && mode === 'business' && !cr.balance) ? `<div class="panel creditbox" id="cr-box"><div class="spread"><div class="stack" style="gap:2px"><span class="label">Business ride credit</span><b class="num" style="font-size:24px">${money(cr.balance)}</b></div>
               ${cr.balance > 0 ? '<button class="btn sm" type="button" id="cr-book">Use it on a ride</button>' : ''}</div>
             <p class="small muted">${cr.account ? `Every business ride you book for ${esc(cr.account.name)} saves ${cr.account.pct}% as credit. ` : ''}Use it on your own personal rides: it comes off the price when you book.</p>
-            ${cr.log.length ? `<details class="small"><summary>History</summary>${cr.log.map((x) => `<div class="qline"><span>${esc(fmtDay(x.at))} · ${esc(x.note || x.kind)}</span><span class="num">${x.amount < 0 ? '−' + money(-x.amount) : '+' + money(x.amount)}</span></div>`).join('')}</details>` : ''}</div>` : ''}
+            ${cr.log.length ? `<details class="small"><summary>History</summary>${cr.log.map((x) => `<div class="qline"><span>${esc(fmtDate(x.at))} · ${esc(x.note || x.kind)}</span><span class="num">${x.amount < 0 ? '−' + money(-x.amount) : '+' + money(x.amount)}</span></div>`).join('')}</details>` : ''}</div>` : ''}
+          ${setup ? bizSetupBox('biz-setup') : ''}
           <div class="stack">
             ${openQuotes.length ? `<span class="label">Event quotes</span>${openQuotes.map((q) => `<a class="trip quotecard" href="#quote.${esc(q.token)}"><div class="spread"><div class="row"><b>${esc(q.eventName || q.eventType)}</b><span class="mono faint small">${esc(q.number)}</span></div>${qPill(q)}</div>
               <div class="spread small"><span class="muted">${q.eventDate ? esc(fmtDT(q.eventDate)) : ''} · ${((n) => `${n} vehicle${n === 1 ? '' : 's'}`)(q.lines.reduce((s2, l) => s2 + l.count, 0))}</span><span>${q.status === 'sent' ? `<b>${money(q.total)}</b> · Review and book →` : q.status === 'new' ? 'Being priced' : 'View →'}</span></div></a>`).join('')}` : ''}
@@ -4067,16 +4135,26 @@
     const TERMS = { 0: 'Due on receipt', 15: 'Net 15', 30: 'Net 30', 45: 'Net 45' };
     const invPill = (i) => i.status === 'paid' ? '<span class="pill paid">Paid</span>' : i.status === 'void' ? '<span class="pill off">Void</span>' : i.overdue ? `<span class="pill s-cancelled">${i.overdueDays} day${i.overdueDays === 1 ? '' : 's'} overdue</span>` : '<span class="pill s-assigned">Open</span>';
     async function accountList(host, redraw) {
-      let list;
-      try { list = await api('dispatch.accounts'); } catch (e) { return showErr(host, e); }
+      let list, reqs;
+      try { [list, reqs] = await Promise.all([api('dispatch.accounts'), api('dispatch.bizRequests')]); } catch (e) { return showErr(host, e); }
       const owed = list.reduce((s2, a) => s2 + a.openBalance, 0), late = list.reduce((s2, a) => s2 + a.overdueBalance, 0), ub = list.reduce((s2, a) => s2 + a.unbilledTotal, 0);
       host.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Company accounts</h1><p class="muted">Businesses that book on account and pay by monthly invoice. Their bookers' trips are billed to the account, with an optional PO number and cost center.</p></div><button class="btn primary" type="button" id="ac-add">Add account</button></div>
+        ${reqs.length ? `<div class="panel stack" id="biz-reqs" style="margin-bottom:14px"><b>Business rides requests</b><p class="small muted" style="margin:0">Customers who want rides billed to their company. Approve opens a company account (or uses one with the same name) and links them as a booker; you can set terms and discounts after.</p>
+          ${reqs.map((r) => `<div class="bizreq spread" data-uid="${r.userId}"><div class="stack" style="gap:2px"><b>${esc(r.company)}</b><span class="small">${esc(r.name)} · ${esc(r.email)}${r.phone ? ' · ' + esc(r.phone) : ''}</span><span class="small faint">Invoices to ${esc(r.billingEmail)} · ${esc(fmtDate(r.at))}${r.note ? ' · ' + esc(r.note) : ''}</span></div>
+            <div class="row"><button class="btn sm" type="button" data-bizno="${r.userId}">Decline</button><button class="btn primary sm" type="button" data-bizok="${r.userId}">Approve</button></div></div>`).join('')}</div>` : ''}
         <div class="tiles" style="margin-bottom:14px"><div class="tile"><span class="label">Not invoiced yet</span><b class="num">${money(ub)}</b></div><div class="tile"><span class="label">Invoiced, unpaid</span><b class="num">${money(owed)}</b></div><div class="tile"><span class="label">Overdue</span><b class="num ${late ? 'bad' : ''}">${money(late)}</b></div></div>
         <div class="tablewrap"><table><thead><tr><th>Company</th><th>Terms</th><th class="r">Reward</th><th class="r">Bookers</th><th class="r">Upcoming</th><th class="r">Not invoiced</th><th class="r">Unpaid</th><th></th></tr></thead><tbody>
         ${list.map((a) => `<tr class="click" data-id="${a.id}"><td><b>${esc(a.name)}</b>${a.active ? '' : ' <span class="pill off">Inactive</span>'}${a.requirePo ? ' <span class="pill">PO required</span>' : ''}<br><span class="small faint">${esc(a.billingEmail || 'No billing email')}</span></td>
           <td class="small">${TERMS[a.terms]}</td><td class="r num">${rewardText(a, true)}</td><td class="r num">${a.bookers}</td><td class="r num">${a.upcoming}</td>
           <td class="r num">${a.unbilledCount ? `${money(a.unbilledTotal)}<br><span class="small faint">${a.unbilledCount} trip${a.unbilledCount === 1 ? '' : 's'}</span>` : '—'}</td><td class="r num">${a.openBalance ? money(a.openBalance) : '—'}</td><td>${a.overdueBalance ? '<span class="pill s-cancelled">Overdue</span>' : ''}</td></tr>`).join('') || '<tr><td colspan="8" class="faint">No company accounts yet.</td></tr>'}
         </tbody></table></div>`;
+      $$('[data-bizok]', host).forEach((b) => { b.onclick = () => busy(b, async () => {
+        try { const a = await api('dispatch.reviewBiz', { userId: b.dataset.bizok, approve: true }); toast(`Approved. ${a.name} is set up and the customer was emailed.`); redraw(); accountModal(a.id, redraw); } catch (e) { toast(e.message, true); }
+      }); });
+      $$('[data-bizno]', host).forEach((b) => { b.onclick = () => {
+        if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = 'Tap again to decline'; return; }
+        busy(b, async () => { try { await api('dispatch.reviewBiz', { userId: b.dataset.bizno, approve: false }); toast('Declined. The customer was emailed.'); redraw(); } catch (e) { toast(e.message, true); } });
+      }; });
       $('#ac-add', host).onclick = () => accountForm(null, redraw);
       $$('tr[data-id]', host).forEach((r) => { r.onclick = () => accountModal(r.dataset.id, redraw); });
     }
