@@ -105,6 +105,11 @@
     get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
     set(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { /* storage blocked */ } },
   };
+  // Not kept signed in: the sign-in lives only until this browser tab or window closes.
+  const tabStore = {
+    get(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } },
+    set(k, v) { try { if (v == null) sessionStorage.removeItem(k); else sessionStorage.setItem(k, v); } catch (e) { /* storage blocked */ } },
+  };
 
   // ---- Backend --------------------------------------------------------------
   let core = null;
@@ -134,9 +139,14 @@
   }
 
   let session = null;
-  try { session = JSON.parse(store.get('livery-session') || 'null'); } catch (e) { session = null; }
+  try { session = JSON.parse(store.get('livery-session') || tabStore.get('livery-session') || 'null'); } catch (e) { session = null; }
   let seenInit = false, feedBusy = false, pushSynced = '';
-  const setSession = (s) => { session = s; seenInit = false; pushSynced = ''; store.set('livery-session', s ? JSON.stringify(s) : null); };
+  const setSession = (s) => {
+    session = s; seenInit = false; pushSynced = '';
+    const keep = !s || s.remember !== false;
+    store.set('livery-session', s && keep ? JSON.stringify(s) : null);
+    tabStore.set('livery-session', s && !keep ? JSON.stringify(s) : null);
+  };
 
   async function api(method, args) {
     const token = session && session.token;
@@ -954,6 +964,8 @@
           <h2>Sign in</h2>
           <label class="field"><span>Email</span><input id="si-email" name="email" type="email" autocomplete="username" required></label>
           <label class="field"><span>Password</span><input id="si-password" name="password" type="password" autocomplete="current-password" required></label>
+          <label class="check"><input type="checkbox" id="si-remember" checked> <span>Keep me signed in on this device</span></label>
+          <p class="small faint" style="margin-top:-6px">Untick on a shared or office computer: you're signed out when the browser closes.</p>
           <div id="si-err"></div>
           <button class="btn primary big" type="submit">Sign in</button>
           <div><button class="linkbtn small" type="button" id="si-forgot">Forgot password?</button></div>
@@ -1045,7 +1057,7 @@
       e.preventDefault();
       const f = formData(e.target);
       await busy($('button[type=submit]', e.target), async () => {
-        try { const res = await api('auth.login', f); setSession(res); go(HOME[res.user.role]); }
+        try { const remember = $('#si-remember', v).checked; const res = await api('auth.login', { ...f, remember }); setSession({ ...res, remember }); go(HOME[res.user.role]); }
         catch (err) { showErr($('#si-err', v), err); }
       });
     };

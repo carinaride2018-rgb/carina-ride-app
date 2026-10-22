@@ -2038,7 +2038,7 @@
         if (c.status !== 'active') fail(closedMsg(c), 403);
       }
       const token = randomId(24);
-      db.sessions[token] = { userId: user.id, at: now().toISOString() };
+      db.sessions[token] = { userId: user.id, at: now().toISOString(), ...(a.remember === false ? { remember: false } : {}) };
       return { token, user: pubUser(user), company: pubCompany(findCompany(user.companyId)) };
     });
     def('auth.signup', 'public', true, async (ctx, a) => {
@@ -4607,6 +4607,7 @@
     });
 
     // ---- Dispatcher ---------------------------------------------------------
+    const SHORT_SESSION_H = 12, LONG_SESSION_DAYS = 90;
     async function call(token, method, args) {
       const m = M[method];
       if (!m) throw new ApiError('Unknown action.', 404);
@@ -4614,6 +4615,9 @@
       const ctx = { token, user: null, company: null, dirty: false };
       if (m.roles !== 'public') {
         const s = token && db.sessions[token];
+        // "Keep me signed in" off: the sign-in ends after 12 hours without use; on: after 90 days.
+        if (s && now().getTime() - new Date(s.seen || s.at).getTime() > (s.remember === false ? SHORT_SESSION_H * 3600e3 : LONG_SESSION_DAYS * 864e5)) { delete db.sessions[token]; save(db); throw new ApiError('Please sign in again.', 401); }
+        if (s) s.seen = now().toISOString();
         const u = s && findUser(s.userId);
         if (!u || u.active === false) throw new ApiError('Please sign in again.', 401);
         ctx.user = u;
