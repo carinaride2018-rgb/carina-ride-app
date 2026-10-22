@@ -4147,10 +4147,14 @@
           </div>
           <div class="panel stack"><h2>Rates</h2>
             <div class="grid3">${num('base', 'Base fare ($)')}${num('perMile', 'Per mile ($)')}${num('minFare', 'Minimum fare ($)')}
-              ${num('hourly', 'Hourly rate ($)')}${num('minHours', 'Minimum hours', 1)}${num('airportFlat', 'Airport flat rate ($)')}
+              ${num('minHours', 'Minimum hours (by the hour)', 1)}${num('airportFlat', 'Airport flat rate ($)')}
               ${num('gratuityPct', 'Gratuity (%)', 0.5)}${num('taxPct', 'Tax (%)', 0.1)}${num('waitPerMin', 'Wait time per minute ($)')}</div>
             <h3 style="margin-top:6px">Vehicle multipliers</h3><p class="small muted">Rates above are for a sedan. Each vehicle type multiplies them.</p>
             <div class="grid3">${C.VEHICLE_TYPES.map((t) => `<label class="field"><span>${t}</span><input id="rs-m-${t.replace(/\W/g, '')}" data-mult="${t}" type="number" min="0.1" step="0.05" value="${r.multipliers[t]}" ${ro}></label>`).join('')}</div>
+            <h3 style="margin-top:6px">Hourly rate by vehicle ($ per hour)</h3><p class="small muted">What a ride booked by the hour costs per hour in each vehicle. The multipliers above don't change these.</p>
+            <div class="grid3">${C.VEHICLE_TYPES.map((t) => { const own = r.hourlyBy && r.hourlyBy[t]; const v0 = own > 0 ? own : Math.round(r.hourly * (r.multipliers[t] || 1) * 100) / 100; return `<label class="field"><span>${t}</span><input data-hourly="${t}" type="number" min="0" step="1" value="${v0}" ${ro}></label>`; }).join('')}</div>
+            ${isAdmin ? `<div class="row" id="rs-hadj" style="gap:8px;align-items:flex-end;flex-wrap:wrap"><label class="field" style="margin:0;max-width:200px"><span>Change all hourly rates by</span><div class="row" style="gap:6px;flex-wrap:nowrap"><input id="rs-hadj-n" type="number" step="1" value="10" style="width:90px"><select id="rs-hadj-u"><option value="pct">%</option><option value="usd">$</option></select></div></label>
+              <button class="btn" type="button" id="rs-hadj-up">Raise all</button><button class="btn" type="button" id="rs-hadj-down">Lower all</button><span class="small muted">Then press Save rates and brand.</span></div>` : ''}
             <h3 style="margin-top:6px">Suitcases per vehicle</h3><p class="small muted">Customers see this when they choose a vehicle, and can't book more suitcases than fit.</p>
             <div class="grid3">${C.VEHICLE_TYPES.map((t) => `<label class="field"><span>${t}</span><input data-bags="${t}" type="number" min="0" max="40" step="1" value="${s.company.bags[t]}" ${ro}></label>`).join('')}</div>
           </div>
@@ -4191,13 +4195,23 @@
       };
       const lf = $('#rs-logo-file', v); if (lf) lf.onchange = async () => { try { await setLogo(await logoFrom(lf.files[0])); } catch (err) { toast(err.message, true); } };
       const lr = $('#rs-logo-rm', v); if (lr) lr.onclick = () => setLogo('');
+      // One step for every car: raise or lower all hourly rates by a % or a $ amount.
+      const hadj = (sign) => {
+        const n = Number($('#rs-hadj-n', v).value), pct = $('#rs-hadj-u', v).value === 'pct';
+        if (!(n > 0)) return toast('Enter how much to change the rates by.', true);
+        $$('[data-hourly]', v).forEach((i) => { const cur = Number(i.value) || 0; const next = pct ? cur * (1 + sign * n / 100) : cur + sign * n; i.value = Math.max(0, Math.round(next)); });
+        toast(`All hourly rates ${sign > 0 ? 'raised' : 'lowered'} by ${pct ? n + '%' : '$' + n}. Press Save to keep them.`);
+      };
+      const hu = $('#rs-hadj-up', v); if (hu) hu.onclick = () => hadj(1);
+      const hd = $('#rs-hadj-down', v); if (hd) hd.onclick = () => hadj(-1);
       $('#rs', v).onsubmit = async (e) => {
         e.preventDefault();
         const f = formData(e.target);
         const rates = { multipliers: {} };
-        for (const k of ['base', 'perMile', 'minFare', 'hourly', 'minHours', 'airportFlat', 'gratuityPct', 'taxPct', 'waitPerMin']) rates[k] = f[k];
+        for (const k of ['base', 'perMile', 'minFare', 'minHours', 'airportFlat', 'gratuityPct', 'taxPct', 'waitPerMin']) rates[k] = f[k];
         $$('[data-mult]', v).forEach((i) => { rates.multipliers[i.dataset.mult] = i.value; });
         rates.bags = {}; $$('[data-bags]', v).forEach((i) => { rates.bags[i.dataset.bags] = i.value; });
+        rates.hourlyBy = {}; $$('[data-hourly]', v).forEach((i) => { rates.hourlyBy[i.dataset.hourly] = i.value; });
         const policy = { cancelHours: f.pol_cancelHours, cancelFeePct: f.pol_cancelFeePct, waitAirport: f.pol_waitAirport, waitOther: f.pol_waitOther, noShowFeePct: f.pol_noShowFeePct, chargeWhen: f.pol_chargeWhen, chargeHours: f.pol_chargeHours };
         await busy($('button[type=submit]', e.target), async () => {
           try {

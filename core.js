@@ -100,6 +100,9 @@
   // URLs; the server serves them from public/media/vehicles.
   const SAMPLE_PHOTO_OF = { '1G6KB5RS4LU184417': 'sedan', '5LMJJ3LT2REL08820': 'suv', '1FBAX2CG5PKA01200': 'van10', W1W4EBHY3PT127764: 'van14' };
   const samplePhoto = (k) => ((typeof globalThis !== 'undefined' && globalThis.LIMO_CAR_PHOTOS) || {})[k] || `/media/vehicles/${k}.jpg`;
+  // Hourly rate for a vehicle type: its own rate when the company set one,
+  // otherwise the sedan hourly rate times the type's multiplier.
+  const hourlyRate = (r, type) => { const own = num(r.hourlyBy && r.hourlyBy[type], 0); return own > 0 ? own : round2(num(r.hourly, 0) * num(r.multipliers && r.multipliers[type], 1)); };
   const DEFAULT_BAGS = { 'Sedan': 2, 'SUV': 5, 'Business Van': 8, 'Sprinter Van': 12, 'Party Bus': 4 };
   // Cancellation and free waiting, shown to customers when they book.
   // Travel agents and other bookers who book rides for their clients earn a
@@ -483,8 +486,9 @@
     let fare;
     if (service === 'hourly') {
       const hours = Math.max(num(b.hours, r.minHours), r.minHours);
-      fare = hours * r.hourly * mult;
-      lines.push({ label: `${hours} hours × $${money(r.hourly * mult)}/hr (${type})`, amount: round2(fare), kind: 'fare' });
+      const perHr = hourlyRate(r, type);
+      fare = hours * perHr;
+      lines.push({ label: `${hours} hours × $${money(perHr)}/hr (${type})`, amount: round2(fare), kind: 'fare' });
     } else if (service === 'airport') {
       fare = r.airportFlat * mult;
       lines.push({ label: `Airport flat rate (${type})`, amount: round2(fare), kind: 'fare' });
@@ -4076,6 +4080,12 @@
       pos('airportFlat', 5000); pos('gratuityPct', 50); pos('taxPct', 30); pos('waitPerMin', 20);
       if (r.multipliers) for (const t of VEHICLE_TYPES) if (t in r.multipliers) {
         const n = num(r.multipliers[t], NaN); if (!(n > 0 && n <= 10)) fail(`Check the multiplier for ${t}.`); c.rates.multipliers[t] = round2(n);
+      }
+      if (r.hourlyBy) {
+        const hb = {};
+        for (const t of VEHICLE_TYPES) if (t in r.hourlyBy && String(r.hourlyBy[t]).trim() !== '') { const n = num(r.hourlyBy[t], NaN); if (!(n >= 0 && n <= 5000)) fail(`Check the hourly rate for ${t}.`); if (n > 0) hb[t] = round2(n); }
+        c.rates.hourlyBy = hb;
+        if (hb.Sedan) c.rates.hourly = hb.Sedan;
       }
       if (r.bags) {
         c.rates.bags = bagsCfg(c);
