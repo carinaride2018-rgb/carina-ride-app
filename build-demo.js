@@ -10,6 +10,9 @@ const safe = (js) => js.replace(/<\/script/gi, '<\\/script');
 const svgUri = (p) => 'data:image/svg+xml;base64,' + Buffer.from(read(p)).toString('base64');
 const logos = { light: svgUri('public/icons/logo-light.svg'), dark: svgUri('public/icons/logo-dark.svg'), hero: svgUri('public/icons/hero.svg') };
 
+const jpgUri = (p) => 'data:image/jpeg;base64,' + fs.readFileSync(path.join(__dirname, p)).toString('base64');
+const carPhotos = Object.fromEntries(['sedan', 'suv', 'van10', 'van14'].map((k) => [k, jpgUri(`public/media/vehicles/${k}.jpg`)]));
+
 const html = `<meta charset="utf-8">
 <title>LimoRelay</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
@@ -17,7 +20,7 @@ const html = `<meta charset="utf-8">
 ${read('public/styles.css')}
 </style>
 <div id="app"></div>
-<script>window.LIMO_DEMO = true; window.LIMO_LOGOS = ${JSON.stringify(logos)};</script>
+<script>window.LIMO_DEMO = true; window.LIMO_LOGOS = ${JSON.stringify(logos)}; window.LIMO_CAR_PHOTOS = ${JSON.stringify(carPhotos)};</script>
 <script>
 ${safe(read('core.js'))}
 </script>

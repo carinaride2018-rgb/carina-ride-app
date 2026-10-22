@@ -96,6 +96,10 @@
   // when its own drivers can't cover it. Off until the company turns it on.
   const DEFAULT_AUTOFARM = { on: false, noDriver: true, lastCallHours: 2, ratePct: 87.5, answerMin: 15, partners: [] };
   // Suitcases each vehicle type takes; companies can change these.
+  // Photos for the sample fleet, by VIN. The demo page passes them in as data
+  // URLs; the server serves them from public/media/vehicles.
+  const SAMPLE_PHOTO_OF = { '1G6KB5RS4LU184417': 'sedan', '5LMJJ3LT2REL08820': 'suv', '1FBAX2CG5PKA01200': 'van10', W1W4EBHY3PT127764: 'van14' };
+  const samplePhoto = (k) => ((typeof globalThis !== 'undefined' && globalThis.LIMO_CAR_PHOTOS) || {})[k] || `/media/vehicles/${k}.jpg`;
   const DEFAULT_BAGS = { 'Sedan': 2, 'SUV': 5, 'Business Van': 8, 'Sprinter Van': 12, 'Party Bus': 4 };
   // Cancellation and free waiting, shown to customers when they book.
   // Travel agents and other bookers who book rides for their clients earn a
@@ -653,6 +657,14 @@
       // the sample VINs, so a company's own cars are never renamed).
       const SAMPLE_CARS = { W1K6G7GB5PA184417: ['Cadillac CT6', 2020, '1G6KB5RS4LU184417'], '1GYS4KKL2RR108820': ['Lincoln Navigator', 2024, '5LMJJ3LT2REL08820'], '1GKS2DKL8NR303091': ['Lincoln Navigator', 2022, '5LMJJ2LT8NEL03091'], '1FBAX2CG5PKA01200': ['Ford Transit'] };
       for (const v of d.vehicles) { const m = SAMPLE_CARS[v.vin]; if (m) { v.name = m[0]; if (m[1]) { v.year = m[1]; v.vin = m[2]; } } }
+      // Sample 14-seat van is a "Sprinter or Transit", and the sample cars carry
+      // Carina Ride's own photos (v74). Again matched by the sample VINs.
+      for (const v of d.vehicles) {
+        if (v.vin === 'W1W4EBHY3PT127764' && v.name === 'Mercedes-Benz Sprinter') v.name = 'Sprinter or Transit';
+        const k = SAMPLE_PHOTO_OF[v.vin];
+        if (k && !d.carPhotosAdded && !d.vehiclePhotos[v.id]) d.vehiclePhotos[v.id] = samplePhoto(k);
+      }
+      d.carPhotosAdded = true;
       for (const u of d.users) {
         if (u.role !== 'customer' || !u.account || u.accountId) continue;
         let a = d.accounts.find((x) => x.companyId === u.companyId && x.name.toLowerCase() === u.account.toLowerCase());
@@ -4682,7 +4694,9 @@
       const esc = mkVeh(cap, { name: 'Lincoln Navigator', type: 'SUV', capacity: 6, plate: 'WA 8820', color: 'Black', year: 2024, vin: '5LMJJ3LT2REL08820', odometer: 21480, lastServiceOdometer: 20100, insuranceExp: day(12) });
       const yuk = mkVeh(cap, { name: 'Lincoln Navigator', type: 'SUV', capacity: 6, plate: 'WA 3091', color: 'Black', year: 2022, vin: '5LMJJ2LT8NEL03091', odometer: 61950, lastServiceOdometer: 56700, inspectionExp: day(-4) });
       const str8 = mkVeh(cap, { name: 'Ford Transit', type: 'Business Van', capacity: 10, plate: 'WA 1200', color: 'Black', year: 2023, vin: '1FBAX2CG5PKA01200', odometer: 74300, lastServiceOdometer: 71000 });
-      const spr = mkVeh(cap, { name: 'Mercedes-Benz Sprinter', type: 'Sprinter Van', capacity: 14, plate: 'WA 7764', color: 'Black', year: 2023, vin: 'W1W4EBHY3PT127764', odometer: 44820, lastServiceOdometer: 40100 });
+      const spr = mkVeh(cap, { name: 'Sprinter or Transit', type: 'Sprinter Van', capacity: 14, plate: 'WA 7764', color: 'Black', year: 2023, vin: 'W1W4EBHY3PT127764', odometer: 44820, lastServiceOdometer: 40100 });
+      db.vehiclePhotos = db.vehiclePhotos || {};
+      for (const v of [sClass, esc, str8, spr]) db.vehiclePhotos[v.id] = samplePhoto(SAMPLE_PHOTO_OF[v.vin]);
       const c300 = mkVeh(cap, { name: 'Cadillac CT6', type: 'Sedan', capacity: 3, plate: 'WA 5512', color: 'Silver', year: 2020, vin: '1G6KA5RS3LU105512', odometer: 98400, lastServiceOdometer: 95600, status: 'maintenance' });
       mnt(sClass, { date: day(-40), kind: 'Oil change', odometer: 35400, cost: 189, vendor: 'Mercedes-Benz of Seattle' });
       mnt(yuk, { date: day(-75), kind: 'Scheduled service', odometer: 56700, cost: 640, vendor: 'Lithia GMC Renton' });
