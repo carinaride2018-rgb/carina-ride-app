@@ -102,7 +102,10 @@
   const samplePhoto = (k) => ((typeof globalThis !== 'undefined' && globalThis.LIMO_CAR_PHOTOS) || {})[k] || `/media/vehicles/${k}.jpg`;
   // Hourly rate for a vehicle type: its own rate when the company set one,
   // otherwise the sedan hourly rate times the type's multiplier.
-  const hourlyRate = (r, type) => { const own = num(r.hourlyBy && r.hourlyBy[type], 0); return own > 0 ? own : round2(num(r.hourly, 0) * num(r.multipliers && r.multipliers[type], 1)); };
+  // Same for base fare and per-mile rate (rates.baseBy, rates.perMileBy).
+  const RATE_BY = ['base', 'perMile', 'hourly'];
+  const rateBy = (r, key, type) => { const own = num(r[key + 'By'] && r[key + 'By'][type], 0); return own > 0 ? own : round2(num(r[key], 0) * num(r.multipliers && r.multipliers[type], 1)); };
+  const hourlyRate = (r, type) => rateBy(r, 'hourly', type);
   const DEFAULT_BAGS = { 'Sedan': 2, 'SUV': 5, 'Business Van': 8, 'Sprinter Van': 12, 'Party Bus': 4 };
   // Cancellation and free waiting, shown to customers when they book.
   // Travel agents and other bookers who book rides for their clients earn a
@@ -493,8 +496,9 @@
       fare = r.airportFlat * mult;
       lines.push({ label: `Airport flat rate (${type})`, amount: round2(fare), kind: 'fare' });
     } else {
-      fare = Math.max((r.base + fareMiles * r.perMile) * mult, r.minFare * mult);
-      lines.push({ label: `${fareMiles} mi at $${money(r.perMile * mult)}/mi + $${money(r.base * mult)} base (${type})`, amount: round2(fare), kind: 'fare' });
+      const baseF = rateBy(r, 'base', type), perMi = rateBy(r, 'perMile', type);
+      fare = Math.max(baseF + fareMiles * perMi, r.minFare * mult);
+      lines.push({ label: `${fareMiles} mi at $${money(perMi)}/mi + $${money(baseF)} base (${type})`, amount: round2(fare), kind: 'fare' });
     }
     fare = round2(fare);
 
@@ -523,7 +527,7 @@
       if (via.length) {
         via.forEach((s, i) => {
           const w = stopWait(b, i, defWait);
-          const dist = overridden ? 0 : round2(detours[i] * r.perMile * mult);
+          const dist = overridden ? 0 : round2(detours[i] * rateBy(r, 'perMile', type));
           const a = round2(dist + w * r.waitPerMin + fee);
           addons += a;
           const bits = [overridden ? '' : `+${detours[i]} mi`, w ? `${w} min wait` : ''].filter(Boolean).join(', ');
@@ -4081,11 +4085,15 @@
       if (r.multipliers) for (const t of VEHICLE_TYPES) if (t in r.multipliers) {
         const n = num(r.multipliers[t], NaN); if (!(n > 0 && n <= 10)) fail(`Check the multiplier for ${t}.`); c.rates.multipliers[t] = round2(n);
       }
-      if (r.hourlyBy) {
+      const RATE_NAME = { base: 'base fare', perMile: 'per-mile rate', hourly: 'hourly rate' };
+      for (const key of RATE_BY) {
+        const given = r[key + 'By'];
+        if (!given) continue;
         const hb = {};
-        for (const t of VEHICLE_TYPES) if (t in r.hourlyBy && String(r.hourlyBy[t]).trim() !== '') { const n = num(r.hourlyBy[t], NaN); if (!(n >= 0 && n <= 5000)) fail(`Check the hourly rate for ${t}.`); if (n > 0) hb[t] = round2(n); }
-        c.rates.hourlyBy = hb;
-        if (hb.Sedan) c.rates.hourly = hb.Sedan;
+        for (const t of VEHICLE_TYPES) if (t in given && String(given[t]).trim() !== '') { const n = num(given[t], NaN); if (!(n >= 0 && n <= 5000)) fail(`Check the ${RATE_NAME[key]} for ${t}.`); if (n > 0) hb[t] = round2(n); }
+        c.rates[key + 'By'] = hb;
+        // The Sedan's own rate is also the plain rate other vehicles fall back on.
+        if (hb.Sedan) c.rates[key] = hb.Sedan;
       }
       if (r.bags) {
         c.rates.bags = bagsCfg(c);
