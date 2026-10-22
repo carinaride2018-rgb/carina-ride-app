@@ -116,7 +116,7 @@
       <div class="row">${canCharge ? `<button class="btn sm" type="button" id="te-charge">${what}</button>` : ''}${(open || p.failed) && (p.needsCard || p.failed || open) ? `<button class="btn sm" type="button" id="te-cardlink">${p.needsCard || p.failed ? 'Text card link' : 'Text link to change card'}</button>` : ''}
         ${t.payment.status !== 'paid' && t.status !== 'cancelled' ? '<button class="btn sm" type="button" data-pay="cash">Paid in cash</button>' : ''}</div></div>`;
   }
-  const payPill = (t) => t.pay ? cardPill(t) : t.status === 'cancelled' ? '' : t.payment.status !== 'paid' && t.payment.method === 'account' ? '<span class="pill s-accepted">On account</span>' : t.payment.status !== 'paid' && t.payment.deposit ? `<span class="pill s-assigned">Deposit ${esc(money(t.payment.deposit))} paid</span>` : `<span class="pill ${t.payment.status}">${t.payment.status === 'paid' ? 'Paid' + (t.payment.method ? ' · ' + esc(t.payment.method) : '') : 'Unpaid'}</span>`;
+  const payPill = (t) => t.pay ? cardPill(t) : t.status === 'cancelled' ? '' : t.payment.status !== 'paid' && t.payment.method === 'account' ? '<span class="pill s-accepted">On account</span>' : t.payment.status !== 'paid' && t.payment.method === 'cash' ? '<span class="pill unpaid">Cash due to office</span>' : t.payment.status !== 'paid' && t.payment.deposit ? `<span class="pill s-assigned">Deposit ${esc(money(t.payment.deposit))} paid</span>` : `<span class="pill ${t.payment.status}">${t.payment.status === 'paid' ? 'Paid' + (t.payment.method ? ' · ' + esc(t.payment.method) : '') : 'Unpaid'}</span>`;
   const toLocalInput = (d) => { const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 16); };
   const defaultPickup = () => { const d = new Date(Date.now() + 3 * 3600e3); d.setMinutes(Math.ceil(d.getMinutes() / 15) * 15, 0, 0); return toLocalInput(d); };
   const mapsLink = (addr) => 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(addr);
@@ -1576,29 +1576,39 @@
     function drawCard() {
       const el = $('#bk-card', host);
       if (!el) return;
-      const key = [state.accountId, newCard, !!saved(), dispatch, state.payBy].join('|');
+      const key = [state.accountId, newCard, !!saved(), dispatch, state.payBy, state.payCash].join('|');
       if (key === cardKey) return;
       cardKey = key;
-      if (co.cards === false || state.accountId) { el.innerHTML = ''; return; }
+      // Cash paid to the office: offered next to card, or on its own when the company takes no cards.
+      const cashPick = co.cash && !state.accountId && !dispatch && !(agent && state.payBy === 'passenger');
+      if (cashPick && co.cards === false) state.payCash = true;
+      const cashNote = `<div class="cardbox"><b class="small">Pay cash to ${esc(co.name || 'the office')}</b><p class="small muted">No card needed now. Pay ${esc(co.name || 'the office')} before your ride; your chauffeur doesn't take payment.</p></div>`;
+      if (cashPick && co.cards !== false) {
+        el.innerHTML = `<div class="seg" role="group" aria-label="How to pay" style="margin-bottom:8px"><button type="button" data-pay="card" aria-pressed="${!state.payCash}">Pay by card</button><button type="button" data-pay="cash" aria-pressed="${!!state.payCash}">Pay cash</button></div><div id="bk-cardbody"></div>`;
+        $$('[data-pay]', el).forEach((b) => { b.onclick = () => { state.payCash = b.dataset.pay === 'cash'; drawCard(); }; });
+        if (state.payCash) { $('#bk-cardbody', el).innerHTML = cashNote; return; }
+      } else if (cashPick) { el.innerHTML = cashNote; return; }
+      const box = $('#bk-cardbody', el) || el;
+      if (co.cards === false || state.accountId) { box.innerHTML = ''; return; }
       if (dispatch || (agent && state.payBy === 'passenger')) {
-        el.innerHTML = `<p class="note small">Paid by card on file. We text the ${agent ? 'client' : 'passenger'} a link to save their card.</p>`;
+        box.innerHTML = `<p class="note small">Paid by card on file. We text the ${agent ? 'client' : 'passenger'} a link to save their card.</p>`;
         return;
       }
       const hrs = (pol && pol.chargeHours != null ? pol.chargeHours : 24);
       const how = pol && pol.chargeWhen === 'before' ? `Nothing is charged now. The fare goes on your card ${hrs} hours before pickup (right away if pickup is sooner), and extras like waiting time or an added stop after the ride.` : `The fare is charged to your card when you book. Extras like waiting time, an added stop or a new destination go on the same card after the ride${pol && pol.cancelHours ? `, and cancelling at least ${pol.cancelHours} hours before pickup gets a full refund` : ''}.`;
       const k = saved();
       if (k && !newCard) {
-        el.innerHTML = `<div class="cardbox"><div class="spread"><span class="small"><b>Card on file</b><br>${esc(cardName(k))}${k.exp ? ` · exp ${esc(k.exp)}` : ''}</span>${co.payMode === 'demo' ? '<button class="linkbtn small" type="button" id="bk-newcard">Use another card</button>' : ''}</div><p class="small muted">${how}</p></div>`;
-        const b = $('#bk-newcard', el); if (b) b.onclick = () => { newCard = true; drawCard(); };
+        box.innerHTML = `<div class="cardbox"><div class="spread"><span class="small"><b>Card on file</b><br>${esc(cardName(k))}${k.exp ? ` · exp ${esc(k.exp)}` : ''}</span>${co.payMode === 'demo' ? '<button class="linkbtn small" type="button" id="bk-newcard">Use another card</button>' : ''}</div><p class="small muted">${how}</p></div>`;
+        const b = $('#bk-newcard', box); if (b) b.onclick = () => { newCard = true; drawCard(); };
       } else if (co.payMode === 'stripe') {
-        el.innerHTML = `<div class="cardbox"><b class="small">Card on file</b><p class="small muted">After you book, you'll save your card on a secure Stripe page. ${how}</p></div>`;
+        box.innerHTML = `<div class="cardbox"><b class="small">Card on file</b><p class="small muted">After you book, you'll save your card on a secure Stripe page. ${how}</p></div>`;
       } else {
-        el.innerHTML = `<div class="cardbox stack" style="gap:8px"><b class="small">Card on file</b>
+        box.innerHTML = `<div class="cardbox stack" style="gap:8px"><b class="small">Card on file</b>
           <label class="field"><span>Card number</span><input id="bk-cardno" class="mono" inputmode="numeric" autocomplete="cc-number" value="${esc(state.cardNo || '4242 4242 4242 4242')}"></label>
           <label class="field"><span>Expiry (MM/YY)</span><input id="bk-cardexp" class="mono" autocomplete="cc-exp" value="${esc(state.cardExp || '12/30')}"></label>
           <p class="small muted">${how}${co.payMode === 'demo' ? ' Demo: no real card is charged; a card ending 0341 shows a decline.' : ''}</p></div>`;
-        $('#bk-cardno', el).oninput = (e) => { state.cardNo = e.target.value; };
-        $('#bk-cardexp', el).oninput = (e) => { state.cardExp = e.target.value; };
+        $('#bk-cardno', box).oninput = (e) => { state.cardNo = e.target.value; };
+        $('#bk-cardexp', box).oninput = (e) => { state.cardExp = e.target.value; };
       }
     }
     const setService = (s) => { state.service = s; $$('[data-service]', form).forEach((b) => b.setAttribute('aria-pressed', b.dataset.service === s)); sync(); requote(); };
@@ -2089,7 +2099,7 @@
           <dt>Vehicle</dt><dd>${esc(t.vehicle ? t.vehicle.name : t.vehicleType)}</dd>${t.driver ? `<dt>Chauffeur</dt><dd>${esc(t.driver.name)}</dd>` : ''}</dl>
         <div>${quoteLines(t.price)}
           <div class="qline" style="border-bottom:0;font-weight:700"><span style="color:var(--ink)">Total</span><span class="num">${money(t.price.total)}</span></div></div>
-        <p class="small muted">${t.account && t.payment.status !== 'paid' ? `Billed to ${esc(t.account.name)} on the monthly invoice${t.poNumber ? `, PO ${esc(t.poNumber)}` : ''}.` : t.payment.status === 'paid' ? `Paid by ${esc(t.payment.method === 'card_on_file' ? 'card' : t.payment.method)}${t.payment.last4 ? ' ending ' + esc(t.payment.last4) : ''} on ${esc(fmtDT(t.payment.paidAt))}.` : 'Not paid yet.'}</p></div>`,
+        <p class="small muted">${t.account && t.payment.status !== 'paid' ? `Billed to ${esc(t.account.name)} on the monthly invoice${t.poNumber ? `, PO ${esc(t.poNumber)}` : ''}.` : t.payment.status === 'paid' ? `Paid by ${esc(t.payment.method === 'card_on_file' ? 'card' : t.payment.method)}${t.payment.last4 ? ' ending ' + esc(t.payment.last4) : ''} on ${esc(fmtDT(t.payment.paidAt))}.` : t.payment.method === 'cash' ? 'Cash, paid to the office. Not paid yet.' : 'Not paid yet.'}</p></div>`,
       footer: '<button class="btn" type="button" data-close>Close</button>',
     });
     $('[data-close]', m).onclick = closeModal;
@@ -4176,6 +4186,11 @@
           </div>
           <div class="panel stack"><h2>Booking terms</h2><p class="small muted">Optional. When filled in, customers must tick "I agree" before they book online or accept a quote, and each trip records the version they agreed to.</p>
             <label class="field"><span>Your terms and conditions</span><textarea name="terms" rows="6" maxlength="6000" placeholder="For example: no smoking; a cleaning fee of $250 applies to spills; children under 8 need a car seat." ${ro}>${esc(s.company.terms || '')}</textarea></label></div>
+          <div class="panel stack" id="rs-payopts"><h2>How customers pay</h2>
+            <p class="small muted">Payment always goes through ${esc(s.company.name)}, never to the chauffeur. Turn on one or both; with both on, the customer picks when booking.</p>
+            <label class="switch"><input type="checkbox" name="payCard" id="rs-paycard" ${s.company.cardChoice !== false ? 'checked' : ''} ${ro}><span>Card (charged through Stripe, set up below)</span></label>
+            <label class="switch"><input type="checkbox" name="payCash" id="rs-paycash" ${s.company.cash ? 'checked' : ''} ${ro}><span>Cash, paid to the office (mark the ride paid in Trips)</span></label>
+            <p class="small faint">Square: coming soon. It needs LimoRelay's Square app to be set up first.</p></div>
           <div class="panel stack" id="rs-cards"><h2>Card payments</h2><p class="small faint">Loading…</p></div>
           <div id="rs-err"></div>
           ${isAdmin ? '<div class="savebar"><button class="btn primary" type="submit">Save rates and brand</button></div>' : ''}
@@ -4226,7 +4241,7 @@
         const policy = { cancelHours: f.pol_cancelHours, cancelFeePct: f.pol_cancelFeePct, waitAirport: f.pol_waitAirport, waitOther: f.pol_waitOther, noShowFeePct: f.pol_noShowFeePct, chargeWhen: f.pol_chargeWhen, chargeHours: f.pol_chargeHours };
         await busy($('button[type=submit]', e.target), async () => {
           try {
-            const res = await api('dispatch.saveSettings', { name: f.name, color: f.color, tagline: f.tagline, phone: f.phone, email: f.email, rates, policy, terms: f.terms });
+            const res = await api('dispatch.saveSettings', { name: f.name, color: f.color, tagline: f.tagline, phone: f.phone, email: f.email, rates, policy, terms: f.terms, payOptions: { card: !!f.payCard, cash: !!f.payCash } });
             setSession({ ...session, company: { ...session.company, ...res.company } });
             toast('Saved.'); draw();
           } catch (err) { showErr($('#rs-err', v), err); }

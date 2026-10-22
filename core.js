@@ -700,8 +700,12 @@
     // Commission on a finished ride: the ride price before gratuity and tax.
     const commissionOf = (t) => (t.agent && t.status === 'completed' ? round2(((t.price && t.price.subtotal) || 0) * (t.agent.pct || 0) / 100) : 0);
     const pubUserPrefs = (u) => (u && u.prefs ? clone(u.prefs) : null);
-    const cardsOn = (c) => payMode === 'demo' || (payMode === 'stripe' && !!(c.stripe && c.stripe.ready));
-    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), payMode, logo: c.logo || '' });
+    // How a company takes payment: card (Stripe), cash paid to the office, or both
+    // (the customer picks when booking). Chauffeurs never collect payment.
+    const payOpts = (c) => ({ card: true, cash: false, ...((c && c.payOptions) || {}) });
+    const cardsOn = (c) => payOpts(c).card !== false && (payMode === 'demo' || (payMode === 'stripe' && !!(c.stripe && c.stripe.ready)));
+    const cashOn = (c) => !!payOpts(c).cash;
+    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), cash: cashOn(c), cardChoice: payOpts(c).card !== false, payMode, logo: c.logo || '' });
 
     async function hashPw(pw, salt) { return hash(String(pw), salt); }
     async function setPassword(u, pw) { u.salt = randomId(8); u.passHash = await hashPw(pw, u.salt); }
@@ -2210,9 +2214,12 @@
       if (agreed) { b.termsAgreed = agreed; if (rb) rb.termsAgreed = agreed; }
       if (b.accountId && b.accountId !== ctx.user.accountId) fail("You can't bill that company account.");
       // Card on file: typed here in the demo; with Stripe it's saved on Stripe's page right after booking.
+      // Cash: chosen by the customer, or the only way when the company takes no cards.
+      const cash = !b.accountId && cashOn(ctx.company) && (!!(a.booking || {}).payCash || !cardsOn(ctx.company));
+      if ((a.booking || {}).payCash && !cashOn(ctx.company)) fail(`${ctx.company.name} doesn't take cash. Choose card.`);
       const cardIn = a.card || (a.booking || {}).card;
-      const card = cardIn && !payByPassenger && payMode === 'demo' && !b.accountId && cardsOn(ctx.company) ? demoCard(cardIn, ctx.user.name) : null;
-      if (!card && !payByPassenger && !ctx.user.card && !b.accountId && cardsOn(ctx.company) && payMode === 'demo') fail(`Add a card. ${chargeNote(ctx.company)}.`);
+      const card = cardIn && !cash && !payByPassenger && payMode === 'demo' && !b.accountId && cardsOn(ctx.company) ? demoCard(cardIn, ctx.user.name) : null;
+      if (!card && !cash && !payByPassenger && !ctx.user.card && !b.accountId && cardsOn(ctx.company) && payMode === 'demo') fail(`Add a card. ${chargeNote(ctx.company)}.`);
       if (card) ctx.user.card = card;
       const wantsLanding = !!((a.booking || {}).landing && a.booking.landing.on);
       const t = newTrip(ctx.company, b, ctx.user, 'online', ctx.user.name, (a.booking || {}).promoCode, wantsLanding);
@@ -2221,6 +2228,7 @@
       const lt = wantsLanding ? landingTrip(ctx.company, t, a.booking, ctx.user, 'online', ctx.user.name) : null;
       if (lt) notify(t, 'booked');
       const reps = bookRepeats(ctx.company, a.booking || {}, plan, t, r, ctx.user, 'online', ctx.user.name);
+      if (cash) for (const x of [t, r, lt, ...reps]) if (x) payCash(x);
       if (agent) agentBooked(ctx, [t, r, lt, ...reps].filter(Boolean), payByPassenger);
       payStep(t); if (r) payStep(r); if (lt) payStep(lt); reps.forEach(payStep);
       // Remember how they like to ride for next time (an agent's clients differ).
@@ -2262,6 +2270,12 @@
     // commission rate at the time. The passenger gets the usual texts; the
     // agent gets an email copy. "Passenger pays" sends the client a card link
     // instead of using the agent's card.
+    // A ride paid in cash to the office: no card is taken or charged; the office marks it paid.
+    function payCash(t) {
+      if (t.payment.status === 'paid') return;
+      t.payment = { ...t.payment, method: 'cash', status: 'unpaid' };
+      delete t.cardToken; delete t.card;
+    }
     function agentBooked(ctx, trips, payByPassenger) {
       const u = ctx.user, c = ctx.company;
       for (const t of trips) {
@@ -4106,6 +4120,11 @@
       const color = /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color : c.color;
       Object.assign(c, { name, tagline: str(a.tagline, 120), color, phone: str(a.phone, 30), email: str(a.email, 120) });
       if ('terms' in a) c.terms = str(a.terms, 6000);
+      if (a.payOptions) {
+        const po = { card: a.payOptions.card !== false, cash: !!a.payOptions.cash };
+        if (!po.card && !po.cash) fail('Turn on at least one way to pay: card or cash.');
+        c.payOptions = po;
+      }
       const r = a.rates || {};
       const pos = (k, max) => { if (k in r) { const n = num(r[k], NaN); if (!(n >= 0 && n <= max)) fail(`Check the value for ${k}.`); c.rates[k] = round2(n); } };
       pos('base', 1000); pos('perMile', 100); pos('minFare', 5000); pos('hourly', 2000); pos('minHours', 24);
