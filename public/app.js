@@ -201,7 +201,7 @@
 
   // ---- UI primitives --------------------------------------------------------
   let toastTimer = null;
-  const HIST_LABELS = { late_alert: 'Office alerted: driver not on the way', confirm_resent: 'Confirmation sent again', paid: 'Charged', refunded: 'Refunded', card_failed: 'Card declined', card_saved: 'Card saved', card_link: 'Card link sent', no_show: 'No-show', pickup_moved: 'Pickup moved', flight_cancelled: 'Flight cancelled', declined: 'Declined', edited: 'Edited', unassigned: 'Unassigned', no_answer: 'No answer in time', farm_offered: 'Offered to partner', farm_accepted: 'Partner accepted', farm_declined: 'Partner declined', farm_cancelled: 'Taken back from partner', farm_returned: 'Partner handed it back', farm_expired: 'Partner offer expired', farm_completed: 'Partner completed', auto_farm_none: 'Automatic farm-out stopped' };
+  const HIST_LABELS = { wake_call: 'Wake-up call', wake_ok: 'Driver confirmed awake', wake_alert: 'Office alerted: no answer to wake-up call', late_alert: 'Office alerted: driver not on the way', confirm_resent: 'Confirmation sent again', paid: 'Charged', refunded: 'Refunded', card_failed: 'Card declined', card_saved: 'Card saved', card_link: 'Card link sent', no_show: 'No-show', pickup_moved: 'Pickup moved', flight_cancelled: 'Flight cancelled', declined: 'Declined', edited: 'Edited', unassigned: 'Unassigned', no_answer: 'No answer in time', farm_offered: 'Offered to partner', farm_accepted: 'Partner accepted', farm_declined: 'Partner declined', farm_cancelled: 'Taken back from partner', farm_returned: 'Partner handed it back', farm_expired: 'Partner offer expired', farm_completed: 'Partner completed', auto_farm_none: 'Automatic farm-out stopped' };
   function toast(text, bad, ms) {
     let el = $('.toast');
     if (!el) { el = document.createElement('div'); el.className = 'toast'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
@@ -2428,6 +2428,7 @@
           <div class="spread"><div><h1>${esc(me.name.split(' ')[0])}'s trips</h1><p class="muted small">${esc(session.company.name)}</p></div>
             <label class="switch"><input type="checkbox" id="drv-avail" ${me.available ? 'checked' : ''}><span>${me.available ? 'Available' : 'Off duty'}</span></label></div>
           ${me.photo ? '' : `<div class="panel">${photoField(me.name, '', 'drv-photo')}</div>`}
+          ${trips.filter((t) => t.wake && t.wake.calls && !t.wake.ok && ['assigned', 'accepted'].includes(t.status)).slice(0, 1).map((t) => `<div class="panel wakebox"><div class="stack" style="gap:2px"><b>Wake-up call</b><span class="small muted">Pickup ${esc(fmtTime(t.pickupAt))} from ${esc(t.pickup.split(',')[0])} (${esc(t.ref)})</span></div><button class="btn primary" type="button" data-act="wake" data-id="${t.id}">I'm awake</button></div>`).join('')}
           ${waiting.length ? `<div class="stack"><span class="label">Needs your answer</span>${waiting.map((t) => `
             <div class="trip"><div class="spread"><b>${esc(fmtDT(t.pickupAt))}</b><span class="mono small faint">${esc(t.ref)}</span></div>
               ${routeHtml(t)}${flightLine(t)}<p class="small muted">${esc(t.serviceLabel)} · ${esc(t.vehicle ? t.vehicle.name : t.vehicleType)} · ${t.passengers} pax${extrasList(t).length ? ' · ' + esc(extrasList(t).join(' · ')) : ''}</p>
@@ -2478,6 +2479,7 @@
           if (b.dataset.act === 'accept') { await api('driver.respond', { id, accept: true }); toast('Trip accepted. The passenger has been told.'); }
           if (b.dataset.act === 'decline') { await api('driver.respond', { id, accept: false }); toast('Declined. Dispatch will reassign it.'); }
           if (b.dataset.act === 'advance') { const t = await api('driver.advance', { id }); toast(t.statusLabel + '.'); }
+          if (b.dataset.act === 'wake') { await api('driver.wakeOk', { id }); toast('Thanks. Have a safe drive.'); }
           last = ''; refresh();
         } catch (err) { toast(err.message, true); }
       }); });
@@ -3576,13 +3578,20 @@
             <label class="field"><span>Email and notify the office if the driver hasn't tapped "On the way": first alert, minutes before pickup (0 = off)</span><input class="input" type="number" name="lateAlert1" min="0" max="240" value="${r.lateAlert1}" ${ro}></label>
             <label class="field"><span>Second alert, minutes before pickup (0 = off)</span><input class="input" type="number" name="lateAlert2" min="0" max="240" value="${r.lateAlert2}" ${ro}></label>
           </fieldset>
+          <fieldset class="fs"><legend>Wake-up calls</legend>
+            <label class="switch"><input type="checkbox" name="wakeCall" ${r.wakeCall ? 'checked' : ''} ${ro}><span>Phone the driver before early pickups</span></label>
+            <p class="small muted">The driver's phone rings and a voice reads the pickup time and address. They press 1, or tap "I'm awake" in the driver app. No answer: we call once more, then email and notify the office. Calls go through Twilio from your texting number (about 2 cents a call).</p>
+            <div class="grid3"><label class="field"><span>Call this many minutes before pickup</span><input class="input" type="number" name="wakeMin" min="15" max="300" value="${r.wakeMin}" ${ro}></label>
+              <label class="field"><span>For pickups before (hour, 24-hour clock; 24 = every ride)</span><input class="input" type="number" name="wakeBeforeHour" min="1" max="24" value="${r.wakeBeforeHour}" ${ro}></label>
+              <label class="field"><span>Call again after (minutes)</span><input class="input" type="number" name="wakeRetryMin" min="3" max="60" value="${r.wakeRetryMin}" ${ro}></label></div>
+          </fieldset>
           <div id="ad-err"></div>
           ${isAdmin ? '<div><button class="btn primary" type="submit">Save</button></div>' : '<p class="small faint">Only a company admin can change these.</p>'}
         </form>`;
       const f = $('#ad-form', host);
       f.onsubmit = async (e) => {
         e.preventDefault();
-        const rules = { ...formData(f), autoAssign: f.autoAssign.checked, remindEvening: f.remindEvening.checked };
+        const rules = { ...formData(f), autoAssign: f.autoAssign.checked, remindEvening: f.remindEvening.checked, wakeCall: f.wakeCall.checked };
         await busy($('button[type=submit]', f), async () => {
           try { await api('dispatch.saveRules', { rules }); toast('Auto-dispatch saved.'); redraw(); } catch (err) { showErr($('#ad-err', host), err); }
         });
@@ -4280,7 +4289,7 @@
             <p class="small faint">The 24-hour reminder goes to trips booked more than a day ahead. Passengers of trips taken from a partner company hear from that company. ${isAdmin ? '' : 'Only a company admin can change these.'}</p>
             <div class="row">${isAdmin ? '<button class="btn primary" type="submit">Save</button>' : ''}<button class="btn" type="button" id="cm-words">Edit the wording</button></div>
           </form>
-          <div class="panel">${list.map((m) => `<div class="msg"><div><span class="pill ${m.channel === 'sms' ? 's-en_route' : 's-arrived'}">${m.channel === 'sms' ? 'Text' : 'Email'}</span></div>
+          <div class="panel">${list.map((m) => `<div class="msg"><div><span class="pill ${m.channel === 'sms' ? 's-en_route' : m.channel === 'call' ? 's-accepted' : 's-arrived'}">${m.channel === 'sms' ? 'Text' : m.channel === 'call' ? 'Call' : 'Email'}</span></div>
             <div class="stack" style="gap:2px"><div class="small faint"><span class="mono">${esc(fmtDT(m.at))}</span> · to ${esc(m.recipient)} · ${esc(m.ref)}${deliveryTag(m)}</div><div>${esc(m.body).replace(/#(track|review|quote)\.([a-f0-9]+)/g, '<a href="#$1.$2">#$1.$2</a>')}</div></div></div>`).join('') || '<p class="faint">Nothing sent yet.</p>'}</div>`;
         const f = $('#cm-form', v);
         const again = () => { last = ''; refresh(); };

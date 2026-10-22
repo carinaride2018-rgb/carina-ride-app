@@ -88,6 +88,21 @@ function createProviders(rawEnv, opts) {
     });
     return r && r.sid;
   }
+  // Wake-up call: Twilio reads the message and waits for one key; the key goes
+  // to answerUrl (<PUBLIC_URL>twilio/wake). Calls come from TWILIO_VOICE_FROM, or
+  // TWILIO_FROM when that is a phone number (a Messaging Service can't call).
+  const voiceFrom = () => { const v = String(env.TWILIO_VOICE_FROM || '').trim() || String(env.TWILIO_FROM || '').trim(); return /^MG/i.test(v) ? '' : v; };
+  async function placeCall(to, body, answerUrl) {
+    const sid = env.TWILIO_ACCOUNT_SID, from = voiceFrom();
+    if (!from) throw new Error('Set TWILIO_VOICE_FROM to a Twilio phone number to place calls');
+    const x = (t) => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const say = `<Say voice="Polly.Joanna">${x(body)}</Say>`;
+    const twiml = `<Response><Gather numDigits="1" timeout="8" method="POST" action="${x(answerUrl)}">${say}<Pause length="1"/>${say}</Gather><Say voice="Polly.Joanna">We did not hear from you. We will call again shortly.</Say></Response>`;
+    const r = await request('POST', `${url('TWILIO', 'https://api.twilio.com')}/2010-04-01/Accounts/${encodeURIComponent(sid)}/Calls.json`, {
+      headers: { Authorization: 'Basic ' + Buffer.from(`${sid}:${env.TWILIO_AUTH_TOKEN}`).toString('base64') }, form: { To: to, From: from, Twiml: twiml },
+    });
+    return r && r.sid;
+  }
   // Twilio's delivery state for one sent text, e.g. delivered, or undelivered with error 30034.
   async function smsStatus(msgSid) {
     const sid = env.TWILIO_ACCOUNT_SID;
@@ -120,6 +135,12 @@ function createProviders(rawEnv, opts) {
   async function deliver(m) {
     const rcpt = String(m.recipient || '').trim();
     const phone = !isEmail(rcpt) && e164(rcpt);
+    if (m.channel === 'call') {
+      if (!phone) return { id: m.id, status: 'skipped', error: 'No phone number' };
+      if (!on.sms) return { id: m.id, status: 'simulated' };
+      try { return { id: m.id, status: 'sent', via: String((await placeCall(phone, m.body, m.answerUrl)) || '') }; }
+      catch (e) { log(`call to ${rcpt} failed: ${e.message}`); return { id: m.id, status: 'failed', error: e.message }; }
+    }
     const channel = isEmail(rcpt) ? 'email' : phone ? 'sms' : null;
     if (!channel) return { id: m.id, status: 'skipped', error: 'No phone number or email address' };
     if (!on[channel]) return { id: m.id, status: 'simulated' };
@@ -390,7 +411,7 @@ function createProviders(rawEnv, opts) {
     // What the owner's Connections screen shows. Never includes key values.
     status() {
       return {
-        sms: { on: on.sms, service: 'Twilio', from: on.sms ? String(env.TWILIO_FROM).replace(/^(\+?\d{2})\d+(\d{2})$/, '$1•••$2') : '' },
+        sms: { on: on.sms, voice: on.sms && !!voiceFrom(), service: 'Twilio', from: on.sms ? String(env.TWILIO_FROM).replace(/^(\+?\d{2})\d+(\d{2})$/, '$1•••$2') : '' },
         email: { on: on.email, service: 'Resend', from: on.email ? fromAddress() : '' },
         cards: { on: on.cards, service: 'Stripe', mode: on.cards ? (String(env.STRIPE_SECRET_KEY).startsWith('sk_live') ? 'live' : 'test') : '', webhook: has('STRIPE_WEBHOOK_SECRET') },
         maps: { on: on.maps, service: 'Google Maps', routes: [...routes.keys()].filter((k) => !k.startsWith('@geo|')).length, mapDisplay: !!env.GOOGLE_MAPS_BROWSER_KEY },

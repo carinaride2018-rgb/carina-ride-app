@@ -320,6 +320,15 @@ async function runCharges() {
 // unsigned so the Inbox can be tried out.
 async function twilioRoute(req, res, url, raw) {
   const xml = (s) => send(res, 200, `<?xml version="1.0" encoding="UTF-8"?><Response>${s || ''}</Response>`, 'text/xml; charset=utf-8');
+  if (url.pathname === '/twilio/wake' && req.method === 'POST') {
+    // The driver's key press on a wake-up call.
+    const params = Object.fromEntries(new URLSearchParams(raw));
+    if (live.on.sms ? !live.verifyTwilio(req.headers['x-twilio-signature'], base + 'twilio/wake' + url.search, params) : BLANK) return send(res, 403, 'Forbidden', 'text/plain');
+    try {
+      const r = await core.wakeAnswer({ key: url.searchParams.get('k'), digits: params.Digits });
+      return xml(`<Say voice="Polly.Joanna">${r.ok ? 'Thank you. Have a safe drive.' : 'Please press 1 to confirm you are awake.'}</Say>`);
+    } catch (e) { console.error('wake call', e); return xml(); }
+  }
   if (url.pathname !== '/twilio/sms' || req.method !== 'POST') return send(res, 404, 'Not found', 'text/plain');
   const params = Object.fromEntries(new URLSearchParams(raw));
   const href = base + 'twilio/sms' + url.search;

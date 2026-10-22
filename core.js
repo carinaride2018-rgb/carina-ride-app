@@ -91,7 +91,7 @@
   // Corporate accounts: payment terms in days (0 = due on receipt).
   const ACCOUNT_TERMS = [0, 15, 30, 45];
   // Smart dispatch: auto-assign, accept timer, reminders, late-start alert.
-  const DEFAULT_DISPATCH = { autoAssign: false, horizonHours: 24, acceptMin: 20, onNoAnswer: 'next', remindEvening: true, eveningHour: 18, remindBeforeMin: 120, lateStartMin: 20, lateAlert1: 60, lateAlert2: 30, minNoticeHours: 3 };
+  const DEFAULT_DISPATCH = { autoAssign: false, horizonHours: 24, acceptMin: 20, onNoAnswer: 'next', remindEvening: true, eveningHour: 18, remindBeforeMin: 120, lateStartMin: 20, lateAlert1: 60, lateAlert2: 30, minNoticeHours: 3, wakeCall: false, wakeMin: 90, wakeBeforeHour: 9, wakeRetryMin: 10 };
   // Automatic farm-out: send a trip to network partners, in the company's order,
   // when its own drivers can't cover it. Off until the company turns it on.
   const DEFAULT_AUTOFARM = { on: false, noDriver: true, lastCallHours: 2, ratePct: 87.5, answerMin: 15, partners: [] };
@@ -932,6 +932,7 @@
         commission: t.agent ? commissionOf(t) : 0,
         cancelTerms: ['confirmed', 'assigned', 'accepted'].includes(t.status) ? cancelTerms(t) : null,
         editTerms: ['confirmed', 'assigned', 'accepted'].includes(t.status) ? editTerms(t) : null,
+        wake: t.wake ? { calls: t.wake.calls.length, lastCall: t.wake.calls[t.wake.calls.length - 1] || null, ok: t.wake.ok || null, alerted: t.wake.alerted || null } : null,
         landing: (() => { const o = (t.landingId || t.landingOf) && db.trips.find((x) => x.id === (t.landingId || t.landingOf)); return o ? { kind: t.landingId ? 'landing' : 'outbound', id: o.id, ref: o.ref, pickupAt: o.pickupAt, status: o.status, city: (o.outOfTown || t.outOfTown || {}).city || '' } : null; })(),
         awayTime: t.outOfTown ? `${fmtLocal(t.pickupAt, { timezone: t.outOfTown.tz }, true)} ${t.outOfTown.city} time` : '',
         pair: (() => { const o = (t.returnId || t.returnOf) && db.trips.find((x) => x.id === (t.returnId || t.returnOf)); return o ? { kind: t.returnId ? 'return' : 'outbound', id: o.id, ref: o.ref, pickupAt: o.pickupAt } : null; })(),
@@ -1671,6 +1672,46 @@
           `Driver: ${d.name}${d.phone ? ` (${d.phone})` : ''}`, `Vehicle: ${t.vehicleType}`, '', 'Call the driver, or open the dispatch board to reassign the ride.'].join('\n') });
       return true;
     }
+    // Wake-up call: the driver's phone rings wakeMin before an early pickup
+    // (before wakeBeforeHour, 24 = every ride) and they press 1, or tap
+    // "I'm awake" in the app. No answer: one more call after wakeRetryMin,
+    // then the office gets an email and a notification.
+    function wakeStep(company, cfg, t, d, nowMs, pickMs) {
+      if (!cfg.wakeCall || !d.phone) return false;
+      if (t.wake && t.wake.driverId !== d.id) t.wake = null;
+      if (t.wake && (t.wake.ok || t.wake.alerted)) return false;
+      const stamp = now().toISOString();
+      const call = () => {
+        const first = String(d.name || '').split(' ')[0];
+        t.wake.calls.push(stamp);
+        db.messages.unshift({ id: id('msg'), companyId: company.id, tripId: t.id, ref: t.ref, at: stamp, recipient: d.phone, channel: 'call', kind: 'wake', wakeKey: t.wake.key,
+          body: `Good morning ${first}. This is your wake-up call from ${company.name}. You have a pickup at ${fmtLocal(t.pickupAt, company, false)}, from ${t.pickup}. Press 1 to confirm you are awake.` });
+        log(t, 'wake_call', 'System', `Wake-up call ${t.wake.calls.length} to ${d.name}`);
+        return true;
+      };
+      if (!t.wake) {
+        if (cfg.wakeBeforeHour < 24 && localParts(t.pickupAt, company.timezone).hour >= cfg.wakeBeforeHour) return false;
+        if (nowMs < pickMs - cfg.wakeMin * 60e3 || nowMs > pickMs - 15 * 60e3) return false;
+        t.wake = { key: randomId(8), driverId: d.id, calls: [] };
+        return call();
+      }
+      const last = new Date(t.wake.calls[t.wake.calls.length - 1]).getTime();
+      if (nowMs < last + cfg.wakeRetryMin * 60e3) return false;
+      if (t.wake.calls.length < 2 && nowMs < pickMs) return call();
+      t.wake.alerted = stamp;
+      log(t, 'wake_alert', 'System', `${d.name} didn't answer the wake-up call`);
+      const office = officeEmail(company);
+      if (office) db.messages.unshift({ id: id('msg'), companyId: company.id, tripId: t.id, ref: t.ref, at: stamp, recipient: office, channel: 'email', kind: 'wake_alert',
+        body: [`${d.name} didn't answer the wake-up call for ${t.ref} (called ${t.wake.calls.length} times).`, '',
+          `Pickup Date and Time: ${fmtLocal(t.pickupAt, company, true)}`, `Pickup Address: ${t.pickup}`, `Driver: ${d.name} (${d.phone})`, `Vehicle: ${t.vehicleType}`, '', 'Call the driver, or open the dispatch board to reassign the ride.'].join('\n') });
+      return true;
+    }
+    function wakeConfirm(t, by) {
+      if (!t.wake || t.wake.ok) return false;
+      t.wake.ok = { at: now().toISOString(), by };
+      log(t, 'wake_ok', by === 'Phone' ? 'Driver' : by, by === 'Phone' ? 'Pressed 1 on the wake-up call' : "Tapped I'm awake");
+      return true;
+    }
     function sweepDispatch(company, force) {
       const n = now();
       if (!force && company.dispatchRun && n.getTime() - new Date(company.dispatchRun).getTime() < 30000) return false;
@@ -1723,6 +1764,7 @@
         const d = findUser(t.driverId);
         if (!d) continue;
         if (lateAlert(company, cfg, t, d, nowMs, pickMs)) changed = true;
+        if (wakeStep(company, cfg, t, d, nowMs, pickMs)) changed = true;
         t.reminders = t.reminders || {};
         const to = d.phone || d.email;
         const lp = localParts(t.pickupAt, company.timezone);
@@ -2036,6 +2078,7 @@
           if (mv && recent(mv.at) && busyStatus(t.status)) add(`moved:${t.id}:${t.pickupAt}`, `Pickup moved for ${t.ref}`, `New pickup time ${at(t)}. ${mv.note || ''}`.trim(), '#driver', mv.at);
           const cx = lastOf(t, 'cancelled');
           if (t.status === 'cancelled' && cx && recent(cx.at)) add(`cancel:${t.id}`, `${t.ref} was cancelled`, `${at(t)} from ${t.pickup}.`, '#driver', cx.at);
+          if (t.wake && !t.wake.ok && t.wake.driverId === u.id && t.wake.calls.length && ['assigned', 'accepted'].includes(t.status) && recent(t.wake.calls[t.wake.calls.length - 1], 2)) add(`wake:${t.id}:${t.wake.calls.length}`, 'Wake-up call', `Pickup ${at(t)} from ${t.pickup}. Open the app and tap I'm awake.`, '#driver', t.wake.calls[t.wake.calls.length - 1]);
         }
       } else if (u.role === 'customer') {
         for (const t of db.trips) {
@@ -2060,6 +2103,7 @@
           if (t.companyId !== c.id) continue;
           if (t.source === 'online' && !t.farmIn && !t.landingOf && recent(t.createdAt, 3) && t.status !== 'cancelled') add(`booked:${t.id}`, `New booking ${t.ref}`, `${t.passengerName || 'Passenger'}, ${at(t)}, ${t.vehicleType}. $${money(t.price.total)}.${(() => { const l = t.landingId && db.trips.find((x) => x.id === t.landingId); return l ? ` Plus a pickup when they land${l.outOfTown ? ` in ${l.outOfTown.city}` : ''} (${l.ref}${l.farmout ? `, sent to ${l.farmout.toName}` : l.outOfTown ? ', needs a local company' : ''}).` : ''; })()}`, '#dispatch', t.createdAt);
           const la = t.lateAlerts && t.lateAlerts.last;
+          if (t.wake && t.wake.alerted && !t.wake.ok && ['assigned', 'accepted'].includes(t.status) && recent(t.wake.alerted, 2)) { const dw = findUser(t.driverId); add(`wake:${t.id}`, `No answer to wake-up call: ${t.ref}`, `${dw ? dw.name : 'The driver'} didn't answer the wake-up call. Pickup ${at(t)} from ${t.pickup}.`, '#dispatch', t.wake.alerted); }
           if (la && ['assigned', 'accepted'].includes(t.status) && recent(la.at, 2)) { const dd = findUser(t.driverId); add(`late:${t.id}:${la.min}`, `Driver not on the way: ${t.ref}`, `${dd ? dd.name : 'The driver'} hasn't tapped On the way. Pickup ${at(t)} from ${t.pickup}.`, '#dispatch', la.at); }
           if (t.status === 'confirmed' && t.needsDriver && !t.farmout && recent(t.needsDriver.at)) add(`need:${t.id}:${t.needsDriver.at}`, `${t.ref} needs a driver`, `${t.needsDriver.why}. Pickup ${at(t)}.`, '#dispatch', t.needsDriver.at);
           const cx = lastOf(t, 'cancelled');
@@ -2586,6 +2630,13 @@
         stats: driverStats(ctx.user, 30),
       };
     });
+    def('driver.wakeOk', ['driver'], true, (ctx, a) => {
+      const t = db.trips.find((x) => x.id === a.id && x.driverId === ctx.user.id);
+      if (!t) fail('Trip not found.', 404);
+      if (!t.wake) fail('There is no wake-up call for this ride.');
+      wakeConfirm(t, ctx.user.name);
+      return tripView(t);
+    });
     def('driver.respond', ['driver'], true, (ctx, a) => {
       const t = db.trips.find((x) => x.id === a.id && x.driverId === ctx.user.id);
       if (!t) fail('Trip not found.', 404);
@@ -3044,6 +3095,10 @@
         lateAlert1: int(r.lateAlert1, 0, 240, cur.lateAlert1),
         lateAlert2: int(r.lateAlert2, 0, 240, cur.lateAlert2),
         minNoticeHours: int(r.minNoticeHours, 0, 72, cur.minNoticeHours),
+        wakeCall: 'wakeCall' in r ? !!r.wakeCall && r.wakeCall !== 'false' : cur.wakeCall,
+        wakeMin: int(r.wakeMin, 15, 300, cur.wakeMin),
+        wakeBeforeHour: int(r.wakeBeforeHour, 1, 24, cur.wakeBeforeHour),
+        wakeRetryMin: int(r.wakeRetryMin, 3, 60, cur.wakeRetryMin),
       };
       // Trips parked for lack of a driver get another try under the new rules.
       if (c.dispatch.autoAssign) for (const t of db.trips) if (t.companyId === c.id && t.status === 'confirmed') t.needsDriver = null;
@@ -5505,6 +5560,15 @@
       call,
       pay,
       // A text someone sent to the platform's Twilio number.
+      // The driver pressed a key on the wake-up call.
+      async wakeAnswer({ key, digits }) {
+        await ensure();
+        const t = str(key, 40) && db.trips.find((x) => x.wake && x.wake.key === str(key, 40));
+        if (!t) return { ok: false };
+        if (String(digits || '').trim() !== '1') return { ok: false, found: true };
+        wakeConfirm(t, 'Phone'); save(db);
+        return { ok: true };
+      },
       async inboundSms(msg) {
         await ensure();
         const r = takeInbound(msg || {});
@@ -5525,7 +5589,7 @@
           if (new Date(m.at).getTime() < cutoff) { m.delivery = { status: 'logged' }; continue; }
           m.delivery = { status: 'sending' };
           const c = m.companyId ? findCompany(m.companyId) || {} : { name: 'LimoRelay', email: PLATFORM_EMAIL };
-          out.push({ id: m.id, channel: m.channel, recipient: m.recipient, body: m.body, kind: m.kind || '', ref: m.ref || '', replyTo: m.replyTo || '', company: { name: c.name || '', email: c.email || '', phone: c.phone || '' } });
+          out.push({ id: m.id, channel: m.channel, recipient: m.recipient, body: m.body, ...(m.wakeKey ? { answerUrl: `${(opts.publicUrl || '').replace(/#.*$/, '')}twilio/wake?k=${m.wakeKey}` } : {}), kind: m.kind || '', ref: m.ref || '', replyTo: m.replyTo || '', company: { name: c.name || '', email: c.email || '', phone: c.phone || '' } });
         }
         if (changed) save(db);
         return out;
