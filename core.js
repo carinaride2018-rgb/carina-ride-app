@@ -91,7 +91,7 @@
   // Corporate accounts: payment terms in days (0 = due on receipt).
   const ACCOUNT_TERMS = [0, 15, 30, 45];
   // Smart dispatch: auto-assign, accept timer, reminders, late-start alert.
-  const DEFAULT_DISPATCH = { autoAssign: false, horizonHours: 24, acceptMin: 20, onNoAnswer: 'next', remindEvening: true, eveningHour: 18, remindBeforeMin: 120, lateStartMin: 20, lateAlert1: 60, lateAlert2: 30, minNoticeHours: 3, wakeCall: false, wakeMin: 90, wakeBeforeHour: 9, wakeRetryMin: 10 };
+  const DEFAULT_DISPATCH = { autoAssign: false, horizonHours: 24, acceptMin: 20, onNoAnswer: 'next', remindEvening: true, eveningHour: 18, remindBeforeMin: 120, lateStartMin: 20, lateAlert1: 60, lateAlert2: 30, minNoticeHours: 3, wakeCall: false, wakeMin: 60, wakeBeforeHour: 9, wakeRetryMin: 10 };
   // Automatic farm-out: send a trip to network partners, in the company's order,
   // when its own drivers can't cover it. Off until the company turns it on.
   const DEFAULT_AUTOFARM = { on: false, noDriver: true, lastCallHours: 2, ratePct: 87.5, answerMin: 15, partners: [] };
