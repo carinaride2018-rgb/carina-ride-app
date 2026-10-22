@@ -30,15 +30,15 @@
   const ACTIVE = ['assigned', 'accepted', 'en_route', 'arrived', 'on_board'];
   // Every plan includes dispatch, the driver app and the passenger app; they
   // differ only in price and texts. Founding is for the first 100 companies,
-  // with no setup fee and the price locked for 2 years. Paying a year up front
-  // costs 10 months and skips the setup fee. New companies can start with a
+  // with the price locked for 2 years. No plan has a setup fee (Dawit, 2026-10-22).
+  // Paying a year up front costs 10 months. New companies can start with a
   // 30-day free trial.
   // Platform contact address: shown on the home page and used as reply-to on emails that come from LimoRelay itself.
   const PLATFORM_EMAIL = 'info@limorelay.com';
   const PLANS = {
     founding: { label: 'Founding', monthly: 49, setup: 0, texts: 500, lockMonths: 24, limit: 100, note: 'First 100 companies, price locked for 2 years' },
-    standard: { label: 'Standard', monthly: 99, setup: 299, texts: 1000, note: 'Everything included' },
-    fleet: { label: 'Fleet', monthly: 199, setup: 299, texts: 3000, note: 'For busy fleets' },
+    standard: { label: 'Standard', monthly: 99, setup: 0, texts: 1000, note: 'Everything included' },
+    fleet: { label: 'Fleet', monthly: 199, setup: 0, texts: 3000, note: 'For busy fleets' },
   };
   const YEARLY_MONTHS = 10; // a yearly plan costs 10 months: 2 months free
   const TRIAL_DAYS = 30;
@@ -4516,7 +4516,7 @@
       return {
         plan: c.plan, planLabel: PLANS[c.plan].label, billing: yearly ? 'yearly' : 'monthly', monthlyFee: c.monthlyFee,
         yearlyFee: round2(c.monthlyFee * YEARLY_MONTHS), monthlyEquivalent: yearly ? round2(c.monthlyFee * YEARLY_MONTHS / 12) : c.monthlyFee,
-        setupFee: yearly ? 0 : c.setupFee, setupBilled: !!c.setupBilled, trialEnds: c.trialEnds || null, inTrial: inTrial(c),
+        setupFee: 0, setupBilled: !!c.setupBilled, trialEnds: c.trialEnds || null, inTrial: inTrial(c),
         priceLockedUntil: c.priceLockedUntil || null, paidThrough: c.paidThrough || null,
       };
     }
@@ -4613,7 +4613,7 @@
         id: id('co'), slug: f.slug, name: f.name, tagline: str(f.tagline, 120), color: /^#[0-9a-f]{6}$/i.test(f.color || '') ? f.color : '#3d4f7c',
         phone: str(f.phone, 30), email: f.email, status: f.status || 'active', plan,
         monthlyFee: f.monthlyFee != null && f.monthlyFee !== '' ? round2(num(f.monthlyFee, PLANS[plan].monthly)) : PLANS[plan].monthly,
-        setupFee: f.setupFee != null && f.setupFee !== '' ? round2(num(f.setupFee, PLANS[plan].setup)) : PLANS[plan].setup,
+        setupFee: 0,
         billing: f.billing === 'yearly' ? 'yearly' : 'monthly', trialEnds: f.trial ? new Date(now().getTime() + TRIAL_DAYS * 864e5).toISOString().slice(0, 10) : null,
         priceLockedUntil: plan === 'founding' ? addMonths(now().toISOString(), PLANS.founding.lockMonths).slice(0, 10) : null,
         setupBilled: false, refPrefix: prefix, timezone: str(f.timezone, 40) || 'America/Los_Angeles', nextRef: 1000, network: defaultNetwork(null),
@@ -4821,7 +4821,7 @@
         if (inTrial(c, trialAt || `${period}-28`)) continue;
         const items = [];
         if (c.billing === 'yearly') {
-          // One invoice covers 12 months for the price of 10, no setup fee.
+          // One invoice covers 12 months for the price of 10.
           if (!(c.paidThrough && c.paidThrough >= period)) {
             const through = addMonths(`${period}-15T12:00:00Z`, 11).slice(0, 7);
             items.push({ label: `${PLANS[c.plan].label} plan, yearly ${period} to ${through} (2 months free)`, amount: round2(c.monthlyFee * YEARLY_MONTHS) });
@@ -4830,7 +4830,6 @@
           if (!c.setupBilled) c.setupBilled = true;
         } else {
           items.push({ label: `${PLANS[c.plan].label} plan, ${period}`, amount: c.monthlyFee });
-          if (!c.setupBilled && c.setupFee > 0) items.push({ label: 'One-time setup', amount: c.setupFee });
           c.setupBilled = true;
         }
         const packs = ((c.texts && c.texts.packs) || []).filter((p) => !p.invoiceId && !p.free && p.price > 0);
@@ -5075,7 +5074,7 @@
       const robert = await mkUser({ role: 'customer', companyId: cap.id, name: 'Robert Chen', email: 'robert@demo.com', phone: '(206) 555-0190' });
       const priya = await mkUser({ role: 'customer', companyId: cap.id, name: 'Priya Shah', email: 'travel@acme.demo', phone: '(206) 555-0175', account: 'Acme Corp', discountPct: 10, notes: 'Corporate account, invoice monthly' });
 
-      const sum = mkCo({ slug: 'summit', name: 'Summit Black Car', tagline: 'Denver airport and mountain transfers', color: '#24584a', phone: '(303) 555-0120', email: 'rides@summit.demo', plan: 'standard', monthlyFee: 99, setupFee: 299, billing: 'monthly', refPrefix: 'SUM', timezone: 'America/Denver' });
+      const sum = mkCo({ slug: 'summit', name: 'Summit Black Car', tagline: 'Denver airport and mountain transfers', color: '#24584a', phone: '(303) 555-0120', email: 'rides@summit.demo', plan: 'standard', monthlyFee: 99, setupFee: 0, billing: 'monthly', refPrefix: 'SUM', timezone: 'America/Denver' });
       const sub = mkVeh(sum, { name: 'Chevrolet Suburban', type: 'SUV', capacity: 6, plate: 'CO 552-KRT', color: 'Black', year: 2023, odometer: 30500, lastServiceOdometer: 28000 });
       mkVeh(sum, { name: 'Lincoln Aviator', type: 'Sedan', capacity: 3, plate: 'CO 118-LMV', color: 'Grey', year: 2022, odometer: 41200, lastServiceOdometer: 40000 });
       await mkUser({ role: 'admin', companyId: sum.id, name: 'Greg Lindqvist', email: 'dispatch@summit.demo', phone: '(303) 555-0120' });
@@ -5165,7 +5164,7 @@
 
 
       // A second Seattle-area company so the network has a local partner.
-      const pot = mkCo({ slug: 'pugetsound', name: 'Puget Sound Executive Cars', tagline: 'Executive sedans and SUVs for Seattle, the Eastside and Tacoma', color: '#1f4e79', phone: '(425) 555-0188', email: 'ops@pugetsound.demo', plan: 'fleet', monthlyFee: 199, setupFee: 299, billing: 'yearly', paidThrough: '', refPrefix: 'PSE', timezone: 'America/Los_Angeles' });
+      const pot = mkCo({ slug: 'pugetsound', name: 'Puget Sound Executive Cars', tagline: 'Executive sedans and SUVs for Seattle, the Eastside and Tacoma', color: '#1f4e79', phone: '(425) 555-0188', email: 'ops@pugetsound.demo', plan: 'fleet', monthlyFee: 199, setupFee: 0, billing: 'yearly', paidThrough: '', refPrefix: 'PSE', timezone: 'America/Los_Angeles' });
       const eCls = mkVeh(pot, { name: 'Mercedes-Benz E-Class', type: 'Sedan', capacity: 3, plate: 'WA 7Y2031', color: 'Black', year: 2023, odometer: 27400, lastServiceOdometer: 25000 });
       const tahoe = mkVeh(pot, { name: 'Chevrolet Tahoe', type: 'SUV', capacity: 6, plate: 'WA 9K4410', color: 'Black', year: 2024, odometer: 15800, lastServiceOdometer: 15000 });
       mkVeh(pot, { name: 'Ford Transit Executive', type: 'Sprinter Van', capacity: 12, plate: 'WA TRN-88', color: 'Black', year: 2022, odometer: 52100, lastServiceOdometer: 50000 });

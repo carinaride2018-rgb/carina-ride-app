@@ -1007,7 +1007,7 @@
   const CONTACT_EMAIL = C.PLATFORM_EMAIL || 'info@limorelay.com';
   const mailLink = (cls = '') => `<a${cls ? ` class="${cls}"` : ''} href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>`;
   const LP_FAQ = [
-    ['Is there a setup fee?', `Founding members pay no setup fee. On Standard and Fleet it is $${C.PLANS.standard.setup}, and it is waived when you pay yearly.`],
+    ['Is there a setup fee?', 'No. There is no setup fee on any plan.'],
     ['What happens after the free trial?', 'You choose a plan and add a card. Nothing is charged during the 30 days, and you keep all your rides, drivers and customers.'],
     ['Do my drivers and passengers need to download anything?', 'No. Everything works in the phone’s browser and can be added to the home screen like an app.'],
     ['What if I run out of texts?', 'Each plan includes a monthly text allowance. Extra texts are $15 for 500, and emails are always free.'],
@@ -1101,8 +1101,8 @@
         <div class="lp-head"><h2>Membership</h2><p class="muted">Kept low so every operator can join. Every plan includes the network, the dispatch board, the driver app and the passenger app. Try any plan free for 30 days.</p></div>
         <div class="lp-plans">
           ${plan('founding', `For the first ${P.founding.limit} companies. Price locked for 2 years.`, ['All features', `${P.founding.texts.toLocaleString()} passenger texts a month`, 'No setup fee', 'Unlimited bookings'], true)}
-          ${plan('standard', 'For growing companies.', ['All features', `${P.standard.texts.toLocaleString()} passenger texts a month`, `$${P.standard.setup} setup, waived on yearly billing`, 'Unlimited bookings'])}
-          ${plan('fleet', 'For larger fleets and busy offices.', ['All features', `${P.fleet.texts.toLocaleString()} passenger texts a month`, `$${P.fleet.setup} setup, waived on yearly billing`, 'Unlimited bookings'])}
+          ${plan('standard', 'For growing companies.', ['All features', `${P.standard.texts.toLocaleString()} passenger texts a month`, 'No setup fee', 'Unlimited bookings'])}
+          ${plan('fleet', 'For larger fleets and busy offices.', ['All features', `${P.fleet.texts.toLocaleString()} passenger texts a month`, 'No setup fee', 'Unlimited bookings'])}
         </div>
         <p class="small faint" style="margin-top:12px">Extra texts are $15 for 500. Card processing is billed by Stripe directly to your company; ${PLATFORM} takes no share of your fares.</p>
       </section>
@@ -4917,8 +4917,8 @@
           body: `<form id="ac" class="stack" novalidate>
             <div class="grid2"><label class="field"><span>Company name</span><input id="ac-name" name="name" placeholder="Gold Coast Limousine"></label>
               <label class="field"><span>Booking link name</span><input id="ac-slug" name="slug" class="mono" placeholder="gold-coast"><span class="hint">Their page: #book.<span id="ac-slug-show">…</span></span></label></div>
-            <div class="grid2"><label class="field"><span>Plan</span><select id="ac-plan" name="plan">${Object.entries(C.PLANS).map(([k, p]) => `<option value="${k}" ${k === 'standard' ? 'selected' : ''} ${k === 'founding' && plans.foundingLeft <= 0 ? 'disabled' : ''}>${p.label}: $${p.monthly}/mo, ${p.setup ? `$${p.setup} setup` : 'no setup fee'}, ${plans.texts[k]} texts${k === 'founding' ? ` (${plans.foundingLeft} places left)` : ''}</option>`).join('')}</select></label>
-              <label class="field"><span>Billing</span><select id="ac-billing" name="billing"><option value="monthly">Monthly</option><option value="yearly">Yearly: 12 months for the price of 10, no setup fee</option></select></label></div>
+            <div class="grid2"><label class="field"><span>Plan</span><select id="ac-plan" name="plan">${Object.entries(C.PLANS).map(([k, p]) => `<option value="${k}" ${k === 'standard' ? 'selected' : ''} ${k === 'founding' && plans.foundingLeft <= 0 ? 'disabled' : ''}>${p.label}: $${p.monthly}/mo, ${plans.texts[k]} texts${k === 'founding' ? ` (${plans.foundingLeft} places left)` : ''}</option>`).join('')}</select></label>
+              <label class="field"><span>Billing</span><select id="ac-billing" name="billing"><option value="monthly">Monthly</option><option value="yearly">Yearly: 12 months for the price of 10</option></select></label></div>
             <label class="switch"><input type="checkbox" id="ac-trial" name="trial" checked><span>Start with a ${plans.trialDays}-day free trial (nothing billed until it ends)</span></label>
             <p class="small faint">Every plan includes dispatch, the driver app and the passenger app. Founding is for the first ${plans.plans.founding.limit} companies, with the price locked for 2 years.</p>
             <div class="grid2">
@@ -4949,7 +4949,7 @@
       let invoices, tp, bi;
       try { [invoices, tp, bi] = await Promise.all([api('owner.invoices'), api('owner.textPlan'), api('owner.billingInfo')]); } catch (e) { return showErr(v, e); }
       const month = new Date().toISOString().slice(0, 7);
-      v.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Billing</h1><p class="muted">Monthly invoices to each company for their plan, plus the setup fee on their first bill. Yearly companies get one invoice a year for 10 months (no setup fee). Companies on a free trial are skipped until it ends.</p></div>
+      v.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Billing</h1><p class="muted">Monthly invoices to each company for their plan. Yearly companies get one invoice a year for 10 months. There is no setup fee. Companies on a free trial are skipped until it ends.</p></div>
           <div class="row"><input class="input" type="month" id="bl-month" value="${month}" style="width:auto"><button class="btn primary" type="button" id="bl-run">Create invoices for ${esc(new Date(month + '-15T12:00:00').toLocaleDateString([], { month: 'long', year: 'numeric' }))}</button></div></div>
         <section class="panel stack" style="margin-bottom:16px"><label class="check"><input type="checkbox" id="bl-auto" ${bi.autoBill ? 'checked' : ''}> <span><b>Bill companies automatically</b><br><span class="small muted">On the 1st of each month, and the day a free trial ends, each company gets its invoice. Companies with a card on file (My account, Membership) are charged right away; the others get an email with a link to pay. Text packs a company buys go on its next invoice.</span></span></label>
           <p class="small faint">${bi.payMode === 'stripe' ? 'Cards are charged on your own Stripe account.' : bi.payMode === 'demo' ? 'Demo: cards are simulated.' : 'Add STRIPE_SECRET_KEY in Render to take card payments; until then invoices are emailed and you mark them paid.'}</p></section>
