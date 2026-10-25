@@ -820,6 +820,39 @@
     const cmsg = (c) => ({ ...DEFAULT_CLIENT_MSGS, ...(c.clientMsgs || {}) });
     const reviewUrl = (t) => `${opts.publicUrl || ''}#review.${t.reviewToken}`;
     const cardUrl = (t) => `${opts.publicUrl || ''}#card.${t.cardToken}`;
+    // The full receipt as an email: the trip, each price line and how it was paid.
+    function receiptText(t) {
+      const c = findCompany(t.companyId), v = msgVars(t);
+      const veh = t.vehicleId && findVehicle(t.vehicleId), drv = t.driverId && db.users.find((u) => u.id === t.driverId);
+      const lines = [`Hi ${v.hi_name},`, '', `Thank you for riding with ${c.name}. Here is your receipt.`, '',
+        `Receipt: ${t.ref}`, `Date: ${fmtLocal(t.pickupAt, c, true)}`, `Passenger: ${t.passengerName || '-'}`, `From: ${t.pickup}`];
+      if (t.dropoff) lines.push(`To: ${t.dropoff}`);
+      lines.push(`Vehicle: ${veh ? veh.name : t.vehicleType}`);
+      if (drv) lines.push(`Chauffeur: ${drv.name}`);
+      lines.push('');
+      for (const l of (t.price && t.price.lines) || []) {
+        if (l.amount == null) continue;
+        const label = l.kind === 'fare' ? 'Ride fare' : l.stop != null ? l.label.replace(/ \(.*\)$/, '') : l.label;
+        lines.push(`${label}: ${l.amount < 0 ? '-$' + money(-l.amount) : '$' + money(l.amount)}`);
+      }
+      lines.push(`Total: $${money((t.price && t.price.total) || 0)}`, '');
+      const acc = t.accountId && db.accounts.find((x) => x.id === t.accountId);
+      if (acc && t.payment.status !== 'paid') lines.push(`Billed to ${acc.name} on the monthly invoice${t.poNumber ? `, PO ${t.poNumber}` : ''}.`);
+      else if (t.payment.status === 'paid') lines.push(`Paid by ${t.payment.method === 'card_on_file' ? 'card' : t.payment.method}${t.payment.last4 ? ' ending ' + t.payment.last4 : ''} on ${fmtLocal(t.payment.paidAt, c, true)}.`);
+      else lines.push(t.payment.method === 'cash' ? 'Cash, paid to the office. Not paid yet.' : 'Not paid yet.');
+      lines.push('', 'Sincerely,', v.signer);
+      return lines.join('\n');
+    }
+    // Emails the receipt to the passenger, or to another address the person types.
+    function sendReceipt(t, to, by) {
+      if (!['completed'].includes(t.status) && t.payment.status !== 'paid') fail('The receipt is ready once the ride is done or paid.');
+      const email = String(to || t.passengerEmail || '').trim().toLowerCase();
+      if (!email) fail('Enter the email to send the receipt to.');
+      if (!emailOk(email)) fail('Enter a valid email address.');
+      db.messages.unshift({ id: id('msg'), companyId: t.companyId, tripId: t.id, ref: t.ref, at: now().toISOString(), recipient: email, channel: 'email', kind: 'receipt', body: receiptText(t) });
+      log(t, 'receipt_sent', by, `Receipt sent to ${email}`);
+      return { sent: email };
+    }
     // Bottom of the booking confirmation email: how to pay, then the terms.
     function confirmFooter(t) {
       const c = findCompany(t.companyId), lines = [];
@@ -1915,7 +1948,7 @@
     };
     const PERM_OF = {};
     for (const [perm, names] of Object.entries({
-      bookings: ['dispatch.createTrip', 'dispatch.updateTrip', 'dispatch.resendConfirmation', 'dispatch.setStatus', 'dispatch.cancelSeries', 'dispatch.noShow', 'dispatch.importTrips', 'dispatch.applyFlight', 'dispatch.sendCardLink', 'dispatch.inboxSend', 'dispatch.saveQuote', 'dispatch.sendQuote', 'dispatch.quoteAction'],
+      bookings: ['dispatch.createTrip', 'dispatch.updateTrip', 'dispatch.resendConfirmation', 'dispatch.sendReceipt', 'dispatch.setStatus', 'dispatch.cancelSeries', 'dispatch.noShow', 'dispatch.importTrips', 'dispatch.applyFlight', 'dispatch.sendCardLink', 'dispatch.inboxSend', 'dispatch.saveQuote', 'dispatch.sendQuote', 'dispatch.quoteAction'],
       assign: ['dispatch.assign', 'dispatch.autoAssign', 'network.offer', 'network.respond', 'network.cancelOffer', 'network.handBack'],
       payments: ['dispatch.chargeCard', 'dispatch.markPaid', 'network.settle'],
       customers: ['dispatch.saveCustomer', 'dispatch.sendCustomerLogin', 'dispatch.saveAccount', 'dispatch.accountBooker', 'dispatch.bizRequests', 'dispatch.reviewBiz', 'dispatch.createInvoice', 'dispatch.invoiceAction', 'dispatch.invoices', 'dispatch.invoice'],
@@ -2590,6 +2623,11 @@
     });
     // Delete a finished or cancelled ride from the customer's own list. The
     // company keeps the trip for its records, invoices and payments.
+    def('customer.sendReceipt', ['customer'], true, (ctx, a) => {
+      const t = db.trips.find((x) => x.id === a.id && x.customerId === ctx.user.id);
+      if (!t) fail('Trip not found.', 404);
+      return sendReceipt(t, a.email || ctx.user.email, ctx.user.name);
+    });
     def('customer.hideTrip', ['customer'], true, (ctx, a) => {
       const t = db.trips.find((x) => x.id === a.id && x.customerId === ctx.user.id);
       if (!t) fail('Trip not found.', 404);
@@ -3041,6 +3079,7 @@
       log(t, 'confirm_resent', ctx.user.name, `Confirmation sent again to ${sent.join(' and ')}`);
       return { sent, trip: tripView(t) };
     });
+    def('dispatch.sendReceipt', STAFF, true, (ctx, a) => sendReceipt(ownTrip(ctx, a.id), a.email, ctx.user.name));
     def('dispatch.sendCardLink', STAFF, true, (ctx, a) => {
       const t = ownTrip(ctx, a.id);
       if (!onFile(t)) fail("This trip isn't paid by card on file.");

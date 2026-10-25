@@ -201,7 +201,7 @@
 
   // ---- UI primitives --------------------------------------------------------
   let toastTimer = null;
-  const HIST_LABELS = { wake_call: 'Wake-up call', wake_ok: 'Driver confirmed awake', wake_alert: 'Office alerted: no answer to wake-up call', late_alert: 'Office alerted: driver not on the way', confirm_resent: 'Confirmation sent again', paid: 'Charged', refunded: 'Refunded', card_failed: 'Card declined', card_saved: 'Card saved', card_link: 'Card link sent', no_show: 'No-show', pickup_moved: 'Pickup moved', flight_cancelled: 'Flight cancelled', declined: 'Declined', edited: 'Edited', unassigned: 'Unassigned', no_answer: 'No answer in time', farm_offered: 'Offered to partner', farm_accepted: 'Partner accepted', farm_declined: 'Partner declined', farm_cancelled: 'Taken back from partner', farm_returned: 'Partner handed it back', farm_expired: 'Partner offer expired', farm_completed: 'Partner completed', auto_farm_none: 'Automatic farm-out stopped', posted: 'Posted to trip board', post_expired: 'Trip board: nobody took it', post_cancelled: 'Taken off the trip board' };
+  const HIST_LABELS = { wake_call: 'Wake-up call', wake_ok: 'Driver confirmed awake', wake_alert: 'Office alerted: no answer to wake-up call', late_alert: 'Office alerted: driver not on the way', confirm_resent: 'Confirmation sent again', receipt_sent: 'Receipt emailed', paid: 'Charged', refunded: 'Refunded', card_failed: 'Card declined', card_saved: 'Card saved', card_link: 'Card link sent', no_show: 'No-show', pickup_moved: 'Pickup moved', flight_cancelled: 'Flight cancelled', declined: 'Declined', edited: 'Edited', unassigned: 'Unassigned', no_answer: 'No answer in time', farm_offered: 'Offered to partner', farm_accepted: 'Partner accepted', farm_declined: 'Partner declined', farm_cancelled: 'Taken back from partner', farm_returned: 'Partner handed it back', farm_expired: 'Partner offer expired', farm_completed: 'Partner completed', auto_farm_none: 'Automatic farm-out stopped', posted: 'Posted to trip board', post_expired: 'Trip board: nobody took it', post_cancelled: 'Taken off the trip board' };
   function toast(text, bad, ms) {
     let el = $('.toast');
     if (!el) { el = document.createElement('div'); el.className = 'toast'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
@@ -2375,9 +2375,11 @@
     });
   }
 
-  function receiptModal(t) {
+  // method: customer.sendReceipt (My trips) or dispatch.sendReceipt (office trip window).
+  function receiptModal(t, method = 'customer.sendReceipt', onClose) {
+    const to = t.passengerEmail || (method === 'customer.sendReceipt' && session.user.email) || '';
     const m = openModal({
-      title: `Receipt ${t.ref}`,
+      title: `Receipt ${t.ref}`, onClose,
       body: `<div class="stack">
         <div class="spread"><b>${esc(session.company.name)}</b><span class="mono small faint">${esc(t.ref)}</span></div>
         <dl class="kv"><dt>Date</dt><dd>${esc(fmtDT(t.pickupAt))}</dd><dt>Passenger</dt><dd>${esc(t.passengerName)}</dd>
@@ -2385,10 +2387,19 @@
           <dt>Vehicle</dt><dd>${esc(t.vehicle ? t.vehicle.name : t.vehicleType)}</dd>${t.driver ? `<dt>Chauffeur</dt><dd>${esc(t.driver.name)}</dd>` : ''}</dl>
         <div>${quoteLines(t.price, true)}
           <div class="qline" style="border-bottom:0;font-weight:700"><span style="color:var(--ink)">Total</span><span class="num">${money(t.price.total)}</span></div></div>
-        <p class="small muted">${t.account && t.payment.status !== 'paid' ? `Billed to ${esc(t.account.name)} on the monthly invoice${t.poNumber ? `, PO ${esc(t.poNumber)}` : ''}.` : t.payment.status === 'paid' ? `Paid by ${esc(t.payment.method === 'card_on_file' ? 'card' : t.payment.method)}${t.payment.last4 ? ' ending ' + esc(t.payment.last4) : ''} on ${esc(fmtDT(t.payment.paidAt))}.` : t.payment.method === 'cash' ? 'Cash, paid to the office. Not paid yet.' : 'Not paid yet.'}</p></div>`,
-      footer: '<button class="btn" type="button" data-close>Close</button>',
+        <p class="small muted">${t.account && t.payment.status !== 'paid' ? `Billed to ${esc(t.account.name)} on the monthly invoice${t.poNumber ? `, PO ${esc(t.poNumber)}` : ''}.` : t.payment.status === 'paid' ? `Paid by ${esc(t.payment.method === 'card_on_file' ? 'card' : t.payment.method)}${t.payment.last4 ? ' ending ' + esc(t.payment.last4) : ''} on ${esc(fmtDT(t.payment.paidAt))}.` : t.payment.method === 'cash' ? 'Cash, paid to the office. Not paid yet.' : 'Not paid yet.'}</p>
+        <div id="rc-send" class="rc-send" hidden><label class="field"><span>Email the receipt to</span><input id="rc-email" type="email" autocomplete="email" value="${esc(to)}" placeholder="name@example.com"></label>
+          <p class="small faint">Send it again, or type another email to forward it.</p><div id="rc-err"></div></div></div>`,
+      footer: '<button class="btn" type="button" id="rc-open">Email receipt</button><button class="btn primary" type="button" id="rc-go" hidden>Send receipt</button><button class="btn" type="button" data-close>Close</button>',
     });
     $('[data-close]', m).onclick = closeModal;
+    $('#rc-open', m).onclick = () => { $('#rc-send', m).hidden = false; $('#rc-open', m).hidden = true; $('#rc-go', m).hidden = false; const i = $('#rc-email', m); i.focus(); i.select(); };
+    const go = (e) => busy($('#rc-go', m), async () => {
+      try { const r = await api(method, { id: t.id, email: $('#rc-email', m).value.trim() }); toast(`Receipt sent to ${r.sent}.`); closeModal(); }
+      catch (err) { showErr($('#rc-err', m), err); }
+    });
+    $('#rc-go', m).onclick = go;
+    $('#rc-email', m).onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } };
   }
 
   // ---- Driver ---------------------------------------------------------------
@@ -3259,6 +3270,7 @@
               ${['accepted', 'en_route', 'arrived'].includes(t.status) && !t.farmout ? '<button class="btn sm danger" type="button" id="te-noshow">Passenger no-show</button>' : ''}
               <button class="btn sm" type="button" id="te-sheet">Print trip sheet</button>
               ${t.status !== 'cancelled' && (t.passengerEmail || t.passengerPhone) ? '<button class="btn sm" type="button" id="te-confirm">Resend confirmation</button>' : ''}
+              ${t.status === 'completed' || t.payment.status === 'paid' ? '<button class="btn sm" type="button" id="te-receipt">Receipt</button>' : ''}
               ${t.passengerPhone ? '<button class="btn sm" type="button" id="te-text">Text passenger</button>' : ''}
               ${canFarm ? '<button class="btn sm" type="button" id="te-farm">Send to a partner company</button><button class="btn sm" type="button" id="te-post">Post to city board</button>' : ''}
               ${t.netPost && ['open', 'closed'].includes(t.netPost.status) ? `<p class="small muted" style="margin:0">On the ${esc(t.netPost.label)} trip board${t.netPost.status === 'closed' ? ': prices are in, choose one' : ''}. <button class="linkbtn small" type="button" id="te-board">Open trip board</button></p>` : ''}
@@ -3345,6 +3357,7 @@
       const rc = $('#te-confirm', m); if (rc) rc.onclick = (e) => busy(e.currentTarget, async () => {
         try { const r = await api('dispatch.resendConfirmation', { id }); toast(`Confirmation sent to ${r.sent.join(' and ')}.`); reopen(); } catch (err) { toast(err.message, true); }
       });
+      const rcb = $('#te-receipt', m); if (rcb) rcb.onclick = () => { m._onClose = null; receiptModal(t, 'dispatch.sendReceipt', () => tripModal(id, done)); };
       const rt = $('#te-return', m); if (rt) rt.onclick = () => returnModal(t, (r) => { m._onClose = null; closeModal(); toast(`Return trip ${r.ref} booked. We sent ${r.passengerName || 'the passenger'} a confirmation.${r.landingTrip ? ` The pickup where they land is ${r.landingTrip.ref}.` : ''}`); tripModal(r.id, done); });
       const shb = $('#te-sheet', m); if (shb) shb.onclick = () => printSheets([t], `${t.ref}, ${fmtDate(t.pickupAt)}`);
       const nsb = $('#te-noshow', m); if (nsb) nsb.onclick = () => noShowModal(t, 'dispatch.noShow', reopen);
