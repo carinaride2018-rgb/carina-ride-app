@@ -656,6 +656,14 @@
       // The single $45 Membership became Founding / Standard / Fleet (v37).
       // Members keep the Founding price, locked from when they joined.
       for (const c of d.companies) if (!PLANS[c.plan]) { c.plan = 'founding'; c.monthlyFee = PLANS.founding.monthly; c.setupFee = 0; c.billing = c.billing || 'monthly'; c.priceLockedUntil = addMonths(c.createdAt || new Date().toISOString(), PLANS.founding.lockMonths).slice(0, 10); }
+      // The airport flat rate is gone (v91): upcoming trips still priced with it,
+      // and not yet charged or invoiced, are priced again with today's rates.
+      for (const t of d.trips || []) {
+        if (!['confirmed', 'assigned', 'accepted'].includes(t.status) || t.invoiceId || t.priceOverride != null || (t.payment && (t.payment.charges || []).length)) continue;
+        if (!(t.price && (t.price.lines || []).some((l) => /^Airport flat rate/.test(l.label)))) continue;
+        const c = d.companies.find((x) => x.id === t.companyId);
+        if (c) t.price = quote(c, t, t.priceCtx);
+      }
       // Stops moved from a flat fee to extra miles + wait (v36).
       for (const c of d.companies) { const ad = c.pricing && c.pricing.addons; if (ad && ad.stopWait === undefined) { ad.stopWait = 10; ad.extraStop = 0; } }
       // Sample fleet now runs CT6 / Navigator / Transit / Sprinter (matched by
@@ -2765,6 +2773,28 @@
       const reps = bookRepeats(ctx.company, a.booking || {}, plan, t, r, customer, 'phone', ctx.user.name, { allowPast: true });
       sweepDispatch(ctx.company, true);
       return { ...tripView(t), returnTrip: r ? tripView(r) : null, landingTrip: lt ? tripView(lt) : null, repeats: reps.filter((x) => !x.returnOf).length };
+    });
+    // Return trip from an existing booking: same passenger, vehicle, extras and
+    // billing, pickup and drop-off swapped. The office only picks the time (and
+    // the flight when the return starts at an airport).
+    def('dispatch.addReturn', STAFF, true, (ctx, a) => {
+      const t = ownTrip(ctx, a.id);
+      if (t.service === 'hourly' || !t.dropoff) fail('A return trip is only for rides from A to B.');
+      if (t.returnOf) fail(`${t.ref} is already the return of another trip.`);
+      const had = t.returnId && db.trips.find((x) => x.id === t.returnId && x.status !== 'cancelled');
+      if (had) fail(`${t.ref} already has a return trip: ${had.ref}.`);
+      const raw = { ...t, service: 'transfer', pickup: t.dropoff, dropoff: t.pickup, stopList: (t.stopList || []).slice().reverse(), stopWaits: (t.stopWaits || []).slice().reverse(),
+        pickupAt: a.pickupAt, flight: a.flight || '', meetGreet: isAirport(t.dropoff) && t.meetGreet, useCredit: false, payCash: t.payment && t.payment.method === 'cash' };
+      let b;
+      try { b = cleanBooking(ctx.company, raw, { allowPast: true }); } catch (e) { if (e instanceof ApiError) e.message = 'Return trip: ' + e.message; throw e; }
+      if (new Date(b.pickupAt) <= new Date(t.pickupAt)) fail('Return trip: the return pickup must be after the first pickup.');
+      const customer = t.customerId ? findUser(t.customerId) : null;
+      const r = newTrip(ctx.company, b, customer, 'phone', ctx.user.name, '');
+      // The card the first ride was booked with covers the return too.
+      if (r.payment.method === 'card_on_file' && !r.card && t.card) r.card = clone(t.card);
+      linkReturn(t, r);
+      sweepDispatch(ctx.company, true);
+      return tripView(r);
     });
     def('dispatch.updateTrip', STAFF, true, (ctx, a) => {
       const t = ownTrip(ctx, a.id);

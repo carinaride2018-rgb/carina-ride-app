@@ -2955,6 +2955,35 @@
       });
     }
 
+    // Return trip: everything from the first booking, pickup and drop-off
+    // swapped; the office sets the date and time (and flight from an airport).
+    function returnModal(t, done) {
+      const air = C.isAirport(t.dropoff);
+      const d0 = new Date(t.pickupAt); d0.setDate(d0.getDate() + 1);
+      const day = `${d0.getFullYear()}-${String(d0.getMonth() + 1).padStart(2, '0')}-${String(d0.getDate()).padStart(2, '0')}`;
+      const m2 = openModal({
+        title: `Return trip for ${t.ref}`,
+        body: `<form id="rt-form" class="stack" novalidate>
+          <dl class="kv small"><dt>From</dt><dd>${esc(t.dropoff)}</dd><dt>To</dt><dd>${esc(t.pickup)}</dd><dt>Passenger</dt><dd>${esc(t.passengerName || '')}${t.passengerPhone ? ' · ' + esc(t.passengerPhone) : ''}</dd>
+            <dt>Vehicle</dt><dd>${esc(t.vehicleType)} · ${t.passengers} passenger${t.passengers === 1 ? '' : 's'}${t.bags ? ` · ${t.bags} suitcase${t.bags === 1 ? '' : 's'}` : ''}</dd></dl>
+          <p class="small muted" style="margin:0">Everything else is copied from ${esc(t.ref)}: extras, notes, billing and card.</p>
+          <div class="grid2"><label class="field"><span>Return date</span><input id="rt-date" type="date" value="${day}"></label>
+            <label class="field"><span>Pickup time</span><input id="rt-time" type="time" step="300" value=""></label></div>
+          <label class="field"><span>Flight number ${air ? '(required: the return starts at the airport)' : '<span class="faint">(optional)</span>'}</span><input id="rt-flight" class="mono" placeholder="AS 330" autocomplete="off"></label>
+          <div id="rt-err"></div></form>`,
+        footer: '<button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="rt-go">Book return trip</button>',
+      });
+      $('[data-close]', m2).onclick = closeModal;
+      const go = (e) => busy($('#rt-go', m2), async () => {
+        if (e) e.preventDefault();
+        const date = $('#rt-date', m2).value, time = $('#rt-time', m2).value;
+        if (!date || !time) return showErr($('#rt-err', m2), 'Choose the return date and pickup time.');
+        try { const r = await api('dispatch.addReturn', { id: t.id, pickupAt: new Date(`${date}T${time}`).toISOString(), flight: $('#rt-flight', m2).value }); closeModal(); done(r); }
+        catch (err) { showErr($('#rt-err', m2), err); }
+      });
+      $('#rt-go', m2).onclick = () => go(); $('#rt-form', m2).onsubmit = go;
+      $('#rt-time', m2).focus();
+    }
     async function tripModal(id, done) {
       let t, drivers, vehicles, accounts;
       try { [t, drivers, vehicles, accounts] = await Promise.all([api('dispatch.trip', { id }), api('dispatch.drivers'), api('dispatch.vehicles'), api('dispatch.accounts')]); } catch (e) { return toast(e.message, true); }
@@ -3057,6 +3086,7 @@
               <button class="btn sm" type="button" id="te-sheet">Print trip sheet</button>
               ${t.status !== 'cancelled' && (t.passengerEmail || t.passengerPhone) ? '<button class="btn sm" type="button" id="te-confirm">Resend confirmation</button>' : ''}
               ${t.passengerPhone ? '<button class="btn sm" type="button" id="te-text">Text passenger</button>' : ''}
+              ${t.service !== 'hourly' && t.dropoff && !t.returnOf && !(t.pair && t.pair.kind === 'return') && !t.farmIn ? '<button class="btn sm" type="button" id="te-return">Add return trip</button>' : ''}
               ${canFarm ? '<button class="btn sm" type="button" id="te-farm">Send to a partner company</button>' : ''}
             </div>` : ''}
             ${t.live ? `<div class="sidebox"><span class="label">Live tracking</span><div id="te-live">${trackMap(t.live, t.pickup)}</div>${t.trackToken ? `<p class="small faint">Passenger link: <span class="mono">#track.${esc(t.trackToken)}</span></p>` : ''}</div>` : ''}
@@ -3139,6 +3169,7 @@
       const rc = $('#te-confirm', m); if (rc) rc.onclick = (e) => busy(e.currentTarget, async () => {
         try { const r = await api('dispatch.resendConfirmation', { id }); toast(`Confirmation sent to ${r.sent.join(' and ')}.`); reopen(); } catch (err) { toast(err.message, true); }
       });
+      const rt = $('#te-return', m); if (rt) rt.onclick = () => returnModal(t, (r) => { m._onClose = null; closeModal(); toast(`Return trip ${r.ref} booked. We sent ${r.passengerName || 'the passenger'} a confirmation.`); tripModal(r.id, done); });
       const shb = $('#te-sheet', m); if (shb) shb.onclick = () => printSheets([t], `${t.ref}, ${fmtDate(t.pickupAt)}`);
       const nsb = $('#te-noshow', m); if (nsb) nsb.onclick = () => noShowModal(t, 'dispatch.noShow', reopen);
       const ss = $('#te-setstatus', m); if (ss) ss.onclick = (e) => busy(e.currentTarget, async () => {
