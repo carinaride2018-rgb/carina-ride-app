@@ -68,7 +68,7 @@
   // filled in per trip; the *_line ones are whole sentences or empty.
   const MSG_TEMPLATES = {
     confirm_sms: { label: 'Booking confirmed (text)', text: '{company}: booking {ref} confirmed for {pickup_time} from {pickup}. Total {total}.{landing_short_line}{call_line}' },
-    confirm_email: { label: 'Booking confirmed (email)', text: "Hi {hi_name},\n\nYour ride is confirmed.\n\nTrip confirmation: {ref}\nName: {passenger_name}\nCellphone: {cellphone}\nPickup Date and Time: {pickup_time}\nPickup Address: {pickup}\nDestination: {destination}\n{flight_info_line}Vehicle: {vehicle_choice}\nPassengers: {passenger_count}\nBags: {bag_count}\nTotal: {total}\n\nIf you need to change or cancel, {contact}.\n\nSincerely,\n{signer}" },
+    confirm_email: { label: 'Booking confirmed (email)', text: "Hi {hi_name},\n\nYour ride is confirmed.\n\nTrip confirmation: {ref}\nName: {passenger_name}\nCellphone: {cellphone}\nPickup Date and Time: {pickup_time}\nPickup Address: {pickup}\nDestination: {destination}\n{flight_info_line}Vehicle: {vehicle_choice}\nPassengers: {passenger_count}\nBags: {bag_count}\nTotal: {total}\n{landing_block}\nIf you need to change or cancel, {contact}.\n\nSincerely,\n{signer}" },
     reminder_sms: { label: '24-hour reminder (text)', text: "{company}: reminder, your ride {ref} is {pickup_time} from {pickup}.{flight_short_line} Reply or call {phone} to change it." },
     reminder_email: { label: '24-hour reminder (email)', text: "{company}: a reminder that your ride {ref} is {pickup_time}. Pickup: {pickup}.{dropoff_line} {vehicle_type}, {passengers}.{chauffeur_line}{flight_track_line} Need to change something? Call {phone}." },
     accepted: { label: 'Chauffeur confirmed', text: '{company}: your chauffeur for {ref} is {driver}{vehicle_line}.' },
@@ -85,7 +85,7 @@
     card_refund: { label: 'Refund to card', text: '{company}: we refunded {amount} to your card ending {last4} for {ref}.' },
     card_failed: { label: "Card couldn't be charged", text: "{company}: we couldn't charge {amount} to your card ending {last4} for ride {ref}. Please add a card here: {card_link}{call_line}" },
   };
-  const MSG_WORDS = ['company', 'ref', 'passenger', 'pickup_time', 'pickup', 'dropoff', 'vehicle_type', 'passengers', 'ride', 'driver', 'driver_first', 'driver_and', 'vehicle', 'plate', 'vehicle_line', 'car_line', 'total', 'phone', 'flight', 'track_link', 'review_link', 'call_line', 'wrong_line', 'dropoff_line', 'flight_line', 'flight_short_line', 'flight_track_line', 'chauffeur_line', 'track_line', 'landing_line', 'landing_short_line', 'waited', 'fee', 'fee_line', 'amount', 'last4', 'extras', 'card_link', 'hi_name', 'dropoff_to', 'signer', 'contact', 'passenger_name', 'cellphone', 'destination', 'flight_info_line', 'vehicle_choice', 'passenger_count', 'bag_count'];
+  const MSG_WORDS = ['company', 'ref', 'passenger', 'pickup_time', 'pickup', 'dropoff', 'vehicle_type', 'passengers', 'ride', 'driver', 'driver_first', 'driver_and', 'vehicle', 'plate', 'vehicle_line', 'car_line', 'total', 'phone', 'flight', 'track_link', 'review_link', 'call_line', 'wrong_line', 'dropoff_line', 'flight_line', 'flight_short_line', 'flight_track_line', 'chauffeur_line', 'track_line', 'landing_line', 'landing_short_line', 'waited', 'fee', 'fee_line', 'amount', 'last4', 'extras', 'card_link', 'hi_name', 'dropoff_to', 'signer', 'contact', 'passenger_name', 'cellphone', 'destination', 'flight_info_line', 'vehicle_choice', 'passenger_count', 'bag_count', 'landing_block'];
   const INCIDENT_KINDS = { accident: 'Accident', damage: 'Vehicle damage', injury: 'Injury', complaint: 'Complaint', lost_item: 'Lost item', other: 'Other' };
   const DEFAULT_CLIENT_MSGS = { confirmText: true, confirmEmail: true, officeNew: true, remind24: true, approach: true, review: true, reviewDelayMin: 0 };
   // Corporate accounts: payment terms in days (0 = due on receipt).
@@ -789,7 +789,14 @@
         `Passenger: ${v.passenger_name}`, `Cellphone: ${v.cellphone || '-'}`, `Email: ${t.passengerEmail || '-'}`, `Pickup Date and Time: ${v.pickup_time}`,
         `Pickup Address: ${t.pickup}`, `Destination: ${v.destination}`];
       if (t.flight) lines.push(`Flight: ${t.flight}`);
-      lines.push(`Vehicle: ${v.vehicle_choice}`, `Passengers: ${v.passenger_count}`, `Bags: ${v.bag_count}`, `Total: ${v.total}`, '', `Open the dispatch board to assign a chauffeur.`);
+      lines.push(`Vehicle: ${v.vehicle_choice}`, `Passengers: ${v.passenger_count}`, `Bags: ${v.bag_count}`, `Total: ${v.total}`);
+      const lt = t.landingId && db.trips.find((x) => x.id === t.landingId);
+      if (lt) {
+        const o = lt.outOfTown, tz = o ? { timezone: o.tz } : c;
+        lines.push('', `Pickup when they land: ${lt.ref}, ${fmtLocal(lt.pickupAt, tz, true)}${o ? ` ${o.city} time` : ''}, ${lt.pickup} to ${lt.dropoff}.`,
+          o ? (o.partnerName ? `Offered to ${o.partnerName} on the network.` : `Out of town in ${o.city}: arrange a local company.`) : 'Assign a chauffeur for it too.');
+      }
+      lines.push('', `Open the dispatch board to assign a chauffeur.`);
       return lines.join('\n');
     }
     function masterOf(c) {
@@ -853,9 +860,20 @@
       log(t, 'receipt_sent', by, `Receipt sent to ${email}`);
       return { sent: email };
     }
+    // A pickup booked for when they land in another city: its own details.
+    function landingBlock(t) {
+      const c = findCompany(t.companyId), lt = t.landingId && db.trips.find((x) => x.id === t.landingId);
+      if (!lt || lt.status === 'cancelled') return '';
+      const tz = lt.outOfTown ? { timezone: lt.outOfTown.tz } : c;
+      return ['', 'Pickup when you land', `Trip confirmation: ${lt.ref}`, `Pickup Date and Time: ${fmtLocal(lt.pickupAt, tz, true)}${lt.outOfTown ? ` (${lt.outOfTown.city} time)` : ''}`,
+        `Pickup Address: ${lt.pickup}`, `Destination: ${lt.dropoff}`, `Flight: ${lt.flight}`, `Total: $${money(lt.price.total)}`, 'We follow your flight and move the pickup if you land late.', ''].join('\n');
+    }
     // Bottom of the booking confirmation email: how to pay, then the terms.
     function confirmFooter(t) {
       const c = findCompany(t.companyId), lines = [];
+      // Pickup when they land: in the email body, or here when the company's own wording leaves it out.
+      const own = c.templates && c.templates.confirm_email;
+      if (own && !own.includes('{landing_block}')) { const lb = landingBlock(t); if (lb) lines.push(lb.trim(), ''); }
       if (t.payment.status === 'paid') lines.push('Payment: paid. Thank you.');
       else if (t.payment.method === 'account') lines.push('Payment: billed to your company account.');
       else if (t.payment.method === 'cash') lines.push(`Payment: cash, paid to ${c.name} before your ride.`);
@@ -889,7 +907,7 @@
         passenger_name: t.passengerName || '', cellphone: t.passengerPhone || 'Not given', destination: t.dropoff || (t.service === 'hourly' ? `As directed (${t.hours} hours)` : 'As directed'),
         vehicle_choice: (() => { const vt = vehicleTypesFor(c).find((x) => x.type === t.vehicleType); return vt && vt.models ? `${t.vehicleType} (${vt.models})` : t.vehicleType; })(),
         passenger_count: String(t.passengers || 1), bag_count: String(t.bags || 0),
-        flight_info_line: t.flight ? `Flight Information: ${t.flight}\n` : '',
+        flight_info_line: t.flight ? `Flight Information: ${t.flight}\n` : '', landing_block: landingBlock(t),
         contact: c.phone ? `call us at ${c.phone}` : 'reply to this email',
         signer: c.emailSigner ? `${c.emailSigner} with ${c.name}` : `${c.name} Team`,
         flight_line: t.flight ? ` Flight ${t.flight}; we track it and adjust pickup if it's late.` : '',
