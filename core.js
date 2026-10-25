@@ -2893,12 +2893,21 @@
       try { b = cleanBooking(ctx.company, raw, { allowPast: true }); } catch (e) { if (e instanceof ApiError) e.message = 'Return trip: ' + e.message; throw e; }
       if (new Date(b.pickupAt) <= new Date(t.pickupAt)) fail('Return trip: the return pickup must be after the first pickup.');
       const customer = t.customerId ? findUser(t.customerId) : null;
-      const r = newTrip(ctx.company, b, customer, 'phone', ctx.user.name, '');
+      // A return that flies out can book the pickup where they land, like a new booking.
+      const wantsLanding = !!(a.landing && a.landing.on);
+      if (wantsLanding) {
+        const lp = landingPreview(ctx.company, { ...b, landing: a.landing });
+        if (!lp) fail('The pickup when they land needs the flight they take out.');
+        if (!str(a.landing.dropoff, 200)) fail(`Enter where to take them in ${lp.dest.city}.`);
+      }
+      const r = newTrip(ctx.company, b, customer, 'phone', ctx.user.name, '', wantsLanding);
       // The card the first ride was booked with covers the return too.
       if (r.payment.method === 'card_on_file' && !r.card && t.card) r.card = clone(t.card);
       linkReturn(t, r);
+      const lt = wantsLanding ? landingTrip(ctx.company, r, { landing: a.landing }, customer, 'phone', ctx.user.name) : null;
+      if (lt) notify(r, 'booked');
       sweepDispatch(ctx.company, true);
-      return tripView(r);
+      return { ...tripView(r), landingTrip: lt ? tripView(lt) : null };
     });
     def('dispatch.updateTrip', STAFF, true, (ctx, a) => {
       const t = ownTrip(ctx, a.id);

@@ -3044,6 +3044,8 @@
     // swapped; the office sets the date and time (and flight from an airport).
     function returnModal(t, done) {
       const air = C.isAirport(t.dropoff);
+      // A return that goes to the airport can book the pickup where they land.
+      const toAir = !air && C.isAirport(t.pickup);
       // The day after the ride, or today when the ride was a while ago.
       const d0 = new Date(Math.max(new Date(t.pickupAt).getTime() + 86400e3, Date.now()));
       const day = `${d0.getFullYear()}-${String(d0.getMonth() + 1).padStart(2, '0')}-${String(d0.getDate()).padStart(2, '0')}`;
@@ -3055,7 +3057,13 @@
           <p class="small muted" style="margin:0">Everything else is copied from ${esc(t.ref)}: extras, notes, billing and card.</p>
           <div class="grid2"><label class="field"><span>Return date</span><input id="rt-date" type="date" value="${day}"></label>
             <label class="field"><span>Pickup time</span><input id="rt-time" type="time" step="300" value=""></label></div>
-          <label class="field"><span>Flight number ${air ? '(required: the return starts at the airport)' : '<span class="faint">(optional)</span>'}</span><input id="rt-flight" class="mono" placeholder="AS 330" autocomplete="off"></label>
+          <label class="field"><span>Flight number ${air ? '(required: the return starts at the airport)' : toAir ? '<span class="faint">(their flight out, for a pickup where they land)</span>' : '<span class="faint">(optional)</span>'}</span><input id="rt-flight" class="mono" placeholder="AS 330" autocomplete="off"></label>
+          ${toAir ? `<fieldset class="fs landfs" id="rt-land" hidden><legend><label class="switch"><input type="checkbox" id="rt-land-on"><span id="rt-land-title">Add a pickup when they land</span></label></legend>
+            <p class="small muted" id="rt-land-info"></p>
+            <div class="grid2" id="rt-landf" hidden>
+              <label class="field"><span>Landing at</span><select id="rt-land-dest"></select></label>
+              <label class="field"><span id="rt-land-droplabel">Where to</span><input id="rt-land-drop" autocomplete="off" placeholder="Hotel or street address"></label>
+            </div></fieldset>` : ''}
           <div id="rt-err"></div></form>`,
         footer: '<button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="rt-go">Book return trip</button>',
       });
@@ -3064,10 +3072,39 @@
         if (e) e.preventDefault();
         const date = $('#rt-date', m2).value, time = $('#rt-time', m2).value;
         if (!date || !time) return showErr($('#rt-err', m2), 'Choose the return date and pickup time.');
-        try { const r = await api('dispatch.addReturn', { id: t.id, pickupAt: new Date(`${date}T${time}`).toISOString(), flight: $('#rt-flight', m2).value }); closeModal(); done(r); }
+        const landOn = toAir && !$('#rt-land', m2).hidden && $('#rt-land-on', m2).checked;
+        try { const r = await api('dispatch.addReturn', { id: t.id, pickupAt: new Date(`${date}T${time}`).toISOString(), flight: $('#rt-flight', m2).value, ...(landOn ? { landing: { on: true, dest: $('#rt-land-dest', m2).value, dropoff: $('#rt-land-drop', m2).value } } : {}) }); closeModal(); done(r); }
         catch (err) { showErr($('#rt-err', m2), err); }
       });
       $('#rt-go', m2).onclick = () => go(); $('#rt-form', m2).onsubmit = go;
+      if (toAir) {
+        // Same offer as on a new booking: when the flight out is known, show
+        // where it lands and the price of a pickup there.
+        let lt = null, ln = 0;
+        const sel = $('#rt-land-dest', m2);
+        const look = () => { clearTimeout(lt); lt = setTimeout(async () => {
+          const date = $('#rt-date', m2).value, time = $('#rt-time', m2).value, flight = $('#rt-flight', m2).value.trim();
+          const k = ++ln;
+          let lp = null;
+          if (date && time && flight) {
+            try { lp = (await api('dispatch.quote', { booking: { service: 'transfer', pickup: t.dropoff, dropoff: t.pickup, pickupAt: new Date(`${date}T${time}`).toISOString(), flight, vehicleType: t.vehicleType, passengers: t.passengers, landing: { dest: sel.value, dropoff: $('#rt-land-drop', m2).value } } })).landing; } catch (e) { lp = null; }
+          }
+          if (k !== ln) return;
+          $('#rt-land', m2).hidden = !lp;
+          if (!lp) return;
+          if (!sel.options.length) sel.innerHTML = lp.airports.map((a) => `<option value="${esc(a.code)}">${esc(a.city)}: ${esc(a.name)}</option>`).join('');
+          sel.value = lp.dest.code;
+          $('#rt-land-title', m2).textContent = `Add a pickup when they land in ${lp.dest.city}`;
+          $('#rt-land-droplabel', m2).textContent = `Where to in ${lp.dest.city}`;
+          $('#rt-land-info', m2).innerHTML = `Flight ${esc(lp.flight)} lands at ${esc(lp.dest.code)} about <b>${esc(lp.localTime)}</b> ${esc(lp.dest.city)} time${lp.fromFlightData ? '' : '. Check the airport is right; they can change it'}. `
+            + (lp.home ? 'Our own chauffeur meets them.' : lp.partner ? `${esc(lp.partner.name)}, our partner in ${esc(lp.dest.city)}, drives it for ${money(lp.price)}.` : `We don't have a partner in ${esc(lp.dest.city)} yet, so our office books a local car. About ${money(lp.price)}; we confirm the price.`)
+            + ' We follow the flight and move the pickup if it lands late.';
+        }, 350); };
+        ['#rt-date', '#rt-time', '#rt-flight'].forEach((x) => { $(x, m2).addEventListener('input', look); $(x, m2).addEventListener('change', look); });
+        sel.onchange = look;
+        $('#rt-land-on', m2).onchange = (e) => { $('#rt-landf', m2).hidden = !e.target.checked; if (e.target.checked) $('#rt-land-drop', m2).focus(); };
+        addressAutocomplete($('#rt-land-drop', m2), session.company.slug, () => sel.value);
+      }
       $('#rt-time', m2).focus();
     }
     async function tripModal(id, done) {
@@ -3258,7 +3295,7 @@
       const rc = $('#te-confirm', m); if (rc) rc.onclick = (e) => busy(e.currentTarget, async () => {
         try { const r = await api('dispatch.resendConfirmation', { id }); toast(`Confirmation sent to ${r.sent.join(' and ')}.`); reopen(); } catch (err) { toast(err.message, true); }
       });
-      const rt = $('#te-return', m); if (rt) rt.onclick = () => returnModal(t, (r) => { m._onClose = null; closeModal(); toast(`Return trip ${r.ref} booked. We sent ${r.passengerName || 'the passenger'} a confirmation.`); tripModal(r.id, done); });
+      const rt = $('#te-return', m); if (rt) rt.onclick = () => returnModal(t, (r) => { m._onClose = null; closeModal(); toast(`Return trip ${r.ref} booked. We sent ${r.passengerName || 'the passenger'} a confirmation.${r.landingTrip ? ` The pickup where they land is ${r.landingTrip.ref}.` : ''}`); tripModal(r.id, done); });
       const shb = $('#te-sheet', m); if (shb) shb.onclick = () => printSheets([t], `${t.ref}, ${fmtDate(t.pickupAt)}`);
       const nsb = $('#te-noshow', m); if (nsb) nsb.onclick = () => noShowModal(t, 'dispatch.noShow', reopen);
       const ss = $('#te-setstatus', m); if (ss) ss.onclick = (e) => busy(e.currentTarget, async () => {
@@ -3648,7 +3685,7 @@
         $$('tr[data-id]', v).forEach((r) => { r.onclick = () => tripModal(r.dataset.id, () => { last = ''; refresh(); }); });
         $$('[data-ret]', v).forEach((b) => { b.onclick = (e) => {
           e.stopPropagation();
-          returnModal(trips.find((x) => x.id === b.dataset.ret), (r) => { closeModal(); toast(`Return trip ${r.ref} booked. We sent ${r.passengerName || 'the passenger'} a confirmation.`); last = ''; refresh(); tripModal(r.id, () => { last = ''; refresh(); }); });
+          returnModal(trips.find((x) => x.id === b.dataset.ret), (r) => { closeModal(); toast(`Return trip ${r.ref} booked. We sent ${r.passengerName || 'the passenger'} a confirmation.${r.landingTrip ? ` The pickup where they land is ${r.landingTrip.ref}.` : ''}`); last = ''; refresh(); tripModal(r.id, () => { last = ''; refresh(); }); });
         }; });
         const mb = $('#t-more', v); if (mb) mb.onclick = () => { shown += 50; refresh(); };
         $$('#t-list [data-when]', v).forEach((b) => { b.onclick = () => setWhen(b.dataset.when); });
