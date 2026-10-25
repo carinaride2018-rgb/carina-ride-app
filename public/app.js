@@ -4012,12 +4012,7 @@
               <label class="field"><span>Mobile</span><input id="dm-phone" name="phone" type="tel" value="${esc(d.phone)}"></label>
               <label class="field"><span>Email (sign-in)</span><input id="dm-email" name="email" type="email" value="${esc(d.email)}"></label></div>
             <div class="grid3"><label class="field"><span>${id ? 'New password' : 'Password'}</span><input id="dm-pass" name="password" type="text" autocomplete="new-password" placeholder="${id ? 'Leave blank to keep' : 'At least 8 characters'}"></label>
-              <label class="field"><span>Usual vehicle</span><select id="dm-vehicle" name="vehicleId"><option value="">None</option>${vehicles.filter((x) => x.status !== 'retired').map((x) => `<option value="${x.id}" ${d.vehicleId === x.id ? 'selected' : ''}>${esc(x.name)} · ${esc(x.plate)}</option>`).join('')}</select></label>
               <label class="switch" style="align-self:end;min-height:40px"><input type="checkbox" id="dm-active" name="active" ${d.active === false ? '' : 'checked'}><span>Login enabled</span></label></div>
-            <h3>License and documents</h3>
-            <div class="grid3"><label class="field"><span>Driver's license number</span><input id="dm-lic" name="licenseNumber" class="mono" value="${esc(d.licenseNumber || '')}"></label>
-              <label class="field"><span>License expires</span><input id="dm-licexp" name="licenseExp" type="date" value="${esc(d.licenseExp || '')}"></label>
-              <label class="field"><span>Chauffeur permit expires</span><input id="dm-permit" name="permitExp" type="date" value="${esc(d.permitExp || '')}"></label></div>
             <h3>Pay</h3>
             <div class="grid3"><label class="field"><span>Paid by</span><select id="dm-paytype" name="payType">${Object.entries(C.PAY_TYPES).map(([k, l]) => `<option value="${k}" ${d.payType === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
               <label class="field"><span>Rate</span><input id="dm-payrate" name="payRate" type="number" min="0" step="0.5" value="${d.payRate}"><span class="hint">Percent, or dollars per hour or trip. Tips and tolls always go to the driver.</span></label>
