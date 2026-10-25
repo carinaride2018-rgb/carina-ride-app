@@ -1792,7 +1792,11 @@
         // "Final approach": one text when the car is about 10 minutes out.
         // Skipped when the driver set off that close already.
         if (t.status === 'en_route' && cm.approach && t.approach !== 'sent' && t.approach !== 'skip') {
-          const l = liveOf(t);
+          // Wait for the driver's phone GPS: the first fix lands a few seconds
+          // after "On the way". Only a phone without GPS falls back to the guess.
+          let l = liveOf(t);
+          const tr = t.tracking;
+          if (l && l.source !== 'gps' && tr && (tr.gps || nowMs - new Date(tr.startedAt).getTime() < 2 * 60e3)) l = null;
           if (l && t.approach == null) { t.approach = l.etaMin <= 12 ? 'skip' : 'wait'; changed = true; }
           else if (l && l.etaMin <= 10) { t.approach = 'sent'; notify(t, 'approach'); changed = true; }
         }
