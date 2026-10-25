@@ -450,6 +450,10 @@
 
   // Privacy policy and account links. The policy page lives on the real site.
   const privacyLink = () => (DEMO ? '<span class="faint">Privacy Policy (on your live site)</span>' : '<a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a>');
+  // The text-message consent box (optional, never ticked for them). Twilio A2P
+  // asks for all four disclosures right next to it: what, how often, rates, STOP/HELP.
+  const smsConsentText = (name, agent) => `<b>${agent ? 'My client agrees' : 'Yes, I agree'} to receive SMS text messages from ${esc(name || 'us')}</b> about ${agent ? 'their' : 'my'} ride: booking confirmations, reminders and driver updates. Message frequency varies. Msg &amp; data rates may apply. Reply STOP to cancel, HELP for help. Consent is not required to book. See our ${privacyLink()} and ${termsLink()}.`;
+  const smsConsent = (id, name, opts = {}) => `<label class="check smsok"><input type="checkbox" id="${id}" name="smsOk"${opts.checked ? ' checked' : ''}> <span>${smsConsentText(name, opts.agent)}</span></label>`;
   const termsLink = () => (DEMO ? '<span class="faint">Terms (on your live site)</span>' : '<a href="terms.html" target="_blank" rel="noopener">Terms &amp; Conditions</a>');
   const footLinks = () => `<p class="small footlinks"><a href="#account">My account</a> · ${privacyLink()}</p>`;
   // iPhone app: Apple doesn't allow buying the software itself in the app.
@@ -671,6 +675,7 @@
     if (route.startsWith('review.')) return viewReview(route.slice(7));
     if (route.startsWith('card.')) return viewCard(route.slice(5));
     if (route.startsWith('terms.')) return viewTerms(route.slice(6));
+    if (route.startsWith('sms.')) return viewSms(route.slice(4));
     if (route.startsWith('request.')) return viewRequest(route.slice(8));
     if (route.startsWith('quote.')) return viewQuote(route.slice(6));
     if (route.startsWith('agent.')) return viewAgentSignup(route.slice(6));
@@ -941,6 +946,39 @@
       <p class="small muted">Booking and text messages are handled by LimoRelay: see the <a href="terms.html" target="_blank" rel="noopener">LimoRelay Terms &amp; Conditions</a> and <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.</p>
       <div><a class="btn" href="#book.${esc(info.company.slug)}">Book a ride</a></div>
     </div>`;
+  }
+  // Public page that shows (and takes) the ride-text opt-in, for customers and
+  // for Twilio's A2P campaign review. The same box is on every booking form.
+  async function viewSms(slug) {
+    current = null;
+    let info;
+    try { info = await api('public.company', { slug }); } catch (e) { const v = shell({}); v.innerHTML = `<div class="panel stack"><h2>Page unavailable</h2><p class="muted">${esc(e.message)}</p></div>`; return; }
+    const keep = session; session = { company: info.company, user: null };
+    const v = shell({ narrow: true });
+    session = keep;
+    const n = info.company.name;
+    v.innerHTML = `<div class="stack">
+      <div><h1 style="font-size:24px">Ride text messages from ${esc(n)}</h1><p class="muted small">${info.company.phone ? esc(info.company.phone) + ' · ' : ''}${info.company.email ? esc(info.company.email) : ''}</p></div>
+      <div class="panel stack"><p>When you book a ride on our <a href="#book.${esc(slug)}">booking page</a>, you can choose to get text messages about your ride. The box is next to the mobile number and is never ticked for you. You can also sign up here.</p>
+        <form id="so" class="stack" novalidate>
+          <div class="grid2"><label class="field"><span>Your name</span><input name="name" autocomplete="name"></label>
+            <label class="field"><span>Mobile</span><input name="phone" type="tel" autocomplete="tel" placeholder="(206) 555-0100"></label></div>
+          ${smsConsent('so-sms', n)}
+          <div id="so-err"></div>
+          <div><button class="btn brand" type="submit">Sign up for ride texts</button></div>
+        </form></div>
+      <div class="panel stack"><h2>What we send</h2><ul class="small" style="margin:0;padding-left:18px">
+        <li>Booking confirmations and changes</li><li>A reminder before pickup</li><li>Your chauffeur's name, car and live updates (on the way, about 10 minutes away, arrived)</li><li>Replies to your questions about a ride</li></ul>
+        <p class="small muted">No marketing messages. Message frequency varies with your bookings. Msg &amp; data rates may apply. Reply STOP to cancel, HELP for help. Consent is not required to book. See our ${privacyLink()} and ${termsLink()}.</p></div>
+    </div>`;
+    $('#so', v).onsubmit = (e) => {
+      e.preventDefault();
+      const f = formData(e.target);
+      busy($('button[type=submit]', e.target), async () => {
+        try { await api('public.smsOptIn', { slug, name: f.name, phone: f.phone, smsOk: !!f.smsOk }); $('#so', v).outerHTML = `<p class="ok"><b>Thank you.</b> You'll get texts from ${esc(n)} about your rides. Reply STOP any time to cancel.</p>`; }
+        catch (err) { showErr($('#so-err', v), err); }
+      });
+    };
   }
   async function viewCard(token) {
     current = null;
@@ -1354,6 +1392,7 @@
             <label class="field"><span>Mobile</span><input name="phone" type="tel" value="${esc(me.phone || '')}" autocomplete="tel" placeholder="(206) 555-0100"></label></div>
           <div class="grid2"><label class="field"><span>Email</span><input name="email" type="email" value="${esc(me.email || '')}" autocomplete="email"></label>
             <label class="field"><span>Company or school (optional)</span><input name="org" maxlength="80"></label></div>
+          ${smsConsent('rq-sms', info.company.name)}
           <label class="field"><span>Anything else we should know?</span><textarea name="notes" maxlength="800" placeholder="Timings, special requests, a particular car"></textarea></label>
         </section>
         <div id="rq-err"></div>
@@ -1365,7 +1404,7 @@
       const f = formData(e.target);
       await busy($('button[type=submit]', e.target), async () => {
         try {
-          const r = await api('public.requestQuote', { slug, eventType: f.eventType, eventName: f.eventName, notes: f.notes, contact: { name: f.name, phone: f.phone, email: f.email, org: f.org }, lines: rides.get() });
+          const r = await api('public.requestQuote', { slug, eventType: f.eventType, eventName: f.eventName, notes: f.notes, contact: { name: f.name, phone: f.phone, email: f.email, org: f.org, smsOk: !!f.smsOk && !!String(f.phone || '').trim() }, lines: rides.get() });
           $('#rq', v).outerHTML = `<div class="panel stack" style="max-width:640px;text-align:center"><h2>Thank you, we've got your request</h2><p>Your reference is <b class="mono">${esc(r.number)}</b>.</p><p class="muted">${esc(info.company.name)} will price it and send you a link by ${f.email && f.phone ? 'text and email' : f.email ? 'email' : 'text'} to review and book.${signedHere ? ' It will also show on your My trips page.' : ''}</p><div class="row" style="justify-content:center"><a class="btn" href="#book.${esc(slug)}">Back to booking</a>${signedHere ? '<a class="btn brand" href="#customer">My trips</a>' : ''}</div></div>`;
           window.scrollTo(0, 0);
         } catch (err) { showErr($('#rq-err', v), err); }
@@ -1411,6 +1450,7 @@
         ${open ? `<form class="panel stack" id="qa" novalidate><h2>Book it</h2>
           <div class="grid2"><label class="field"><span>Your name</span><input name="name" value="${esc((q.contact && q.contact.name) || '')}" autocomplete="name"></label>
             <label class="field"><span>Mobile</span><input name="phone" type="tel" value="${esc((q.contact && q.contact.phone) || '')}" autocomplete="tel" placeholder="(206) 555-0100"><span class="hint">Your chauffeur texts or calls this number on the day.</span></label></div>
+          ${smsConsent('qa-sms', q.company.name, { checked: q.contact && q.contact.smsOk })}
           ${cardOn ? `<span class="label">Card on file</span>${cardFields}` : ''}
           ${q.terms ? `<label class="check small"><input type="checkbox" name="agreeTerms"> <span>I agree to ${esc(q.company.name)}'s <a href="#" id="qa-terms">booking terms</a></span></label>` : ''}
           <div id="qa-err"></div>
@@ -1436,8 +1476,8 @@
         const d = formData(f);
         await busy($('button[type=submit]', f), async () => {
           try {
-            if (stripeCard) { if (!String(d.name || '').trim()) throw new Error('Type your name to accept the quote.'); const r = await payApi('checkout', { kind: 'quote', token, name: d.name, phone: d.phone, agreeTerms: !!d.agreeTerms }); location.href = r.url; await new Promise(() => {}); }
-            q = await api('public.acceptQuote', { token, name: d.name, phone: d.phone, agreeTerms: !!d.agreeTerms, card: cardOn ? { number: d.number, exp: d.exp } : null }); draw(); window.scrollTo(0, 0);
+            if (stripeCard) { if (!String(d.name || '').trim()) throw new Error('Type your name to accept the quote.'); const r = await payApi('checkout', { kind: 'quote', token, name: d.name, phone: d.phone, smsOk: !!d.smsOk, agreeTerms: !!d.agreeTerms }); location.href = r.url; await new Promise(() => {}); }
+            q = await api('public.acceptQuote', { token, name: d.name, phone: d.phone, smsOk: !!d.smsOk, agreeTerms: !!d.agreeTerms, card: cardOn ? { number: d.number, exp: d.exp } : null }); draw(); window.scrollTo(0, 0);
           } catch (err) { showErr($('#qa-err', v), err); }
         });
       };
@@ -1541,7 +1581,7 @@
             <label class="field"><span>${agent ? "Client's mobile" : 'Passenger mobile'}</span><input id="bk-phone" name="passengerPhone" type="tel" value="${esc(state.passengerPhone)}"><span class="hint">The chauffeur texts this number.</span></label>
           </div>
           ${opts.guest ? `<label class="field"><span>Your email</span><input id="bk-gemail" type="email" autocomplete="email" value="${esc(state.guestEmail || '')}"><span class="hint">Your confirmation goes here. No account needed. <button class="linkbtn" type="button" id="bk-signin">Have an account? Sign in</button></span></label>` : ''}
-          <label class="check smsok"><input type="checkbox" id="bk-sms" ${state.smsOk ? 'checked' : ''}> <span>${dispatch ? 'The passenger agreed to get ride texts at this number. Untick if they did not; they then get emails only.' : `<b>${agent ? 'My client agrees' : 'I agree'} to receive SMS/text messages from ${esc((opts.info.company && opts.info.company.name) || 'us')}</b> about ${agent ? 'their' : 'my'} rides (booking confirmations, reminders and driver updates). Message frequency varies. Msg &amp; data rates may apply. Reply STOP to cancel, HELP for help. Consent is not required to book. See our ${privacyLink()} and ${termsLink()}.`}</span></label>
+          <label class="check smsok"><input type="checkbox" id="bk-sms" ${state.smsOk ? 'checked' : ''}> <span>${dispatch ? 'The passenger agreed to get ride texts at this number. Untick if they did not; they then get emails only.' : smsConsentText(opts.info.company && opts.info.company.name, agent)}</span></label>
           ${agent ? `<label class="field"><span>Client's email <span class="faint">(optional)</span></span><input id="bk-email" name="passengerEmail" type="email" value="${esc(state.passengerEmail)}"><span class="hint">Your client gets the confirmation and chauffeur details. You get a copy by email.</span></label>
             <div class="field"><span>Who pays</span><div class="stack" role="radiogroup" style="gap:6px">
               <label class="check"><input type="radio" name="payBy" value="agent" id="bk-payby-agent" ${state.payBy !== 'passenger' ? 'checked' : ''}><span>My card on file</span></label>

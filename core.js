@@ -2174,6 +2174,19 @@
       if (!t) fail('This review link is not valid.', 404);
       return t;
     }
+    // Ride-text sign-up from the public #sms.<slug> page: records consent for the number.
+    def('public.smsOptIn', 'public', true, (ctx, a) => {
+      const c = companyBySlug(a.slug);
+      const name = str(a.name, 80), key = phoneKey(a.phone);
+      if (!name) fail('Enter your name.');
+      if (key.length < 10) fail('Enter your mobile number.');
+      if (a.smsOk !== true) fail('Tick the box to agree to ride texts.');
+      db.smsConsent = db.smsConsent || [];
+      db.smsConsent.unshift({ companyId: c.id, phone: key, name, at: now().toISOString(), source: 'sms page' });
+      if (db.smsConsent.length > 2000) db.smsConsent.length = 2000;
+      if (db.smsOptOut) delete db.smsOptOut[key];
+      return { ok: true };
+    });
     def('public.review', 'public', false, (ctx, a) => {
       const t = reviewTrip(a);
       const v = tripView(t);
@@ -3454,7 +3467,7 @@
       return out;
     }
     function quoteSay(q, sms, email) {
-      for (const [recipient, channel, body] of [[q.contact.phone, 'sms', sms], [q.contact.email, 'email', email]]) {
+      for (const [recipient, channel, body] of [[q.contact.smsOk === false ? '' : q.contact.phone, 'sms', sms], [q.contact.email, 'email', email]]) {
         if (!recipient || !body) continue;
         db.messages.unshift({ id: id('msg'), companyId: q.companyId, tripId: null, quoteId: q.id, ref: q.number, at: now().toISOString(), recipient, channel, body, kind: 'quote' });
       }
@@ -3462,6 +3475,8 @@
     }
     function cleanContact(a) {
       const contact = { name: str(a.name, 80), phone: str(a.phone, 30), email: str(a.email, 120).toLowerCase(), org: str(a.org, 80) };
+      // Online the person ticks the text consent box; staff typing a quote leave it unset.
+      if ('smsOk' in a) contact.smsOk = a.smsOk === true || a.smsOk === 'on' || a.smsOk === 'true';
       if (!contact.name) fail('Enter the name of the person planning the event.');
       if (!contact.phone && !contact.email) fail('Enter a phone number or email so we can send the quote.');
       if (contact.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contact.email)) fail('Check the email address.');
@@ -3491,7 +3506,7 @@
       if (card) q.card = clone(card);
       const units = q.lines.flatMap((l) => Array.from({ length: l.count }, (_, i) => ({ l, i })));
       units.forEach(({ l, i }, k) => {
-        const b = cleanBooking(c, { ...l, passengers: splitPax(l.passengers, l.count, i), passengerName: q.contact.name + (l.count > 1 ? ` (car ${i + 1} of ${l.count})` : ''), passengerPhone: l.phone || q.contact.phone, passengerEmail: q.contact.email, notes: [`Quote ${q.number}${label ? ` (${label})` : ''}`, l.notes].filter(Boolean).join('. ') }, { allowPast: false });
+        const b = cleanBooking(c, { ...l, passengers: splitPax(l.passengers, l.count, i), passengerName: q.contact.name + (l.count > 1 ? ` (car ${i + 1} of ${l.count})` : ''), passengerPhone: l.phone || q.contact.phone, passengerEmail: q.contact.email, ...(!l.phone && 'smsOk' in q.contact ? { smsOk: q.contact.smsOk } : {}), notes: [`Quote ${q.number}${label ? ` (${label})` : ''}`, l.notes].filter(Boolean).join('. ') }, { allowPast: false });
         const t = newTrip(c, b, cust || null, q.source === 'online' ? 'online' : 'phone', by, '', true);
         t.quoteId = q.id; t.quoteNumber = q.number; t.priceOverride = l.unitPrice; reprice(t);
         if (q.termsAgreed) t.termsAgreed = clone(q.termsAgreed);
@@ -3515,7 +3530,7 @@
       const name = str(a.name, 80), phone = str(a.phone, 30);
       if (!name) fail('Type your name to accept the quote.');
       if (phone.replace(/\D/g, '').length < 7) fail('Enter a mobile number so the chauffeur can reach you on the day.');
-      return { name, phone };
+      return { name, phone, ...('smsOk' in a ? { smsOk: a.smsOk === true || a.smsOk === 'true' } : {}) };
     }
     function quoteCard(q, card) {
       q.card = clone(card);
@@ -5922,9 +5937,9 @@
           if (!cardsOn(c)) fail("Card payments aren't set up yet.");
           const base = { mode: 'setup', account: c.stripe.accountId, description: `${c.name}, card for quote ${q.number}`, email: q.contact.email || '', name: q.contact.name, back: `#quote.${q.token}` };
           if (qStatus(q, c) === 'accepted') return { ...base, meta: { kind: 'quotecard', token: q.token, ref: q.number } };
-          const { name, phone } = bookingContact(a);
+          const { name, phone, smsOk } = bookingContact(a);
           const agreed = agreeTerms(c, a, name);
-          return { ...base, name, meta: { kind: 'quote', token: q.token, name, phone, ref: q.number, ...(agreed ? { terms: agreed.version } : {}) } };
+          return { ...base, name, meta: { kind: 'quote', token: q.token, name, phone, ref: q.number, ...(agreed ? { terms: agreed.version } : {}), ...(smsOk === undefined ? {} : { sms: smsOk ? '1' : '0' }) } };
         }
         fail('Unknown payment.');
       },
@@ -5978,6 +5993,7 @@
               if (m.kind === 'quote' && (st === 'sent' || st === 'expired')) {
                 if (str(m.name, 80)) q.contact.name = str(m.name, 80);
                 if (str(m.phone, 30)) q.contact.phone = str(m.phone, 30);
+                if (m.sms === '1' || m.sms === '0') q.contact.smsOk = m.sms === '1';
                 if (m.terms) q.termsAgreed = { version: str(m.terms, 20), at: now().toISOString(), by: str(m.name, 80) };
                 bookQuote(q, str(m.name, 80), card(m.name));
                 qlog(q, `Accepted online by ${str(m.name, 80)}, card ending ${str(k.last4, 4)} saved`, str(m.name, 80));
@@ -6018,6 +6034,7 @@
           if (st === 'sent' || st === 'expired') {
             if (str(m.name, 80)) q.contact.name = str(m.name, 80);
             if (str(m.phone, 30)) q.contact.phone = str(m.phone, 30);
+            if (m.sms === '1' || m.sms === '0') q.contact.smsOk = m.sms === '1';
             if (m.terms) q.termsAgreed = { version: str(m.terms, 20), at: now().toISOString(), by: str(m.name, 80) };
             bookQuote(q, str(m.name, 80), { method: 'card', last4: str(p.last4, 4) });
             q.depositPaid.stripeSession = p.sessionId; q.depositPaid.amount = round2(p.amount / 100);
