@@ -139,6 +139,19 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .qs-item[aria-selected="true"] { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--brand); }
 .qs-main { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qs-sub { grid-column: 1 / -1; font-size: 12.5px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.setupguide { margin-bottom: 16px; gap: 12px; display: grid; border-left: 4px solid var(--brand); }
+.setupguide h2 { margin: 0; }
+.su-bar { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.su-bar span { display: block; height: 100%; background: var(--brand); border-radius: 3px; transition: width .3s; }
+.su-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.su-steps li { display: flex; align-items: center; gap: 12px; padding: 10px 4px; border-top: 1px solid var(--line); }
+.su-steps li:first-child { border-top: 0; }
+.su-steps li .grow { display: grid; gap: 2px; min-width: 0; }
+.su-steps li .grow .mono { word-break: break-all; }
+.su-tick { flex: none; width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--line); display: grid; place-items: center; font-size: 13px; font-weight: 700; color: #fff; }
+.su-steps li.done .su-tick { background: var(--brand); border-color: var(--brand); }
+.su-steps li.done b { color: var(--ink-3); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .btn.retbtn { width: 100%; border: 1.5px solid var(--brand); color: var(--brand); background: var(--surface); font-weight: 650; }
 .btn.retbtn:hover { background: var(--brand); color: #fff; }
 .qs-flash { animation: qsflash 1.6s ease-out; }

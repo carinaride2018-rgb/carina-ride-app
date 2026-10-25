@@ -2807,6 +2807,28 @@
       return { trips, drivers, vehicles, unassignedLater, alerts: companyAlerts(ctx.company) };
     });
     def('dispatch.alerts', STAFF, false, (ctx) => companyAlerts(ctx.company));
+    // Setup guide for a company that just joined: each step ticks itself off.
+    function setupSteps(c) {
+      const st = c.setup || {};
+      const has = (list) => list.some((x) => x.companyId === c.id);
+      const steps = [
+        { key: 'cars', label: 'Add your cars', done: has(db.vehicles) },
+        { key: 'rates', label: 'Set your prices', done: !!st.rates },
+        { key: 'drivers', label: 'Add a driver', done: db.users.some((u) => u.companyId === c.id && u.role === 'driver') },
+        { key: 'payments', label: 'Turn on card payments', done: cardsOn(c) || payOpts(c).card === false },
+        { key: 'booking', label: 'Take a test booking', done: has(db.trips) },
+        { key: 'share', label: 'Share your booking link', done: !!st.shared },
+      ];
+      return { show: !!c.setup && !st.hidden, steps, done: steps.filter((x) => x.done).length };
+    }
+    def('dispatch.setup', STAFF, false, (ctx) => setupSteps(ctx.company));
+    def('dispatch.setupMark', ['admin'], true, (ctx, a) => {
+      const c = ctx.company; c.setup = c.setup || {};
+      if (a.what === 'shared') c.setup.shared = true;
+      else if (a.what === 'hide') c.setup.hidden = true;
+      else fail('Unknown step.');
+      return setupSteps(c);
+    });
     def('dispatch.trips', STAFF, false, (ctx, a) => {
       const q = str(a.q, 80).toLowerCase();
       const status = str(a.status, 20);
@@ -4751,6 +4773,7 @@
         c.payOptions = po;
       }
       const r = a.rates || {};
+      if (a.rates && c.setup) c.setup.rates = true;
       const pos = (k, max) => { if (k in r) { const n = num(r[k], NaN); if (!(n >= 0 && n <= max)) fail(`Check the value for ${k}.`); c.rates[k] = round2(n); } };
       pos('base', 1000); pos('perMile', 100); pos('minFare', 5000); pos('hourly', 2000); pos('minHours', 24);
       pos('gratuityPct', 50); pos('taxPct', 30); pos('waitPerMin', 20);
@@ -4962,6 +4985,8 @@
       ? `${c.name} is waiting for approval. We'll email you as soon as it's approved.`
       : `${c.name}'s account is paused. Contact the platform owner.`;
     // A new company record with LimoRelay's default rates and settings.
+    const plat = () => db.platform || (db.platform = { approveSignups: false });
+    const SIGNUP_TZ = ['America/Los_Angeles', 'America/Denver', 'America/Phoenix', 'America/Chicago', 'America/New_York', 'America/Anchorage', 'Pacific/Honolulu'];
     function makeCompany(f) {
       const plan = PLANS[f.plan] ? f.plan : 'standard';
       const prefix = (f.name.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() || 'TRP').padEnd(3, 'X');
@@ -4997,18 +5022,36 @@
       if (db.companies.filter((c) => c.status === 'pending' && new Date(c.createdAt).getTime() > now().getTime() - 3600e3).length >= 20) fail('Too many sign-ups right now. Please try again later.', 429);
       const plan = PLANS[a.plan] ? a.plan : foundingLeft() > 0 ? 'founding' : 'standard';
       if (plan === 'founding' && foundingLeft() <= 0) fail(`All ${PLANS.founding.limit} Founding places are taken. Choose Standard or Fleet.`);
-      const c = makeCompany({ name: company, slug, plan, phone, email, status: 'pending' });
+      // Unless the owner approves sign-ups by hand, the company starts its free
+      // trial right away and is signed in to a setup guide.
+      const instant = !plat().approveSignups;
+      const tz = SIGNUP_TZ.includes(a.timezone) ? a.timezone : 'America/Los_Angeles';
+      const c = makeCompany({ name: company, slug, plan, phone, email, status: instant ? 'active' : 'pending', timezone: tz, trial: instant });
       c.signup = { city, fleet, note, at: c.createdAt };
+      c.setup = {};
+      if (instant) c.approvedAt = c.createdAt;
       db.companies.push(c);
       const u = { id: id('usr'), role: 'admin', companyId: c.id, name, email, phone, active: true, createdAt: now().toISOString() };
       await setPassword(u, pw);
       db.users.push(u);
+      if (instant) {
+        mailUser(u, null, 'approved', `Welcome aboard, ${name.split(' ')[0]}! ${company} is on LimoRelay and your 30-day free trial has started, no card needed. Sign in at ${siteUrl()} with ${email}. The setup guide on your Board walks you through adding cars, prices and your first booking. Questions? Reply to this email or write to ${PLATFORM_EMAIL}.`);
+        const owner = db.users.find((x) => x.role === 'owner' && x.active !== false);
+        if (owner && owner.email) db.messages.unshift({ id: id('msg'), companyId: null, tripId: null, ref: '', at: c.createdAt, recipient: owner.email, channel: 'email', kind: 'signup', metered: true, replyTo: email,
+          body: `New company on LimoRelay: ${company}${city ? ', ' + city : ''}. ${name}, ${email}, ${phone}${fleet ? '. Fleet: ' + fleet + ' vehicles' : ''}. Plan: ${PLANS[plan].label}. Their free trial has started.${note ? ' Note: ' + note : ''}` });
+        const token = randomId(24);
+        db.sessions[token] = { userId: u.id, at: now().toISOString() };
+        return { ok: true, started: true, email, token, user: pubUser(u), company: pubCompany(c) };
+      }
       mailUser(u, null, 'signup', `Welcome aboard, ${name.split(' ')[0]}! We've received the sign-up for ${company} on LimoRelay. We welcome every new member personally and will email you at ${email} as soon as you're approved, within 3 to 7 business days. Your 30-day free trial starts then, with no card needed. Questions? Reply to this email or write to ${PLATFORM_EMAIL}.`);
       const owner = db.users.find((x) => x.role === 'owner' && x.active !== false);
       if (owner && owner.email) db.messages.unshift({ id: id('msg'), companyId: null, tripId: null, ref: '', at: c.createdAt, recipient: owner.email, channel: 'email', kind: 'signup', metered: true, replyTo: email,
         body: `New company sign-up waiting for your approval: ${company}${city ? ', ' + city : ''}. ${name}, ${email}, ${phone}${fleet ? '. Fleet: ' + fleet + ' vehicles' : ''}. Plan: ${PLANS[plan].label}.${note ? ' Note: ' + note : ''} Approve or decline it at ${siteUrl()} under Companies.` });
       return { ok: true, company, email };
     });
+    def('public.signupInfo', 'public', false, () => ({ instant: !plat().approveSignups }));
+    def('owner.platform', ['owner'], false, () => ({ approveSignups: !!plat().approveSignups }));
+    def('owner.savePlatform', ['owner'], true, (ctx, a) => { plat().approveSignups = !!a.approveSignups; return { approveSignups: plat().approveSignups }; });
     def('owner.reviewSignup', ['owner'], true, (ctx, a) => {
       const c = findCompany(a.id);
       if (!c || c.status !== 'pending') fail('That sign-up was not found or was already reviewed.', 404);
@@ -5085,6 +5128,7 @@
       if (!emailOk(adminEmail)) fail("Enter the company admin's email.");
       if (a.adminPassword && String(a.adminPassword).length < 8) fail('Make the temporary password at least 8 characters, or leave it blank.');
       const c = makeCompany({ ...a, name, slug, plan, billing, email: adminEmail, status: 'active' });
+      c.setup = {};
       db.companies.push(c);
       const u = { id: id('usr'), role: 'admin', companyId: c.id, name: str(a.adminName, 80), email: adminEmail, phone: c.phone, active: true, createdAt: now().toISOString() };
       if (a.adminPassword) await setPassword(u, a.adminPassword);

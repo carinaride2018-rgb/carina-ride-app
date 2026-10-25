@@ -1023,6 +1023,7 @@
     ['Can I bring my existing rides?', 'Yes. Upcoming rides can be imported from a spreadsheet, so you can switch without losing bookings.'],
   ];
   async function viewSignin() {
+    let myTz = 'America/Los_Angeles'; try { myTz = Intl.DateTimeFormat().resolvedOptions().timeZone || myTz; } catch (e) { /* default */ }
     current = null;
     const v = shell({});
     let companies = [], sample = true;
@@ -1115,12 +1116,13 @@
         <p class="small faint" style="margin-top:12px">Extra texts are $15 for 500. Card processing is billed by Stripe directly to your company; ${PLATFORM} takes no share of your fares.</p>
       </section>
       <section class="lp-sec lp-trial" id="lp-trial">
-        <div class="stack" style="gap:8px"><h2>Join us, free for 30 days</h2><p class="muted">It takes two minutes. We welcome every new member personally and email you as soon as you’re approved, within 3 to 7 business days. Your free trial starts then, with no card needed, and we’ll introduce you to operators near you. Questions? Email ${mailLink()}.</p></div>
+        <div class="stack" style="gap:8px"><h2>Join us, free for 30 days</h2><p class="muted" id="tr-lead">It takes two minutes. Your free trial starts right away, with no card needed, and a short setup guide helps you add your cars, prices and first booking. Questions? Email ${mailLink()}.</p></div>
         <form id="tr-form" class="stack" novalidate>
           <div class="grid2"><label class="field"><span>Company name</span><input id="tr-company" name="company" autocomplete="organization"></label><label class="field"><span>Booking link name</span><input id="tr-slug" name="slug" class="mono" autocapitalize="off" placeholder="your-company"><span class="hint" id="tr-slughint">Your booking page will be ${esc(location.host || 'limorelay.com')}/#book.<b class="mono">your-company</b></span></label></div>
           <div class="grid2"><label class="field"><span>Your name</span><input id="tr-name" name="name" autocomplete="name"></label><label class="field"><span>Mobile phone</span><input id="tr-phone" name="phone" type="tel" autocomplete="tel"></label></div>
           <div class="grid2"><label class="field"><span>Email (you sign in with this)</span><input id="tr-email" name="email" type="email" autocomplete="email"></label><label class="field"><span>Choose a password</span><input id="tr-pw" name="password" type="password" autocomplete="new-password" minlength="8"><span class="hint">At least 8 characters.</span></label></div>
           <div class="grid2"><label class="field"><span>City</span><input id="tr-city" name="city"></label><label class="field"><span>Vehicles in your fleet</span><select id="tr-fleet" name="fleet"><option value="">Choose</option><option>1-3</option><option>4-10</option><option>11-25</option><option>26+</option></select></label></div>
+          <label class="field"><span>Time zone</span><select id="tr-tz" name="timezone">${[['America/Los_Angeles', 'Pacific'], ['America/Denver', 'Mountain'], ['America/Phoenix', 'Arizona'], ['America/Chicago', 'Central'], ['America/New_York', 'Eastern'], ['America/Anchorage', 'Alaska'], ['Pacific/Honolulu', 'Hawaii']].map(([z, l]) => `<option value="${z}" ${z === myTz ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
           <label class="field"><span>Membership</span><select id="tr-plan" name="plan">${['founding', 'standard', 'fleet'].map((k) => `<option value="${k}">${esc(P[k].label)}, $${P[k].monthly}/month after the free trial</option>`).join('')}</select></label>
           <label class="field"><span>Anything we should know? (optional)</span><textarea id="tr-note" name="note" placeholder="The software you use today, when you want to start"></textarea></label>
           <label class="check"><input type="checkbox" id="tr-terms" name="terms" value="1"> <span>I agree to the ${termsLink()} and ${privacyLink()}.</span></label>
@@ -1151,12 +1153,16 @@
     const showSlug = () => { $('#tr-slughint b', v).textContent = slugOf($('#tr-slug', v).value) || 'your-company'; };
     $('#tr-company', v).oninput = () => { if (!slugEdited) { $('#tr-slug', v).value = slugOf($('#tr-company', v).value); showSlug(); } };
     $('#tr-slug', v).oninput = () => { slugEdited = true; showSlug(); };
+    // When the owner approves sign-ups by hand, say so before they sign up.
+    api('public.signupInfo').then((r) => { const l = $('#tr-lead', v); if (l && !r.instant) l.innerHTML = `It takes two minutes. We welcome every new member personally and email you as soon as you’re approved, within 3 to 7 business days. Your free trial starts then, with no card needed. Questions? Email ${mailLink()}.`; }).catch(() => {});
     $('#tr-form', v).onsubmit = async (e) => {
       e.preventDefault();
       const f = formData(e.target);
       await busy($('#tr-go', v), async () => {
         try {
-          await api('public.companySignup', { ...f, terms: $('#tr-terms', v).checked });
+          const res = await api('public.companySignup', { ...f, terms: $('#tr-terms', v).checked });
+          // Trial started: sign them straight in to the setup guide.
+          if (res.started) { setSession({ token: res.token, user: res.user, company: res.company, remember: true }); toast(`Welcome aboard! Your free trial has started.`); go(HOME[res.user.role]); return; }
           const first = (f.name.trim().split(/\s+/)[0] || '').replace(/^./, (ch) => ch.toUpperCase());
           $('#tr-form', v).outerHTML = `<div class="note ok" id="tr-done"><b>Welcome aboard, ${esc(first)}!</b> We’ve received the sign-up for ${esc(f.company)}. Watch for an email at ${esc(f.email)} saying you’re approved, within 3 to 7 business days. Then sign in with that email and the password you just chose. Questions? Email ${mailLink()}.</div>`;
         } catch (err) { showErr($('#tr-err', v), err); }
@@ -2810,8 +2816,52 @@
     }
 
     // Board ------------------------------------------------------------------
+    // Setup guide for a company that just joined (admins only). Each step
+    // ticks itself off from what the company has done.
+    const SETUP_HINT = {
+      cars: ['Name, type and seats of each car.', 'Add a car'],
+      rates: ['Base fare, per mile and hourly for each car.', 'Set prices'],
+      drivers: ['Each driver gets their own app login.', 'Add a driver'],
+      payments: ['Connect Stripe so passengers pay by card, or take cash only.', 'Set up payments'],
+      booking: ['Book a ride yourself to see how it works.', 'New booking'],
+      share: ['Put it on your website and Google profile.', 'Copy link'],
+    };
+    async function drawSetup(box, redraw) {
+      if (!isAdmin || !box) return;
+      let g;
+      try { g = await api('dispatch.setup'); } catch (e) { return; }
+      // Until the company has a driver there is nothing on the live map yet.
+      const mapEl = $('#bd-map'); if (mapEl) mapEl.hidden = g.show && !g.steps.find((x) => x.key === 'drivers').done;
+      if (!g.show) { box.innerHTML = ''; return; }
+      const all = g.done === g.steps.length;
+      const link = DEMO ? `#book.${session.company.slug}` : `${location.origin}${location.pathname}#book.${session.company.slug}`;
+      const sig = JSON.stringify(g); if (box.dataset.sig === sig) return; box.dataset.sig = sig;
+      box.innerHTML = `<section class="panel setupguide"><div class="spread"><div class="stack" style="gap:2px"><h2>${all ? 'You’re all set' : 'Get set up'}</h2>
+          <p class="small muted" style="margin:0">${all ? 'Your booking page is ready for customers.' : `${g.done} of ${g.steps.length} done. Each step ticks itself off.`}</p></div>
+          <button class="linkbtn small" type="button" id="su-hide">Hide guide</button></div>
+        <div class="su-bar" aria-hidden="true"><span style="width:${Math.round(g.done / g.steps.length * 100)}%"></span></div>
+        <ol class="su-steps">${g.steps.map((x) => { const h = SETUP_HINT[x.key]; return `<li class="${x.done ? 'done' : ''}"><span class="su-tick" aria-hidden="true">${x.done ? '✓' : ''}</span>
+          <div class="grow"><b>${esc(x.label)}</b>${x.done ? '<span class="sr">, done</span>' : ''}<span class="small muted">${x.key === 'share' ? `<span class="mono">${esc(link)}</span>` : esc(h[0])}</span></div>
+          ${x.done && x.key !== 'share' ? '' : `<button class="btn sm${x.done ? '' : ' primary'}" type="button" data-su="${x.key}">${esc(h[1])}</button>`}</li>`; }).join('')}</ol></section>`;
+      $('#su-hide', box).onclick = async () => { try { await api('dispatch.setupMark', { what: 'hide' }); box.innerHTML = ''; const me = $('#bd-map'); if (me) me.hidden = false; } catch (e) { toast(e.message, true); } };
+      const again = () => { box.dataset.sig = ''; drawSetup(box, redraw); };
+      $$('[data-su]', box).forEach((b) => { b.onclick = async () => {
+        const k = b.dataset.su;
+        if (k === 'cars') { tab = 'fleet'; store.set(tabKey, 'fleet'); draw(); vehicleModal(null, () => draw()); }
+        else if (k === 'rates') jumpTo('settings', 'Rates by vehicle');
+        else if (k === 'drivers') { let veh = []; try { veh = await api('dispatch.vehicles'); } catch (e) { /* optional */ } driverModal(null, veh, again); }
+        else if (k === 'payments') jumpTo('settings', 'How customers pay');
+        else if (k === 'booking') newBookingModal(() => { again(); redraw && redraw(); });
+        else if (k === 'share') {
+          try { await navigator.clipboard.writeText(link); toast('Booking link copied.'); } catch (e) { toast(`Your booking link: ${link}`, false, 8000); }
+          try { await api('dispatch.setupMark', { what: 'shared' }); } catch (e) { /* the copy still worked */ }
+          again();
+        }
+      }; });
+    }
     function drawBoard(v0) {
-      v0.innerHTML = '<div id="bd-map"></div><div id="bd-main"><p class="faint">Loading…</p></div>';
+      v0.innerHTML = '<div id="bd-setup"></div><div id="bd-map"></div><div id="bd-main"><p class="faint">Loading…</p></div>';
+      drawSetup($('#bd-setup', v0), () => { last = ''; refresh(); });
       const v = $('#bd-main', v0);
       let last = '';
       const fmap = fleetMap($('#bd-map', v0), (id) => tripModal(id, () => { last = ''; refresh(); }));
@@ -5065,9 +5115,9 @@
     async function drawCompanies(v) {
       let last = '', plans = null;
       async function refresh(silent) {
-        let list, invoices, leads;
-        try { [list, invoices, plans, leads] = await Promise.all([api('owner.companies'), api('owner.invoices'), api('owner.plans'), api('owner.leads')]); } catch (e) { if (!silent) showErr(v, e); return; }
-        const sig = JSON.stringify([list, invoices, plans, leads]); if (sig === last) return; last = sig;
+        let list, invoices, leads, pf;
+        try { [list, invoices, plans, leads, pf] = await Promise.all([api('owner.companies'), api('owner.invoices'), api('owner.plans'), api('owner.leads'), api('owner.platform')]); } catch (e) { if (!silent) showErr(v, e); return; }
+        const sig = JSON.stringify([list, invoices, plans, leads, pf]); if (sig === last) return; last = sig;
         const pending = list.filter((c) => c.status === 'pending');
         list = list.filter((c) => c.status !== 'pending');
         const active = list.filter((c) => c.status === 'active');
@@ -5083,6 +5133,7 @@
             <div class="tile"><span class="label">Trips booked this month</span><b>${list.reduce((s, c) => s + c.tripsMonth, 0)}</b></div>
             <div class="tile"><span class="label">Unpaid invoices</span><b>${money0(open)}</b></div>
           </div>
+          <label class="switch" style="margin-bottom:16px"><input type="checkbox" id="co-approve" ${pf.approveSignups ? 'checked' : ''}><span>Approve new companies by hand <span class="small faint">${pf.approveSignups ? 'New sign-ups wait for you before they can sign in.' : 'Off: new companies start their free trial as soon as they sign up. You get an email for each one.'}</span></span></label>
           ${pending.length ? `<section class="panel stack" id="co-pending" style="margin-bottom:20px"><div class="row" style="justify-content:space-between"><h2>Waiting for your approval <span class="pill s-assigned count">${pending.length}</span></h2><span class="small faint">Companies that signed up on the home page. They can sign in once you approve; their 30-day trial starts then.</span></div>
             <div class="tablewrap"><table><thead><tr><th>Signed up</th><th>Company</th><th>Contact</th><th>City</th><th>Fleet</th><th>Plan</th><th>Note</th><th></th></tr></thead><tbody>
             ${pending.map((c) => `<tr><td class="mono small nowrap">${esc(fmtDT(c.createdAt))}</td><td data-label="Company"><b>${esc(c.name)}</b><br><span class="small mono">#book.${esc(c.slug)}</span></td>
@@ -5110,6 +5161,7 @@
           </tbody></table></div>
           <p class="small faint" style="margin-top:10px">Pausing a company signs out its staff, drivers and customers and closes its booking page until you resume it.</p>`;
         $('#co-add', v).onclick = addCompany;
+        $('#co-approve', v).onchange = async (e) => { try { await api('owner.savePlatform', { approveSignups: e.target.checked }); toast(e.target.checked ? 'New sign-ups now wait for your approval.' : 'New companies now start right away.'); last = ''; refresh(); } catch (err) { toast(err.message, true); } };
         $$('[data-approve]', v).forEach((b) => { b.onclick = () => busy(b, async () => {
           const c = pending.find((x) => x.id === b.dataset.approve);
           if (!confirm(`Approve ${c.name}? ${c.adminName} can sign in right away and their 30-day free trial starts today.`)) return;
