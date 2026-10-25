@@ -94,7 +94,7 @@
   const DEFAULT_DISPATCH = { autoAssign: false, horizonHours: 24, acceptMin: 20, onNoAnswer: 'next', remindEvening: true, eveningHour: 18, remindBeforeMin: 120, lateStartMin: 20, lateAlert1: 60, lateAlert2: 30, minNoticeHours: 3, wakeCall: false, wakeMin: 60, wakeBeforeHour: 9, wakeRetryMin: 10 };
   // Automatic farm-out: send a trip to network partners, in the company's order,
   // when its own drivers can't cover it. Off until the company turns it on.
-  const DEFAULT_AUTOFARM = { on: false, noDriver: true, lastCallHours: 2, ratePct: 87.5, answerMin: 15, partners: [] };
+  const DEFAULT_AUTOFARM = { on: false, noDriver: true, lastCallHours: 2, ratePct: 87.5, answerMin: 15, partners: [], postToBoard: false };
   // Suitcases each vehicle type takes; companies can change these.
   // Photos for the sample fleet, by VIN. The demo page passes them in as data
   // URLs; the server serves them from public/media/vehicles.
@@ -347,6 +347,18 @@
   // Which place list and map centre a company uses: its own region if set,
   // otherwise guessed from its time zone. Pacific time means Seattle for now.
   const regionOf = (c) => (c && PLACES[c.region] ? c.region : c && /Denver/.test(c.timezone || '') ? 'denver' : c && /Los_Angeles|Vancouver/.test(c.timezone || '') ? 'seattle' : 'dc');
+  // Service places for the network directory: "City, ST" names and airport codes.
+  const stateOfAirport = (code) => { const m = AIRPORTS[code] && AIRPORTS[code][1].match(/,\s*([A-Z]{2})\b/); return m ? m[1] : ''; };
+  const cityName = (x) => str(x).split(',')[0].trim();
+  const cleanCity = (x) => { const [c, s] = str(x, 60).split(',').map((y) => y.trim()); return c ? (s ? `${c[0].toUpperCase()}${c.slice(1)}, ${s.toUpperCase().slice(0, 2)}` : `${c[0].toUpperCase()}${c.slice(1)}`) : ''; };
+  // Where a pickup is: its airport, or the "City, ST" in the address.
+  function placeOfAddr(addr) {
+    const code = airportCode(addr);
+    if (code && AIRPORTS[code]) return { airport: code, city: `${AIRPORTS[code][2]}, ${stateOfAirport(code)}`, label: `${AIRPORTS[code][2]} (${code})` };
+    const all = [...str(addr).matchAll(/,\s*([A-Za-z][A-Za-z .'-]+?),\s*([A-Z]{2})\b/g)];
+    if (all.length) { const m = all[all.length - 1]; return { airport: '', city: `${m[1].trim()}, ${m[2]}`, label: `${m[1].trim()}, ${m[2]}` }; }
+    return null;
+  }
   const fold = (x) => str(x).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
 
   // recent: the caller's own past addresses, newest first. Returns up to 8
@@ -616,7 +628,7 @@
     // Adds the company network (farm-in / farm-out between companies).
     function migrate2to3(d) {
       for (const c of d.companies) c.network = c.network || defaultNetwork(c);
-      d.farmouts = d.farmouts || []; d.netMessages = d.netMessages || [];
+      d.farmouts = d.farmouts || []; d.netMessages = d.netMessages || []; d.netPosts = d.netPosts || [];
       d.version = 3;
       return d;
     }
@@ -656,6 +668,7 @@
       // The single $45 Membership became Founding / Standard / Fleet (v37).
       // Members keep the Founding price, locked from when they joined.
       for (const c of d.companies) if (!PLANS[c.plan]) { c.plan = 'founding'; c.monthlyFee = PLANS.founding.monthly; c.setupFee = 0; c.billing = c.billing || 'monthly'; c.priceLockedUntil = addMonths(c.createdAt || new Date().toISOString(), PLANS.founding.lockMonths).slice(0, 10); }
+      for (const c of d.companies) { c.network = c.network || defaultNetwork(c); seedPlaces(c); }
       // The airport flat rate is gone (v91): upcoming trips still priced with it,
       // and not yet charged or invoiced, are priced again with today's rates.
       for (const t of d.trips || []) {
@@ -690,7 +703,32 @@
       }
       return d;
     }
-    function defaultNetwork(c) { return { joined: false, areas: '', about: c ? c.tagline || '' : '', read: {} }; }
+    function defaultNetwork(c) { return { joined: false, areas: '', about: c ? c.tagline || '' : '', read: {}, cities: c ? [REGION_CITY[regionOf(c)]] : [], airports: [] }; }
+    // First run after v95: service cities from the company's home region and
+    // airport codes (or names) mentioned in the old "areas you cover" text.
+    function seedPlaces(c) {
+      const n = c.network;
+      if (Array.isArray(n.cities) && Array.isArray(n.airports)) return;
+      const text = fold(n.areas || '');
+      n.cities = [REGION_CITY[regionOf(c)]];
+      n.airports = Object.keys(AIRPORTS).filter((k) => new RegExp(`\\b${k.toLowerCase()}\\b`).test(text) || text.includes(fold(AIRPORTS[k][0].split(/ Airport| International|,/)[0])));
+      for (const k of n.airports) { const city = `${AIRPORTS[k][2]}, ${stateOfAirport(k)}`; if (!n.cities.some((x) => fold(cityName(x)) === fold(AIRPORTS[k][2]))) n.cities.push(city); }
+    }
+    // Does this company serve the place (an airport code and/or a city)?
+    function serves(c, place) {
+      if (!c || !place) return false;
+      const n = c.network || {}, cities = (n.cities || []).map((x) => fold(cityName(x))), airports = n.airports || [];
+      if (place.airport && airports.includes(place.airport)) return true;
+      const want = fold(cityName(place.city || ''));
+      if (want && cities.some((x) => x === want)) return true;
+      return !!(place.airport && AIRPORTS[place.airport] && cities.includes(fold(AIRPORTS[place.airport][2])));
+    }
+    // Where a company is on the map: its first airport, or an airport in its first city.
+    function coordsOf(c) {
+      const n = c.network || {};
+      const code = (n.airports || [])[0] || Object.keys(AIRPORTS).find((k) => (n.cities || []).some((x) => fold(cityName(x)) === fold(AIRPORTS[k][2])));
+      return code ? { lat: AIRPORTS[code][3], lng: AIRPORTS[code][4] } : null;
+    }
 
     const id = (prefix) => { db.seq[prefix] = (db.seq[prefix] || 0) + 1; return `${prefix}_${db.seq[prefix]}`; };
     const findUser = (uid) => db.users.find((u) => u.id === uid);
@@ -1760,7 +1798,7 @@
           if (!t.needsDriver) { t.needsDriver = { at: n.toISOString(), why: `Out of town in ${t.outOfTown.city}: arrange a local company`, outOfTown: true }; changed = true; }
           continue;
         }
-        if (cfg.autoAssign && t.status === 'confirmed' && !t.needsDriver && pickMs > nowMs && pickMs - nowMs < cfg.horizonHours * 3600e3) {
+        if (cfg.autoAssign && t.status === 'confirmed' && !t.needsDriver && !(t.netPost && ['open', 'closed'].includes(t.netPost.status)) && pickMs > nowMs && pickMs - nowMs < cfg.horizonHours * 3600e3) {
           if (!autoAssign(t, 'Auto-dispatch')) t.needsDriver = { at: n.toISOString(), why: 'No free driver with a suitable car' };
           changed = true;
           continue;
@@ -1927,9 +1965,10 @@
     }
     function landingPartner(c, code, t) {
       const ap = airportInfo(code);
-      if (!ap || !ap.region || !isMember(c)) return null;
+      if (!ap || !isMember(c)) return null;
       const order = acfg(c).partners;
-      return db.companies.filter((x) => x.id !== c.id && isMember(x) && regionOf(x) === ap.region && partnerFits(x, t))
+      const place = { airport: code, city: `${ap.city}, ${stateOfAirport(code)}` };
+      return db.companies.filter((x) => x.id !== c.id && isMember(x) && (serves(x, place) || (ap.region && regionOf(x) === ap.region)) && partnerFits(x, t))
         .sort((x, y) => ((order.indexOf(x.id) + 1 || 99) - (order.indexOf(y.id) + 1 || 99)) || x.name.localeCompare(y.name))[0] || null;
     }
     function landingPreview(c, raw) {
@@ -2119,6 +2158,14 @@
           if (t.status === 'cancelled' && cx && recent(cx.at, 3) && cx.by !== u.name) add(`cancel:${t.id}`, `${t.ref} was cancelled`, `By ${cx.by || 'the customer'}. Pickup was ${at(t)}.`, '#dispatch', cx.at);
         }
         for (const x of db.users) if (x.companyId === c.id && x.role === 'customer' && x.bizRequest && x.bizRequest.status === 'pending' && recent(x.bizRequest.at, 48)) add(`biz:${x.id}:${x.bizRequest.at}`, `Business rides request: ${x.bizRequest.company}`, `${x.name} wants to book business rides. Open Customers > Company accounts to approve.`, '#dispatch', x.bizRequest.at);
+        for (const p of db.netPosts || []) {
+          if (p.to.includes(c.id) && p.status === 'open' && recent(p.createdAt, 24) && !p.bids.some((b) => b.companyId === c.id)) add(`post:${p.id}`, `Trip board: ${p.place.label}`, `${p.fromName} posted ${p.ref}. ${p.mode === 'take' ? `First to take it gets $${money(p.rate)}.` : 'Send your price.'}`, '#dispatch', p.createdAt);
+          if (p.fromCompanyId !== c.id) continue;
+          const lb = p.bids[p.bids.length - 1];
+          if (['open', 'closed'].includes(p.status) && lb && recent(lb.at, 24)) add(`bid:${p.id}:${p.bids.length}`, `${p.bids.length} price${p.bids.length === 1 ? '' : 's'} for ${p.ref}`, `Latest: ${lb.name}, $${money(lb.price)}. Open Network > Trip board to choose.`, '#dispatch', lb.at);
+          if (p.status === 'taken' && recent(p.closedAt, 24)) add(`taken:${p.id}`, `${p.takenBy.name} took ${p.ref}`, `From the ${p.place.label} trip board, for $${money(p.takenBy.rate)}.`, '#dispatch', p.closedAt);
+          if (p.status === 'expired' && recent(p.closedAt, 24)) add(`pexp:${p.id}`, `Nobody took ${p.ref}`, `The ${p.place.label} trip board post closed. The trip needs a driver.`, '#dispatch', p.closedAt);
+        }
         for (const f of db.farmouts || []) {
           if (f.toCompanyId === c.id && f.status === 'offered') add(`farm:${f.id}`, `Trip offer from ${f.fromName}`, `${f.ref}: $${money(f.rate)}. Open Network to accept or decline.`, '#dispatch', f.createdAt);
           if (f.fromCompanyId === c.id && f.status === 'returned' && !f.seenReturn) add(`ret:${f.id}`, `${f.toName} handed back ${f.ref}`, 'Assign it or send it to another partner.', '#dispatch');
@@ -3710,6 +3757,7 @@
     }
     // Copies the partner's progress back to the sender. Runs after every change.
     function syncFarmouts() {
+      sweepPosts();
       if (!db.farmouts || !db.farmouts.length) return;
       const n = now().toISOString();
       for (const f of db.farmouts) {
@@ -3819,8 +3867,9 @@
       const unread = unreadFrom(me);
       for (const f of db.farmouts) if (f.fromCompanyId === me.id && f.status === 'returned' && !f.seenReturn) { f.seenReturn = true; ctx.dirty = true; }
       return {
-        me: { joined: !!me.network.joined, areas: me.network.areas, about: me.network.about, region: REGION_CITY[regionOf(me)] },
+        me: { joined: !!me.network.joined, areas: me.network.areas, about: me.network.about, region: REGION_CITY[regionOf(me)], cities: (me.network.cities || []).slice(), airports: (me.network.airports || []).slice() },
         auto: { ...acfg(me), order: autoPartners(me).map((c) => c.id) },
+        boardOpen: (db.netPosts || []).filter((p) => p.to.includes(me.id) && p.status === 'open' && !p.bids.some((b) => b.companyId === me.id)).length,
         members, sent: rows.filter((r) => r.direction === 'sent'), incoming: rows.filter((r) => r.direction === 'incoming'),
         balances: balances(me), unread, unreadTotal: Object.values(unread).reduce((s, x) => s + x, 0),
         waiting: rows.filter((r) => r.direction === 'incoming' && r.status === 'offered').length,
@@ -3831,14 +3880,26 @@
       if ('joined' in a) n.joined = a.joined === true || a.joined === 'true' || a.joined === 'on';
       if ('areas' in a) n.areas = str(a.areas, 200);
       if ('about' in a) n.about = str(a.about, 400);
-      return { joined: n.joined, areas: n.areas, about: n.about };
+      const list = (x) => (Array.isArray(x) ? x : str(x, 1000).split(/[\n;]+/)).map((y) => str(y, 60).trim()).filter(Boolean);
+      if ('cities' in a) {
+        const cities = [...new Set(list(a.cities).map(cleanCity).filter(Boolean))].slice(0, 30);
+        if (!cities.length) fail('Add at least one city you serve, like Seattle, WA.');
+        n.cities = cities;
+      }
+      if ('airports' in a) {
+        const codes = [...new Set((Array.isArray(a.airports) ? a.airports : str(a.airports, 300).split(/[\s,;]+/)).map((x) => str(x, 4).toUpperCase()).filter(Boolean))];
+        const bad = codes.find((k) => !AIRPORTS[k]);
+        if (bad) fail(`${bad} isn't an airport code we know. Use codes like SEA, LAX or JFK.`);
+        n.airports = codes;
+      }
+      return { joined: n.joined, areas: n.areas, about: n.about, cities: n.cities, airports: n.airports };
     });
     def('network.saveAuto', ['admin'], true, (ctx, a) => {
       const cur = acfg(ctx.company);
       const bool = (k) => (k in a ? a[k] === true || a[k] === 'true' || a[k] === 'on' : cur[k]);
       const whole = (k, lo, hi) => (k in a ? Math.min(hi, Math.max(lo, Math.round(num(a[k], cur[k])))) : cur[k]);
       const partners = Array.isArray(a.partners) ? [...new Set(a.partners.map(String))].filter((pid) => { const c = findCompany(pid); return c && c.id !== ctx.company.id && isMember(c); }) : cur.partners;
-      const next = { on: bool('on'), noDriver: bool('noDriver'), lastCallHours: whole('lastCallHours', 0, 48), ratePct: Math.round(('ratePct' in a ? Math.min(100, Math.max(10, num(a.ratePct, cur.ratePct))) : cur.ratePct) * 2) / 2, answerMin: whole('answerMin', 5, 240), partners };
+      const next = { postToBoard: bool('postToBoard'), on: bool('on'), noDriver: bool('noDriver'), lastCallHours: whole('lastCallHours', 0, 48), ratePct: Math.round(('ratePct' in a ? Math.min(100, Math.max(10, num(a.ratePct, cur.ratePct))) : cur.ratePct) * 2) / 2, answerMin: whole('answerMin', 5, 240), partners };
       if (next.on && !ctx.company.network.joined) fail('Join the network first, under Network settings.');
       if (next.on && Array.isArray(a.partners) && !partners.length) fail('Pick at least one partner to send trips to.');
       if (next.on && !next.noDriver && !next.lastCallHours) fail('Choose when trips should be sent: when no driver is free, or a set time before pickup.');
@@ -3854,6 +3915,7 @@
       const t = ownTrip(ctx, a.tripId);
       if (t.farmIn) fail('This trip came from a partner. Hand it back to them instead of passing it on.');
       if (t.farmout) fail(`This trip is already with ${t.farmout.toName}.`);
+      if (t.netPost && ['open', 'closed'].includes(t.netPost.status)) fail('This trip is on the trip board. Take the post down first.');
       if (!['confirmed', 'assigned'].includes(t.status)) fail('Only trips that have not started can go to a partner.');
       if (t.pickupAt < now().toISOString()) fail('This pickup time has passed.');
       const to = findCompany(a.toCompanyId);
@@ -3878,10 +3940,13 @@
     const partnerFits = (c, t) => db.vehicles.some((v) => v.companyId === c.id && v.status === 'active' && v.capacity >= t.passengers
       && (v.type === t.vehicleType || (v.type !== 'Party Bus' && VEHICLE_TYPES.indexOf(v.type) > VEHICLE_TYPES.indexOf(t.vehicleType))));
     // The company's partner order for automatic farm-out: the chosen list, or
-    // every network member in the same area when none is chosen yet.
-    function autoPartners(c) {
+    // every network member serving the trip's pickup city (or the company's own
+    // cities) when none is chosen yet.
+    function autoPartners(c, t) {
       const cfg = acfg(c);
-      const ids = cfg.partners.length ? cfg.partners : db.companies.filter((x) => x.id !== c.id && isMember(x) && regionOf(x) === regionOf(c)).map((x) => x.id);
+      const place = t && placeOfAddr(t.pickup);
+      const near = (x) => (place ? serves(x, place) : (c.network.cities || []).some((cy) => serves(x, { city: cy })));
+      const ids = cfg.partners.length ? cfg.partners : db.companies.filter((x) => x.id !== c.id && isMember(x) && near(x)).map((x) => x.id);
       return ids.map(findCompany).filter((x) => x && x.id !== c.id && isMember(x));
     }
     // Runs in the dispatch sweep. Sends trips nobody on staff can cover to the
@@ -3909,9 +3974,17 @@
         const lastCall = cfg.lastCallHours > 0 && pickMs - nowMs <= cfg.lastCallHours * 3600e3;
         if (!started && !noDriver && !lastCall) continue;
         t.autoFarm = t.autoFarm || { tried: [], at: n.toISOString() };
-        const next = autoPartners(c).find((p) => !t.autoFarm.tried.includes(p.id) && partnerFits(p, t));
+        const next = autoPartners(c, t).find((p) => !t.autoFarm.tried.includes(p.id) && partnerFits(p, t));
         if (!next) {
           t.autoFarm.exhausted = true;
+          // Last resort: the city trip board, first to take it at the same rate.
+          const place = cfg.postToBoard && placeOfAddr(t.pickup);
+          if (place && !t.netPost && postTargets(c, t, place).some((x) => !t.autoFarm.tried.includes(x.id))) {
+            const pickMs2 = new Date(t.pickupAt).getTime();
+            makePost(c, t, place, 'take', Math.max(1, round2(t.price.total * cfg.ratePct / 100)), 'Posted automatically: no partner on our list took it.', new Date(Math.max(nowMs + 10 * 60e3, Math.min(pickMs2 - 15 * 60e3, pickMs2 - 2 * 3600e3))).toISOString(), 'Auto farm-out', true);
+            changed = true;
+            continue;
+          }
           t.needsDriver = { at: n.toISOString(), why: t.autoFarm.tried.length ? 'No partner took it' : `No partner runs a ${t.vehicleType} for ${t.passengers}` };
           log(t, 'auto_farm_none', 'Auto farm-out', t.needsDriver.why);
           changed = true;
@@ -3941,6 +4014,13 @@
         return farmRow(f, me);
       }
       if (parent.status === 'cancelled') fail('The sending company cancelled this trip.');
+      const child = acceptFarm(f, me, ctx.user.name);
+      return { ...farmRow(f, me), childTripId: child.id };
+    });
+    // The partner takes the trip: it becomes a trip of their own (their
+    // reference, the agreed amount as its price) linked back to the sender's.
+    function acceptFarm(f, me, userName) {
+      const from = findCompany(f.fromCompanyId), parent = db.trips.find((t) => t.id === f.tripId);
       me.nextRef = (me.nextRef || 1000) + 1;
       const child = {
         ...clone(parent), id: id('trip'), ref: `${me.refPrefix}-${me.nextRef}`, companyId: me.id, customerId: null, passengerEmail: '',
@@ -3950,13 +4030,13 @@
         payment: { status: 'unpaid', method: null, paidAt: null }, source: 'partner', createdAt: now().toISOString(), history: [],
       };
       reprice(child);
-      log(child, 'confirmed', `${ctx.user.name}`, `From ${from.name} (${f.ref})`);
+      log(child, 'confirmed', `${userName}`, `From ${from.name} (${f.ref})`);
       db.trips.push(child);
       f.childTripId = child.id;
-      setFarm(f, 'accepted', `${ctx.user.name} (${me.name})`);
+      setFarm(f, 'accepted', `${userName} (${me.name})`);
       netNote(me, from, `${me.name} accepted ${f.ref}. Their reference is ${child.ref}.`, f.id);
-      return { ...farmRow(f, me), childTripId: child.id };
-    });
+      return child;
+    }
     def('network.cancelOffer', STAFF, true, (ctx, a) => {
       const f = ownFarm(ctx, a.id, 'from');
       if (!['offered', 'accepted'].includes(f.status)) fail(`This offer is already ${FARM_LABELS[f.status].toLowerCase()}.`);
@@ -4019,6 +4099,186 @@
         .sort((x, y) => (y.fits - x.fits) || (y.region === REGION_CITY[regionOf(ctx.company)]) - (x.region === REGION_CITY[regionOf(ctx.company)]));
     });
 
+    // ---- City directory and open trip board ------------------------------------
+    // Find operators by city or airport, see a member's profile, and post a
+    // trip to every member serving its pickup city: first to take it at a set
+    // amount, or members send a price and the sender picks one. After that it's
+    // an ordinary accepted farm-out.
+    const POST_LABELS = { open: 'Open', closed: 'Choosing a price', taken: 'Taken', awarded: 'Taken', expired: 'Nobody took it', cancelled: 'Cancelled' };
+    function placeQuery(q) {
+      const x = str(q, 60).trim();
+      if (!x) return null;
+      const code = x.toUpperCase();
+      if (/^[A-Z]{3}$/.test(code) && AIRPORTS[code]) return { airport: code, city: `${AIRPORTS[code][2]}, ${stateOfAirport(code)}`, label: `${AIRPORTS[code][2]} (${code})` };
+      return { airport: '', city: cleanCity(x), label: cleanCity(x) };
+    }
+    // Directory search matches a typed city loosely ("sea" finds Seattle).
+    function servesQuery(c, place) {
+      if (serves(c, place)) return true;
+      if (place.airport) return false;
+      const want = fold(cityName(place.city));
+      return want.length >= 3 && ((c.network.cities || []).some((x) => fold(cityName(x)).startsWith(want)) || (c.network.airports || []).some((k) => fold(AIRPORTS[k] ? AIRPORTS[k][2] : '').startsWith(want)));
+    }
+    const fitsFor = (c, vehicleType, passengers) => db.vehicles.some((v) => v.companyId === c.id && v.status === 'active' && v.capacity >= passengers
+      && (!vehicleType || v.type === vehicleType || (v.type !== 'Party Bus' && VEHICLE_TYPES.indexOf(v.type) > VEHICLE_TYPES.indexOf(vehicleType))));
+    function tripsDone(c) { return db.farmouts.filter((f) => f.toCompanyId === c.id && f.status === 'completed').length; }
+    def('network.directory', STAFF, false, (ctx, a) => {
+      const me = ctx.company, place = placeQuery(a.q);
+      const type = VEHICLE_TYPES.includes(a.vehicleType) ? a.vehicleType : '';
+      const pax = Math.max(1, Math.round(num(a.passengers, 1)));
+      const list = db.companies.filter((c) => c.id !== me.id && isMember(c) && (!place || servesQuery(c, place)))
+        .map((c) => ({ ...memberCard(c, me), cities: (c.network.cities || []).slice(), airports: (c.network.airports || []).slice(), at: coordsOf(c), fits: fitsFor(c, type, pax), tripsDone: tripsDone(c), logo: c.logo || '' }))
+        .filter((m) => !type || m.fits)
+        .sort((x, y) => (y.fits - x.fits) || (y.tripsDone - x.tripsDone) || ((y.acceptRate || 0) - (x.acceptRate || 0)) || x.name.localeCompare(y.name));
+      return { place, results: list, me: { name: me.name, at: coordsOf(me) } };
+    });
+    def('network.profile', STAFF, false, (ctx, a) => {
+      const c = findCompany(a.id);
+      if (!c || c.id === ctx.company.id || !isMember(c)) fail('Company not found.', 404);
+      const vp = db.vehiclePhotos || {};
+      return {
+        ...memberCard(c, ctx.company), logo: c.logo || '', cities: (c.network.cities || []).slice(), airports: (c.network.airports || []).map((k) => ({ code: k, name: AIRPORTS[k] ? AIRPORTS[k][0] : k })),
+        memberSince: c.createdAt || null, tripsDone: tripsDone(c),
+        fleet: db.vehicles.filter((v) => v.companyId === c.id && v.status === 'active').map((v) => ({ id: v.id, name: v.name, type: v.type, capacity: v.capacity, year: v.year || null, color: v.color || '', photo: vp[v.id] || '' })),
+      };
+    });
+    // The pickup place for a trip, and who on the network serves it with a fitting car.
+    function postTargets(me, t, place) {
+      return db.companies.filter((c) => c.id !== me.id && isMember(c) && serves(c, place) && partnerFits(c, t));
+    }
+    def('network.placeFor', STAFF, false, (ctx, a) => {
+      const t = ownTrip(ctx, a.tripId);
+      const place = (a.q ? placeQuery(a.q) : null) || placeOfAddr(t.pickup) || placeQuery(REGION_CITY[regionOf(ctx.company)]);
+      const to = postTargets(ctx.company, t, place);
+      return { place, count: to.length, names: to.map((c) => c.name), ratePct: acfg(ctx.company).ratePct };
+    });
+    function postView(p, me) {
+      const t = db.trips.find((x) => x.id === p.tripId);
+      const mine = p.fromCompanyId === me.id;
+      const bid = p.bids.find((b) => b.companyId === me.id);
+      return {
+        id: p.id, mine, from: p.fromName, ref: p.ref, place: clone(p.place), mode: p.mode, rate: p.rate, note: p.note, status: p.status, statusLabel: POST_LABELS[p.status],
+        expiresAt: p.expiresAt, createdAt: p.createdAt, takenBy: p.takenBy || null, tripId: mine ? p.tripId : null, sentTo: mine ? p.to.length : undefined,
+        bids: mine ? p.bids.map((b) => { const bc = findCompany(b.companyId); return { ...clone(b), acceptRate: bc ? memberCard(bc, me).acceptRate : null, tripsDone: bc ? tripsDone(bc) : 0 }; }) : undefined, myBid: bid ? clone(bid) : null, bidCount: p.bids.length,
+        trip: t ? { pickupAt: t.pickupAt, pickup: t.pickup, dropoff: t.dropoff, serviceLabel: SERVICES[t.service], service: t.service, hours: t.hours, vehicleType: t.vehicleType, passengers: t.passengers, bags: t.bags || 0, flight: t.flight, meetGreet: t.meetGreet, childSeats: t.childSeats, ...(mine ? { price: t.price.total, passengerName: t.passengerName } : {}) } : null,
+      };
+    }
+    function makePost(me, t, place, mode, rate, note, expiresAt, by, auto) {
+      const to = postTargets(me, t, place);
+      if (!to.length) fail(`No member serving ${place.label} runs ${/^(SUV|[AEIOU])/.test(t.vehicleType) ? 'an' : 'a'} ${t.vehicleType} for ${t.passengers}.`);
+      db.netPosts = db.netPosts || [];
+      const p = { id: id('post'), fromCompanyId: me.id, fromName: me.name, tripId: t.id, ref: t.ref, place, mode, rate, note, bids: [], to: to.map((c) => c.id), status: 'open', expiresAt, createdAt: now().toISOString(), by, auto: !!auto };
+      db.netPosts.push(p);
+      t.netPost = { id: p.id, status: 'open', mode, label: place.label };
+      if (t.autoFarm) t.autoFarm.stopped = true;
+      t.needsDriver = null;
+      log(t, 'posted', by, `Posted to the ${place.label} trip board, ${mode === 'take' ? `first to take it for $${money(rate)}` : 'members send a price'}`);
+      for (const c of to) {
+        netNote(me, c, `Trip board: ${t.ref} in ${place.label}, ${fmtLocal(t.pickupAt, c, true)}, ${t.vehicleType}, ${t.passengers} pax. ${mode === 'take' ? `First to take it gets $${money(rate)}.` : 'Send your price.'} Open Network > Trip board.`, null);
+        db.messages.unshift({ id: id('msg'), companyId: c.id, tripId: null, ref: t.ref, at: now().toISOString(), recipient: c.email || c.phone || 'Dispatch office', channel: 'email', kind: 'net_post',
+          body: `${me.name} posted a trip in ${place.label} on ${fmtLocal(t.pickupAt, c, true)}: ${t.vehicleType}, ${t.passengers} passenger${t.passengers === 1 ? '' : 's'}, from ${t.pickup}. ${mode === 'take' ? `The first company to take it gets $${money(rate)}.` : 'Send your price before the post closes.'} Open Network > Trip board to answer.` });
+      }
+      return p;
+    }
+    def('network.post', STAFF, true, (ctx, a) => {
+      const me = ctx.company;
+      if (!me.network.joined) fail('Join the network first, under Network settings.');
+      const t = ownTrip(ctx, a.tripId);
+      if (t.farmIn) fail('This trip came from a partner. Hand it back to them instead of passing it on.');
+      if (t.farmout) fail(`This trip is already with ${t.farmout.toName}.`);
+      if (t.netPost && ['open', 'closed'].includes(t.netPost.status)) fail('This trip is already on the trip board.');
+      if (!['confirmed', 'assigned'].includes(t.status)) fail('Only trips that have not started can be posted.');
+      const pickMs = new Date(t.pickupAt).getTime(), nowMs = now().getTime();
+      if (pickMs <= nowMs + 15 * 60e3) fail('This pickup is too soon to post.');
+      const place = placeQuery(a.q) || placeOfAddr(t.pickup);
+      if (!place) fail('Enter the city or airport code for the pickup.');
+      const mode = a.mode === 'bid' ? 'bid' : 'take';
+      const rate = mode === 'take' ? round2(num(a.rate, 0)) : null;
+      if (mode === 'take' && !(rate > 0)) fail('Enter the amount you will pay.');
+      const hrs = Math.max(0, num(a.closeHours, 2));
+      const exp = Math.max(nowMs + 10 * 60e3, Math.min(pickMs - 15 * 60e3, pickMs - hrs * 3600e3));
+      if (t.driverId) { t.driverId = null; t.vehicleId = null; t.status = 'confirmed'; log(t, 'unassigned', ctx.user.name); }
+      return postView(makePost(me, t, place, mode, rate, str(a.note, 300), new Date(exp).toISOString(), ctx.user.name), me);
+    });
+    const ownPost = (ctx, pid) => { const p = (db.netPosts || []).find((x) => x.id === pid && x.fromCompanyId === ctx.company.id); if (!p) fail('Post not found.', 404); return p; };
+    const seenPost = (ctx, pid) => { const p = (db.netPosts || []).find((x) => x.id === pid && x.to.includes(ctx.company.id)); if (!p) fail('Post not found.', 404); return p; };
+    function closePost(p, status, by, note) {
+      p.status = status; p.closedAt = now().toISOString();
+      const t = db.trips.find((x) => x.id === p.tripId);
+      if (t) { t.netPost = { ...(t.netPost || {}), id: p.id, status }; if (note) log(t, 'post_' + status, by, note); }
+    }
+    // A post becomes an accepted farm-out to the winner at the agreed amount.
+    function awardPost(p, winner, rate, by) {
+      const t = db.trips.find((x) => x.id === p.tripId), from = findCompany(p.fromCompanyId);
+      if (!t || t.status === 'cancelled') fail('The sending company cancelled this trip.');
+      const f = { id: id('farm'), fromCompanyId: from.id, fromName: from.name, toCompanyId: winner.id, toName: winner.name, tripId: t.id, ref: t.ref, childTripId: null, rate, note: p.note, status: 'offered', createdAt: now().toISOString(), by, auto: !!p.auto, postId: p.id };
+      db.farmouts.push(f);
+      setFarm(f, 'offered', by, `From the ${p.place.label} trip board: ${winner.name} for $${money(rate)}`);
+      p.farmoutId = f.id; p.takenBy = { id: winner.id, name: winner.name, rate };
+      closePost(p, p.mode === 'take' ? 'taken' : 'awarded', by);
+      return f;
+    }
+    def('network.board', STAFF, false, (ctx) => {
+      const me = ctx.company, posts = db.netPosts || [], dayAgo = new Date(now().getTime() - 24 * 3600e3).toISOString();
+      const open = posts.filter((p) => p.to.includes(me.id) && (['open', 'closed'].includes(p.status) || (p.closedAt || '') > dayAgo)).sort((x, y) => x.expiresAt.localeCompare(y.expiresAt)).map((p) => postView(p, me));
+      const mine = posts.filter((p) => p.fromCompanyId === me.id && (['open', 'closed'].includes(p.status) || (p.closedAt || p.createdAt) > dayAgo)).sort((x, y) => y.createdAt.localeCompare(x.createdAt)).map((p) => postView(p, me));
+      return { open, mine, cities: (me.network.cities || []).slice(), airports: (me.network.airports || []).slice() };
+    });
+    def('network.take', STAFF, true, (ctx, a) => {
+      const p = seenPost(ctx, a.id), me = ctx.company;
+      if (p.mode !== 'take') fail('This post asks for a price. Send yours instead.');
+      if (p.status !== 'open') fail(p.takenBy ? `${p.takenBy.id === me.id ? 'You' : 'Another company'} already took this trip.` : 'This post is closed.');
+      const f = awardPost(p, me, p.rate, `${ctx.user.name} (${me.name})`);
+      const child = acceptFarm(f, me, ctx.user.name);
+      return { ...postView(p, me), childTripId: child.id, childRef: child.ref };
+    });
+    def('network.bid', STAFF, true, (ctx, a) => {
+      const p = seenPost(ctx, a.id), me = ctx.company;
+      if (p.mode !== 'bid') fail('This trip goes to the first company that takes it.');
+      if (p.status !== 'open') fail('This post no longer takes prices.');
+      const price = round2(num(a.price, 0));
+      if (!(price > 0)) fail('Enter your price.');
+      const b = { companyId: me.id, name: me.name, price, note: str(a.note, 200), at: now().toISOString(), by: ctx.user.name };
+      const i = p.bids.findIndex((x) => x.companyId === me.id);
+      if (i >= 0) p.bids[i] = b; else p.bids.push(b);
+      netNote(me, findCompany(p.fromCompanyId), `${me.name} sent a price for ${p.ref}: $${money(price)}${b.note ? ` (${b.note})` : ''}. Open Network > Trip board to choose.`, null);
+      return postView(p, me);
+    });
+    def('network.pickBid', STAFF, true, (ctx, a) => {
+      const p = ownPost(ctx, a.id);
+      if (!['open', 'closed'].includes(p.status)) fail('This post is already closed.');
+      const b = p.bids.find((x) => x.companyId === a.companyId);
+      if (!b) fail('Choose one of the prices you received.');
+      const winner = findCompany(b.companyId);
+      if (!isMember(winner)) fail(`${b.name} has left the network.`);
+      const f = awardPost(p, winner, b.price, ctx.user.name);
+      acceptFarm(f, winner, b.by || winner.name);
+      for (const x of p.bids) if (x.companyId !== winner.id) netNote(ctx.company, findCompany(x.companyId), `${ctx.company.name} chose another company for ${p.ref}. Thanks for your price.`, null);
+      return postView(p, ctx.company);
+    });
+    def('network.cancelPost', STAFF, true, (ctx, a) => {
+      const p = ownPost(ctx, a.id);
+      if (!['open', 'closed'].includes(p.status)) fail('This post is already closed.');
+      closePost(p, 'cancelled', ctx.user.name, 'Taken off the trip board');
+      return postView(p, ctx.company);
+    });
+    // Runs after every change: posts close at their deadline. With prices in,
+    // the sender still chooses; with none, the trip is flagged for the office.
+    function sweepPosts() {
+      const n = now().toISOString();
+      for (const p of db.netPosts || []) {
+        if (!['open', 'closed'].includes(p.status)) continue;
+        const t = db.trips.find((x) => x.id === p.tripId);
+        if (!t || t.status === 'cancelled' || t.driverId || t.farmout || !['confirmed', 'assigned'].includes(t.status)) { closePost(p, 'cancelled', 'System', t && t.status !== 'cancelled' ? 'Covered another way' : ''); continue; }
+        if (n >= t.pickupAt) { closePost(p, 'expired', 'System'); continue; }
+        if (n < p.expiresAt) continue;
+        if (p.status === 'open' && p.mode === 'bid' && p.bids.length) { p.status = 'closed'; t.netPost.status = 'closed'; continue; }
+        if (p.status === 'open') {
+          closePost(p, 'expired', 'Trip board', `Nobody took it on the ${p.place.label} trip board`);
+          t.needsDriver = { at: n, why: `Nobody took it on the ${p.place.label} trip board` };
+        }
+      }
+    }
     // Flights
     def('dispatch.flights', STAFF, false, (ctx, a) => {
       const results = monitorFlights(ctx.company, !!a.force);
@@ -5037,7 +5297,7 @@
     async function seedBlank() {
       const o = opts.owner || {};
       if (!o.email || !o.password) throw new Error('Set the owner email and password before the first start.');
-      db = { version: SCHEMA_VERSION, seq: {}, sample: false, companies: [], users: [], vehicles: [], trips: [], messages: [], invoices: [], maintenance: [], timeOff: [], payouts: [], farmouts: [], netMessages: [], accounts: [], clientInvoices: [], quotes: [], sessions: {} };
+      db = { version: SCHEMA_VERSION, seq: {}, sample: false, companies: [], users: [], vehicles: [], trips: [], messages: [], invoices: [], maintenance: [], timeOff: [], payouts: [], farmouts: [], netMessages: [], netPosts: [], accounts: [], clientInvoices: [], quotes: [], sessions: {} };
       const u = { id: id('usr'), role: 'owner', companyId: null, name: str(o.name, 80) || 'Platform owner', email: str(o.email, 120).toLowerCase(), phone: '', active: true, createdAt: now().toISOString() };
       await setPassword(u, o.password);
       db.users.push(u);
@@ -5054,7 +5314,7 @@
     }
     async function seed() {
       if (opts.blank) return seedBlank();
-      db = { version: SCHEMA_VERSION, seq: {}, companies: [], users: [], vehicles: [], trips: [], messages: [], invoices: [], maintenance: [], timeOff: [], payouts: [], farmouts: [], netMessages: [], accounts: [], clientInvoices: [], sessions: {} };
+      db = { version: SCHEMA_VERSION, seq: {}, companies: [], users: [], vehicles: [], trips: [], messages: [], invoices: [], maintenance: [], timeOff: [], payouts: [], farmouts: [], netMessages: [], netPosts: [], accounts: [], clientInvoices: [], sessions: {} };
       const t0 = now();
       const base = new Date(Math.round(t0.getTime() / (5 * 60000)) * 5 * 60000);
       const at = (mins) => new Date(base.getTime() + mins * 60000).toISOString();
@@ -5205,6 +5465,9 @@
       cap.network.areas = 'Seattle, Bellevue, Redmond, Tacoma and Everett; SEA, Boeing Field and Paine Field';
       pot.network.areas = 'Seattle, Bellevue, Tacoma, Everett and SEA airport';
       sum.network.areas = 'Denver, Boulder, Vail, Aspen, Breckenridge, DEN airport';
+      Object.assign(cap.network, { cities: ['Seattle, WA', 'Bellevue, WA', 'Redmond, WA', 'Tacoma, WA', 'Everett, WA'], airports: ['SEA', 'BFI', 'PAE'] });
+      Object.assign(pot.network, { cities: ['Seattle, WA', 'Bellevue, WA', 'Tacoma, WA', 'Everett, WA'], airports: ['SEA'] });
+      Object.assign(sum.network, { cities: ['Denver, CO', 'Boulder, CO', 'Vail, CO', 'Aspen, CO', 'Breckenridge, CO'], airports: ['DEN'] });
 
       // Farm-outs between the companies, in different stages.
       const farm = (parent, to, rate, note, stage, o = {}) => {

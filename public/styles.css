@@ -859,3 +859,18 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 .bizreq > .stack { min-width: 0; overflow-wrap: anywhere; }
 #bk-bizf .modesw { margin-top: 2px; }
 #bk-biznote:empty { display: none; }
+/* Network directory: map, logos, fleet photos; trip board. */
+.usmap { width: 100%; height: auto; display: block; }
+.usmap .usland { fill: var(--surface-2); stroke: var(--line); stroke-width: 1.5; }
+.uspin circle { fill: var(--brand, #7a2433); stroke: var(--surface); stroke-width: 2; }
+.uspin.me circle { fill: var(--ink); }
+.uspin text { font-size: 12px; font-weight: 600; fill: var(--ink); paint-order: stroke; stroke: var(--surface); stroke-width: 3px; }
+.plogo { width: 40px; height: 40px; object-fit: contain; border-radius: 8px; background: var(--surface-2); flex: none; }
+.plogo.big, .avatar.big { width: 64px; height: 64px; font-size: 22px; }
+.pfleet { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 170px), 1fr)); gap: 12px; margin-top: 8px; }
+.pfleet figure { margin: 0; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; background: var(--surface); }
+.pfleet img, .pfleet .nophoto { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; display: block; background: var(--surface-2); }
+.pfleet .nophoto { display: grid; place-items: center; color: var(--ink-3, #888); font-size: 12px; }
+.pfleet figcaption { display: grid; gap: 2px; padding: 8px 10px; }
+.trip.offer.faded { opacity: .6; }
+.findbar .seg { align-self: flex-end; }

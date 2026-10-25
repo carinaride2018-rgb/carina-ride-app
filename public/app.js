@@ -201,7 +201,7 @@
 
   // ---- UI primitives --------------------------------------------------------
   let toastTimer = null;
-  const HIST_LABELS = { wake_call: 'Wake-up call', wake_ok: 'Driver confirmed awake', wake_alert: 'Office alerted: no answer to wake-up call', late_alert: 'Office alerted: driver not on the way', confirm_resent: 'Confirmation sent again', paid: 'Charged', refunded: 'Refunded', card_failed: 'Card declined', card_saved: 'Card saved', card_link: 'Card link sent', no_show: 'No-show', pickup_moved: 'Pickup moved', flight_cancelled: 'Flight cancelled', declined: 'Declined', edited: 'Edited', unassigned: 'Unassigned', no_answer: 'No answer in time', farm_offered: 'Offered to partner', farm_accepted: 'Partner accepted', farm_declined: 'Partner declined', farm_cancelled: 'Taken back from partner', farm_returned: 'Partner handed it back', farm_expired: 'Partner offer expired', farm_completed: 'Partner completed', auto_farm_none: 'Automatic farm-out stopped' };
+  const HIST_LABELS = { wake_call: 'Wake-up call', wake_ok: 'Driver confirmed awake', wake_alert: 'Office alerted: no answer to wake-up call', late_alert: 'Office alerted: driver not on the way', confirm_resent: 'Confirmation sent again', paid: 'Charged', refunded: 'Refunded', card_failed: 'Card declined', card_saved: 'Card saved', card_link: 'Card link sent', no_show: 'No-show', pickup_moved: 'Pickup moved', flight_cancelled: 'Flight cancelled', declined: 'Declined', edited: 'Edited', unassigned: 'Unassigned', no_answer: 'No answer in time', farm_offered: 'Offered to partner', farm_accepted: 'Partner accepted', farm_declined: 'Partner declined', farm_cancelled: 'Taken back from partner', farm_returned: 'Partner handed it back', farm_expired: 'Partner offer expired', farm_completed: 'Partner completed', auto_farm_none: 'Automatic farm-out stopped', posted: 'Posted to trip board', post_expired: 'Trip board: nobody took it', post_cancelled: 'Taken off the trip board' };
   function toast(text, bad, ms) {
     let el = $('.toast');
     if (!el) { el = document.createElement('div'); el.className = 'toast'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
@@ -2994,7 +2994,7 @@
       const f = t.flightInfo;
       const canApply = f && f.suggestedPickup && f.suggestedPickup !== t.pickupAt && !noAssign;
       const fo = t.farmout && !t.farmout.done ? t.farmout : null;
-      const canFarm = !t.farmout && !t.farmIn && ['confirmed', 'assigned'].includes(t.status);
+      const canFarm = !t.farmout && !t.farmIn && ['confirmed', 'assigned'].includes(t.status) && !(t.netPost && ['open', 'closed'].includes(t.netPost.status));
       const priceLock = t.farmIn ? 'disabled' : '';
       const canSuggest = ['confirmed', 'assigned'].includes(t.status) && (!t.farmout || t.farmout.done);
       const m = openModal({
@@ -3087,7 +3087,8 @@
               ${t.status !== 'cancelled' && (t.passengerEmail || t.passengerPhone) ? '<button class="btn sm" type="button" id="te-confirm">Resend confirmation</button>' : ''}
               ${t.passengerPhone ? '<button class="btn sm" type="button" id="te-text">Text passenger</button>' : ''}
               ${t.service !== 'hourly' && t.dropoff && !t.returnOf && !(t.pair && t.pair.kind === 'return') && !t.farmIn ? '<button class="btn sm" type="button" id="te-return">Add return trip</button>' : ''}
-              ${canFarm ? '<button class="btn sm" type="button" id="te-farm">Send to a partner company</button>' : ''}
+              ${canFarm ? '<button class="btn sm" type="button" id="te-farm">Send to a partner company</button><button class="btn sm" type="button" id="te-post">Post to city board</button>' : ''}
+              ${t.netPost && ['open', 'closed'].includes(t.netPost.status) ? `<p class="small muted" style="margin:0">On the ${esc(t.netPost.label)} trip board${t.netPost.status === 'closed' ? ': prices are in, choose one' : ''}. <button class="linkbtn small" type="button" id="te-board">Open trip board</button></p>` : ''}
             </div>` : ''}
             ${t.live ? `<div class="sidebox"><span class="label">Live tracking</span><div id="te-live">${trackMap(t.live, t.pickup)}</div>${t.trackToken ? `<p class="small faint">Passenger link: <span class="mono">#track.${esc(t.trackToken)}</span></p>` : ''}</div>` : ''}
             ${f ? `<div class="sidebox"><span class="label">Flight</span>${flightBox(f)}
@@ -3156,6 +3157,8 @@
       const ap = $('#te-applyflight', m);
       if (ap) ap.onclick = () => busy(ap, async () => { try { await api('dispatch.applyFlight', { id }); toast('Pickup moved. Driver and passenger told.'); reopen(); } catch (err) { toast(err.message, true); } });
       const tf = $('#te-farm', m); if (tf) tf.onclick = () => { m._onClose = null; closeModal(); farmModal(t, () => tripModal(id, done)); };
+      const tp = $('#te-post', m); if (tp) tp.onclick = () => { m._onClose = null; closeModal(); postModal(t, () => tripModal(id, done)); };
+      const tbd = $('#te-board', m); if (tbd) tbd.onclick = () => { netState.sub = 'board'; m._onClose = null; closeModal(); go2('network'); };
       const tb = $('#te-takeback', m); if (tb) tb.onclick = () => {
         if (!tb.dataset.armed) { tb.dataset.armed = '1'; tb.textContent = 'Click again to take it back'; return; }
         busy(tb, async () => { try { await api('network.cancelOffer', { id: t.farmout.id }); toast(`${t.ref} is back with you. Assign a driver.`); reopen(); } catch (err) { toast(err.message, true); } });
@@ -3238,7 +3241,7 @@
         try { d = await api('network.overview'); } catch (e) { if (!silent) showErr(v, e); return; }
         if (netState.sub === 'messages' && silent) return; // don't disturb typing
         const sig = JSON.stringify(d) + netState.sub; if (sig === last) return; last = sig;
-        const subs = [['trips', `Trips${d.waiting ? ` (${d.waiting})` : ''}`], ['partners', 'Partners'], ['messages', `Messages${d.unreadTotal ? ` (${d.unreadTotal})` : ''}`], ['balances', 'Balances'], ['auto', `Auto farm-out${d.auto.on ? ' · on' : ''}`], ...(isAdmin ? [['settings', 'Settings']] : [])];
+        const subs = [['trips', `Trips${d.waiting ? ` (${d.waiting})` : ''}`], ['board', `Trip board${d.boardOpen ? ` (${d.boardOpen})` : ''}`], ['partners', 'Find operators'], ['messages', `Messages${d.unreadTotal ? ` (${d.unreadTotal})` : ''}`], ['balances', 'Balances'], ['auto', `Auto farm-out${d.auto.on ? ' · on' : ''}`], ...(isAdmin ? [['settings', 'Settings']] : [])];
         v.innerHTML = `<div class="subtabs">${subs.map(([k, l]) => `<button type="button" data-sub="${k}" aria-pressed="${netState.sub === k}">${l}</button>`).join('')}</div>
           <div class="pagehead"><div class="stack" style="gap:4px"><h1>Network</h1><p class="muted">Companies on ${esc(PLATFORM)} send each other trips they can't cover. You keep the customer; the partner does the driving for an agreed amount.</p></div></div>
           ${d.me.joined ? '' : `<div class="warnbox" style="margin-bottom:16px"><b>You're not in the network yet.</b> Other companies can't see you or send you trips. ${isAdmin ? '<button class="btn sm" type="button" id="nw-join" style="margin-left:8px">Join the network</button>' : 'Ask your company admin to join.'}</div>`}
@@ -3246,7 +3249,7 @@
         $$('[data-sub]', v).forEach((b) => { b.onclick = () => { netState.sub = b.dataset.sub; last = ''; refresh(); }; });
         const j = $('#nw-join', v); if (j) j.onclick = () => busy(j, async () => { try { await api('network.saveSettings', { joined: true }); toast('You joined the network.'); last = ''; refresh(); } catch (e) { toast(e.message, true); } });
         const host = $('#nw', v);
-        ({ trips: netTrips, partners: netPartners, messages: netMessages, balances: netBalances, auto: netAuto, settings: netSettings })[netState.sub](host, d, () => { last = ''; refresh(); });
+        ({ trips: netTrips, board: netBoard, partners: netFind, messages: netMessages, balances: netBalances, auto: netAuto, settings: netSettings })[netState.sub](host, d, () => { last = ''; refresh(); });
       };
       current = { poll: true, refresh };
       v.innerHTML = '<p class="faint">Loading…</p>';
@@ -3289,6 +3292,129 @@
         try { await api('network.respond', { id: b.dataset.decline, accept: false, reason: $(`[data-reason="${b.dataset.decline}"]`, host).value }); toast('Declined. They have been told.'); redraw(); } catch (e) { toast(e.message, true); }
       }); });
       $$('[data-open]', host).forEach((b) => { b.onclick = () => tripModal(b.dataset.open, redraw); });
+    }
+    // Find operators: members by city or airport, with a map and a profile.
+    const US_OUTLINE = [[-124.7,48.4],[-123,49],[-95,49],[-89.6,48],[-84.8,46.5],[-82.4,45.3],[-82.5,42],[-79,43.3],[-76.5,44.2],[-75,45],[-71.5,45],[-69.2,47.4],[-67.8,47.1],[-67,44.8],[-70.2,43.6],[-70.6,41.6],[-74,40.6],[-75.5,38.5],[-76,36.9],[-75.5,35.2],[-77.8,34],[-81,32],[-81.4,30.4],[-80.1,27],[-80.4,25.2],[-81.8,26.1],[-82.7,28.3],[-84.3,30],[-86.5,30.4],[-89.6,30.2],[-91.5,29.3],[-94,29.6],[-97.2,27.8],[-97.4,26],[-99.2,26.9],[-101.4,29.8],[-103.3,29],[-104.7,30.1],[-106.5,31.8],[-108.2,31.3],[-111.1,31.3],[-114.8,32.5],[-117.1,32.5],[-118.5,34],[-120.6,34.6],[-121.9,36.6],[-122.5,37.8],[-123.8,39.8],[-124.2,42],[-124.1,46.2]];
+    function usMap(pins) {
+      const W = 600, H = 340, x = (lng) => ((lng + 125) / 59) * W, y = (lat) => ((50 - lat) / 26) * H;
+      const groups = {};
+      for (const p of pins) if (p.at) { const k = `${Math.round(x(p.at.lng))},${Math.round(y(p.at.lat))}`; (groups[k] = groups[k] || []).push(p); }
+      return `<svg class="usmap" viewBox="0 0 ${W} ${H}" role="img" aria-label="Map of member companies"><path d="M${US_OUTLINE.map(([a, b]) => `${x(a).toFixed(1)},${y(b).toFixed(1)}`).join('L')}Z" class="usland"/>
+        ${Object.entries(groups).map(([k, ps]) => { const [cx, cy] = k.split(',').map(Number); const me = ps.some((p) => p.me); return `<g class="uspin ${me ? 'me' : ''}"><circle cx="${cx}" cy="${cy}" r="${me ? 6 : 7}"/><text x="${cx + 10}" y="${cy + 4}">${esc(me ? 'You' : ps.length > 1 ? `${ps.length} companies` : ps[0].name)}</text></g>`; }).join('')}</svg>`;
+    }
+    const placeChips = (p) => [...(p.airports || []).map((k) => `<span class="pill count mono">${esc(typeof k === 'string' ? k : k.code)}</span>`), ...(p.cities || []).map((c) => `<span class="pill">${esc(c)}</span>`)].join(' ');
+    const netFindState = { q: '', vehicleType: '', passengers: 1, map: false };
+    async function netFind(host, d) {
+      const s = netFindState;
+      host.innerHTML = `<form class="row findbar" id="nf-form" style="margin-bottom:14px;align-items:flex-end;flex-wrap:wrap">
+          <label class="field grow" style="margin:0;min-width:200px"><span>City or airport</span><input id="nf-q" class="input" value="${esc(s.q)}" placeholder="Seattle, WA or SEA" autocomplete="off"></label>
+          <label class="field" style="margin:0"><span>Vehicle</span><select id="nf-type"><option value="">Any</option>${C.VEHICLE_TYPES.map((t) => `<option ${s.vehicleType === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>
+          <label class="field" style="margin:0;width:110px"><span>Passengers</span><input id="nf-pax" type="number" min="1" max="60" value="${s.passengers}"></label>
+          <button class="btn primary" type="submit">Search</button>
+          <div class="seg" role="group" aria-label="View"><button type="button" data-view="list" aria-pressed="${!s.map}">List</button><button type="button" data-view="map" aria-pressed="${s.map}">Map</button></div></form>
+        <div id="nf-out"><p class="faint">Loading…</p></div>`;
+      const out = $('#nf-out', host);
+      const run = async () => {
+        let r; try { r = await api('network.directory', { q: s.q, vehicleType: s.vehicleType, passengers: s.passengers }); } catch (e) { return showErr(out, e); }
+        const head = `<p class="small muted" style="margin:0 0 10px">${r.results.length} compan${r.results.length === 1 ? 'y' : 'ies'}${r.place ? ` serving <b>${esc(r.place.label)}</b>` : ' on the network'}${s.vehicleType ? ` with ${/^(SUV|[AEIOU])/.test(s.vehicleType) ? 'an' : 'a'} ${esc(s.vehicleType)} for ${s.passengers}` : ''}.</p>`;
+        out.innerHTML = head + (s.map ? `<div class="panel" style="padding:8px">${usMap([...r.results, { me: true, at: r.me.at, name: r.me.name }])}</div>` : '')
+          + (r.results.length ? `<div class="partners" style="margin-top:12px">${r.results.map((p) => `<article class="panel partner">
+            <div class="row">${p.logo ? `<img class="plogo" src="${esc(p.logo)}" alt="">` : `<span class="avatar" style="background:${esc(p.color || '#555')};color:#fff">${esc(initials(p.name))}</span>`}<div class="grow"><b>${esc(p.name)}</b><div class="small muted">${esc((p.cities || [])[0] || p.region)}</div></div>${s.vehicleType && p.fits ? `<span class="pill s-on_board">Fits ${s.passengers}</span>` : ''}</div>
+            <div class="row small" style="gap:4px;flex-wrap:wrap">${placeChips(p)}</div>
+            <div class="row small">${p.vehicleTypes.map((v) => `<span class="pill count">${v.count} ${esc(v.type)}${v.count > 1 ? 's' : ''}</span>`).join('') || '<span class="faint">No vehicles listed</span>'}</div>
+            <dl class="kv small"><dt>Network trips done</dt><dd>${p.tripsDone}</dd>${p.acceptRate != null ? `<dt>Accepts</dt><dd>${p.acceptRate}% of offers</dd>` : ''}<dt>With you</dt><dd>${p.sentToThem + p.gotFromThem} trip${p.sentToThem + p.gotFromThem === 1 ? '' : 's'}</dd></dl>
+            <div class="row"><button class="btn sm" type="button" data-prof="${p.id}">View profile</button><button class="btn sm" type="button" data-msg="${p.id}">Message${d.unread[p.id] ? ` (${d.unread[p.id]})` : ''}</button></div></article>`).join('')}</div>`
+          : `<div class="panel muted" style="margin-top:12px">${r.place ? `No member lists ${esc(r.place.label)} yet. Try a nearby city or the airport code.` : 'No other companies have joined the network yet.'}</div>`);
+        $$('[data-msg]', out).forEach((b) => { b.onclick = () => { netState.sub = 'messages'; netState.partner = b.dataset.msg; drawNetwork($('#view')); }; });
+        $$('[data-prof]', out).forEach((b) => { b.onclick = () => profileModal(b.dataset.prof); });
+      };
+      $('#nf-form', host).onsubmit = (e) => { e.preventDefault(); s.q = $('#nf-q', host).value.trim(); s.vehicleType = $('#nf-type', host).value; s.passengers = Math.max(1, +$('#nf-pax', host).value || 1); run(); };
+      $$('[data-view]', host).forEach((b) => { b.onclick = () => { s.map = b.dataset.view === 'map'; $$('[data-view]', host).forEach((x) => x.setAttribute('aria-pressed', String(x === b))); run(); }; });
+      run();
+    }
+    async function profileModal(cid) {
+      let p; try { p = await api('network.profile', { id: cid }); } catch (e) { return toast(e.message, true); }
+      const m = openModal({
+        title: p.name, wide: true,
+        body: `<div class="stack">
+          <div class="row" style="gap:14px">${p.logo ? `<img class="plogo big" src="${esc(p.logo)}" alt="">` : `<span class="avatar big" style="background:${esc(p.color || '#555')};color:#fff">${esc(initials(p.name))}</span>`}
+            <div class="stack grow" style="gap:2px">${p.about ? `<p style="margin:0">${esc(p.about)}</p>` : ''}<span class="small muted mono">${esc(p.phone || '')}${p.email ? ' · ' + esc(p.email) : ''}</span></div></div>
+          <div class="tiles"><div class="tile"><span class="label">Network trips done</span><b class="num">${p.tripsDone}</b></div><div class="tile"><span class="label">Accepts</span><b class="num">${p.acceptRate != null ? p.acceptRate + '%' : '—'}</b><span class="small faint">of offers</span></div>
+            <div class="tile"><span class="label">With you</span><b class="num">${p.sentToThem + p.gotFromThem}</b><span class="small faint">${p.sentToThem} sent, ${p.gotFromThem} received</span></div><div class="tile"><span class="label">Drivers</span><b class="num">${p.drivers}</b>${p.memberSince ? `<span class="small faint">Member since ${esc(fmtDate(p.memberSince))}</span>` : ''}</div></div>
+          <div><span class="label">Serves</span><div class="row small" style="gap:4px;flex-wrap:wrap;margin-top:6px">${placeChips(p)}</div></div>
+          <div><span class="label">Fleet</span><div class="pfleet">${p.fleet.map((v) => `<figure>${v.photo ? `<img src="${esc(v.photo)}" alt="${esc(v.name)}">` : '<div class="nophoto">No photo</div>'}<figcaption><b>${esc(v.name)}</b><span class="small muted">${esc(v.type)} · ${v.capacity} seats${v.year ? ' · ' + v.year : ''}</span></figcaption></figure>`).join('') || '<p class="faint small">No vehicles listed.</p>'}</div></div></div>`,
+        footer: '<button class="btn" type="button" data-close>Close</button><button class="btn primary" type="button" id="pf-msg">Message</button>',
+      });
+      $('[data-close]', m).onclick = closeModal;
+      $('#pf-msg', m).onclick = () => { closeModal(); netState.sub = 'messages'; netState.partner = cid; drawNetwork($('#view')); };
+    }
+    // Trip board: open trips posted in my cities, and my own posts.
+    async function netBoard(host, d, redraw) {
+      let b; try { b = await api('network.board'); } catch (e) { return showErr(host, e); }
+      const postPill = (p) => `<span class="pill ${({ open: 's-assigned', closed: 's-assigned', taken: 's-completed', awarded: 's-completed', expired: 'off', cancelled: 'off' })[p.status] || ''}">${esc(p.statusLabel)}</span>`;
+      const tripBits = (p) => `<div class="small muted">${tripLine(p.trip)} · ${esc(p.trip.serviceLabel)}${p.trip.service === 'hourly' ? `, ${p.trip.hours} h` : ''}${p.trip.bags ? ` · ${p.trip.bags} bags` : ''}</div>
+          <div class="route"><i></i><div>${esc(p.trip.pickup)}</div>${p.trip.dropoff ? `<span class="bar"></span><span></span><i class="end"></i><div>${esc(p.trip.dropoff)}</div>` : ''}</div>
+          ${p.trip.flight || p.trip.meetGreet || p.trip.childSeats ? `<div class="small">${p.trip.flight ? `Flight <span class="mono">${esc(p.trip.flight)}</span>` : ''}${p.trip.meetGreet ? ' · Meet & greet' : ''}${p.trip.childSeats ? ` · ${p.trip.childSeats} child seat(s)` : ''}</div>` : ''}
+          ${p.note ? `<div class="note">“${esc(p.note)}”</div>` : ''}`;
+      const live = (p) => ['open', 'closed'].includes(p.status);
+      host.innerHTML = `<p class="muted small" style="margin-top:0">Trips posted by members for ${esc([...b.airports, ...b.cities].join(', ') || 'your cities')}. Change your cities under Settings.</p>
+        <span class="label">Open trips in your cities</span>
+        ${b.open.length ? `<div class="stack" style="margin:8px 0 22px">${b.open.map((p) => `<article class="trip offer ${live(p) ? '' : 'faded'}">
+          <div class="spread"><div class="stack" style="gap:2px"><b>${esc(p.from)} · ${esc(p.place.label)}</b><span class="small faint">${live(p) ? `Closes ${esc(fmtDT(p.expiresAt))}` : ''}</span></div>${p.mode === 'take' ? `<b class="num" style="font-size:20px">${money(p.rate)}</b>` : '<span class="pill">Send your price</span>'}</div>
+          ${tripBits(p)}
+          ${p.status !== 'open' ? `<div class="row">${postPill(p)}${p.takenBy && p.takenBy.id === undefined ? '' : ''}${p.myBid ? `<span class="small muted">Your price ${money(p.myBid.price)}</span>` : ''}</div>`
+            : p.mode === 'take' ? `<div class="row"><button class="btn primary" type="button" data-take="${p.id}">Take it for ${money(p.rate)}</button></div>`
+            : `<div class="row"><input class="input num-in" type="number" min="1" step="1" data-price="${p.id}" placeholder="Your price" value="${p.myBid ? p.myBid.price : ''}" style="width:120px"><input class="input grow" data-bnote="${p.id}" placeholder="Note (optional)" value="${p.myBid ? esc(p.myBid.note || '') : ''}"><button class="btn primary" type="button" data-bid="${p.id}">${p.myBid ? 'Update price' : 'Send price'}</button></div>${p.myBid ? `<p class="small muted" style="margin:0">You sent ${money(p.myBid.price)}. ${p.bidCount > 1 ? `${p.bidCount - 1} other compan${p.bidCount === 2 ? 'y' : 'ies'} sent a price.` : ''}</p>` : ''}`}
+        </article>`).join('')}</div>` : '<p class="faint small" style="margin:8px 0 22px">No open trips in your cities right now. You get a notification when one is posted.</p>'}
+        <span class="label">Your posts</span>
+        ${b.mine.length ? `<div class="stack" style="margin-top:8px">${b.mine.map((p) => `<article class="panel stack" style="gap:8px">
+          <div class="spread"><div class="stack" style="gap:2px"><b><span class="mono">${esc(p.ref)}</span> · ${esc(p.place.label)}</b><span class="small faint">${p.mode === 'take' ? `First to take it, ${money(p.rate)}` : 'Members send a price'} · sent to ${p.sentTo} compan${p.sentTo === 1 ? 'y' : 'ies'}${live(p) ? ` · closes ${esc(fmtDT(p.expiresAt))}` : ''}</span></div>${postPill(p)}</div>
+          <div class="small muted">${tripLine(p.trip)} · ${esc(p.trip.passengerName || '')} · you charge ${money(p.trip.price)}</div>
+          ${p.takenBy ? `<p class="small" style="margin:0"><b>${esc(p.takenBy.name)}</b> has it for ${money(p.takenBy.rate)}.</p>` : ''}
+          ${p.mode === 'bid' && p.bids.length ? `<div class="tablewrap"><table><thead><tr><th>Company</th><th class="r">Price</th><th class="r">You keep</th><th>Note</th><th></th></tr></thead><tbody>${p.bids.slice().sort((x, y) => x.price - y.price).map((x) => `<tr><td><b>${esc(x.name)}</b><div class="small faint">${x.tripsDone} network trips${x.acceptRate != null ? ` · accepts ${x.acceptRate}%` : ''}</div></td><td class="r num">${money(x.price)}</td><td class="r num ${p.trip.price - x.price < 0 ? 'bad' : ''}">${money(p.trip.price - x.price)}</td><td class="small">${esc(x.note || '')}</td>
+            <td class="r">${live(p) ? `<button class="btn sm primary" type="button" data-pick="${p.id}" data-co="${x.companyId}">Choose</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : p.mode === 'bid' && live(p) ? '<p class="small faint" style="margin:0">No prices yet.</p>' : ''}
+          <div class="row">${p.tripId ? `<button class="linkbtn small" type="button" data-open="${p.tripId}">Open trip</button>` : ''}${live(p) ? `<button class="linkbtn small danger" type="button" data-unpost="${p.id}">Take the post down</button>` : ''}</div></article>`).join('')}</div>`
+          : '<p class="faint small" style="margin-top:8px">Nothing posted. Open a trip and choose "Post to city board" to offer it to every member in that city.</p>'}`;
+      $$('[data-take]', host).forEach((x) => { x.onclick = () => busy(x, async () => { try { const r = await api('network.take', { id: x.dataset.take }); toast(`It's yours. It's on your board as ${r.childRef}. Assign a driver.`); redraw(); } catch (e) { toast(e.message, true); redraw(); } }); });
+      $$('[data-bid]', host).forEach((x) => { x.onclick = () => busy(x, async () => { try { await api('network.bid', { id: x.dataset.bid, price: $(`[data-price="${x.dataset.bid}"]`, host).value, note: $(`[data-bnote="${x.dataset.bid}"]`, host).value }); toast('Price sent. You hear back if they choose you.'); redraw(); } catch (e) { toast(e.message, true); } }); });
+      $$('[data-pick]', host).forEach((x) => { x.onclick = () => busy(x, async () => { try { const r = await api('network.pickBid', { id: x.dataset.pick, companyId: x.dataset.co }); toast(`${r.takenBy.name} has ${r.ref} for ${money(r.takenBy.rate)}.`); redraw(); } catch (e) { toast(e.message, true); } }); });
+      $$('[data-unpost]', host).forEach((x) => { x.onclick = () => { if (x.dataset.sure !== '1') { x.dataset.sure = '1'; x.textContent = 'Tap again to take it down'; return; } busy(x, async () => { try { await api('network.cancelPost', { id: x.dataset.unpost }); toast('Taken down.'); redraw(); } catch (e) { toast(e.message, true); } }); }; });
+      $$('[data-open]', host).forEach((x) => { x.onclick = () => tripModal(x.dataset.open, redraw); });
+    }
+    // Post a trip to every member serving its pickup city.
+    async function postModal(t, back) {
+      let pf; try { pf = await api('network.placeFor', { tripId: t.id }); } catch (e) { return toast(e.message, true); }
+      const suggested = Math.round(t.price.total * pf.ratePct) / 100;
+      const m = openModal({
+        title: `Post ${t.ref} to a city trip board`, onClose: back,
+        body: `<form id="pm" class="stack" novalidate>
+          <p class="small muted" style="margin:0">${esc(fmtDT(t.pickupAt))} · ${esc(t.vehicleType)} · ${t.passengers} pax · ${esc(t.pickup)}${t.dropoff ? ' → ' + esc(t.dropoff) : ''}</p>
+          <label class="field"><span>City or airport</span><div class="row"><input id="pm-q" class="input grow" value="${esc(pf.place ? (pf.place.airport || pf.place.city) : '')}" autocomplete="off"><button class="btn sm" type="button" id="pm-check">Check</button></div><span class="hint" id="pm-who"></span></label>
+          <div class="field"><span>How</span><div class="stack" role="radiogroup" style="gap:6px">
+            <label class="check"><input type="radio" name="mode" value="take" checked><span>First company to take it gets a set amount</span></label>
+            <label class="check"><input type="radio" name="mode" value="bid"><span>Members send a price, and I choose</span></label></div></div>
+          <div class="grid2"><label class="field" id="pm-ratef"><span>You pay ($)</span><input id="pm-rate" type="number" min="1" step="1" value="${suggested}"><span class="hint" id="pm-keep"></span></label>
+            <label class="field"><span>Post closes</span><select id="pm-close">${[[1, '1 hour before pickup'], [2, '2 hours before pickup'], [6, '6 hours before pickup'], [24, '1 day before pickup']].map(([h, l]) => `<option value="${h}" ${h === 2 ? 'selected' : ''}>${l}</option>`).join('')}</select></label></div>
+          <label class="field"><span>Note for them</span><textarea id="pm-note" placeholder="Passenger preferences, sign name, anything special"></textarea></label>
+          <p class="note small">Members see the trip, but not your passenger's name, contact or your price until one of them has it. If nobody takes it, the trip is flagged for you.</p>
+          <div id="pm-err"></div></form>`,
+        footer: '<button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="pm-go">Post trip</button>',
+      });
+      $('[data-close]', m).onclick = closeModal;
+      const an = /^(SUV|[AEIOU])/.test(t.vehicleType) ? 'an' : 'a';
+      const who = (r) => { $('#pm-who', m).textContent = r.count ? `${r.count} compan${r.count === 1 ? 'y' : 'ies'} with ${an} ${t.vehicleType} serve${r.count === 1 ? 's' : ''} ${r.place.label}: ${r.names.join(', ')}.` : `No member with ${an} ${t.vehicleType} serves ${r.place ? r.place.label : 'that place'} yet.`; };
+      who(pf);
+      $('#pm-check', m).onclick = async () => { try { who(await api('network.placeFor', { tripId: t.id, q: $('#pm-q', m).value })); } catch (e) { showErr($('#pm-err', m), e); } };
+      const keep = () => { const r = +$('#pm-rate', m).value || 0; $('#pm-keep', m).textContent = `You keep ${money(t.price.total - r)} of ${money(t.price.total)}.`; };
+      $('#pm-rate', m).oninput = keep; keep();
+      $$('[name=mode]', m).forEach((r) => { r.onchange = () => { $('#pm-ratef', m).hidden = $('[name=mode]:checked', m).value === 'bid'; }; });
+      $('#pm-go', m).onclick = (e) => busy(e.currentTarget, async () => {
+        try {
+          const r = await api('network.post', { tripId: t.id, q: $('#pm-q', m).value, mode: $('[name=mode]:checked', m).value, rate: $('#pm-rate', m).value, closeHours: $('#pm-close', m).value, note: $('#pm-note', m).value });
+          toast(`${t.ref} posted to ${r.sentTo} compan${r.sentTo === 1 ? 'y' : 'ies'} in ${r.place.label}.`);
+          closeModal();
+        } catch (err) { showErr($('#pm-err', m), err); }
+      });
     }
     function netPartners(host, d) {
       host.innerHTML = d.members.length ? `<div class="partners">${d.members.map((p) => `<article class="panel partner">
@@ -3361,6 +3487,7 @@
             <div class="row"><span>Pay the partner</span><input class="input num-in" type="number" name="ratePct" min="10" max="100" step="0.5" value="${a.ratePct}" ${ro}><span>% of the fare</span></div>
             <p class="small muted" style="margin:0">You keep the rest as your commission (${+(100 - a.ratePct).toFixed(1)}% now). This also applies to pickups your clients book for when they land in another city.</p>
             <div class="row"><span>Wait</span><input class="input num-in" type="number" name="answerMin" min="5" max="240" value="${a.answerMin}" ${ro}><span>minutes for an answer, then try the next partner</span></div>
+            <label class="check"><input type="checkbox" name="postToBoard" id="af-board" ${a.postToBoard ? 'checked' : ''} ${ro}> <span>When no partner on my list takes it, post it to the city trip board (first to take it, same amount)</span></label>
           </fieldset>
           <fieldset class="fs"><legend>Partners, in order</legend>
             ${d.members.length ? `<ol class="aflist" id="af-list"></ol><p class="small faint" style="margin:0">Only partners with a car that seats everyone get the offer. A bigger car counts; a party bus only when one was booked.</p>` : '<p class="small muted" style="margin:0">No other companies are in the network yet.</p>'}
@@ -3387,7 +3514,7 @@
         e.preventDefault();
         const x = formData(f);
         try {
-          await api('network.saveAuto', { on: !!$('#af-on', f).checked, noDriver: !!f.noDriver.checked, lastCallHours: $('#af-lc', f).checked ? +x.lastCallHours : 0, ratePct: +x.ratePct, answerMin: +x.answerMin, partners: order.filter((pid) => picked.has(pid)) });
+          await api('network.saveAuto', { on: !!$('#af-on', f).checked, noDriver: !!f.noDriver.checked, lastCallHours: $('#af-lc', f).checked ? +x.lastCallHours : 0, ratePct: +x.ratePct, answerMin: +x.answerMin, postToBoard: !!$('#af-board', f).checked, partners: order.filter((pid) => picked.has(pid)) });
           toast($('#af-on', f).checked ? 'Rules saved. Automatic farm-out is on.' : 'Rules saved. Automatic farm-out is off.');
           redraw();
         } catch (err) { toast(err.message, true); }
@@ -3396,7 +3523,9 @@
     function netSettings(host, d, redraw) {
       host.innerHTML = `<form class="panel stack" id="nw-set" style="max-width:640px">
         <label class="switch"><input type="checkbox" name="joined" ${d.me.joined ? 'checked' : ''}><span>Listed in the network. Other companies can see you and send you trips.</span></label>
-        <label class="field"><span>Areas you cover</span><input class="input" name="areas" value="${esc(d.me.areas || '')}" placeholder="Cities, counties and airports"><span class="hint">Partners see this when choosing who to send a trip to. Your base: ${esc(d.me.region)}.</span></label>
+        <label class="field"><span>Cities you serve</span><textarea name="cities" rows="3" placeholder="Seattle, WA&#10;Bellevue, WA">${esc((d.me.cities || []).join('\n'))}</textarea><span class="hint">One per line, city and state. Members find you by these, and trips posted for these cities reach you.</span></label>
+        <label class="field"><span>Airports you serve</span><input class="input mono" name="airports" value="${esc((d.me.airports || []).join(', '))}" placeholder="SEA, BFI, PAE"><span class="hint">Airport codes, separated by commas.</span></label>
+        <label class="field"><span>Coverage notes <span class="faint">(optional)</span></span><input class="input" name="areas" value="${esc(d.me.areas || '')}" placeholder="Counties, ski resorts, cruise terminals"></label>
         <label class="field"><span>About your company</span><textarea name="about" placeholder="Fleet, specialties, languages, how to reach your dispatch after hours">${esc(d.me.about || '')}</textarea></label>
         <div><button class="btn primary" type="submit">Save</button></div></form>`;
       $('#nw-set', host).onsubmit = async (e) => { e.preventDefault(); try { await api('network.saveSettings', formData(e.target)); toast('Network settings saved.'); redraw(); } catch (err) { toast(err.message, true); } };
