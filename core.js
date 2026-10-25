@@ -2790,6 +2790,32 @@
         .sort((x, y) => y.pickupAt.localeCompare(x.pickupAt)).slice(0, range ? 3000 : 300).map(tripView);
     });
     def('dispatch.trip', STAFF, false, (ctx, a) => { const t = ownTrip(ctx, a.id); return { ...tripView(t), warnings: assignWarnings(t) }; });
+    // Quick search (the box in the office header): trips, people, cars and
+    // company accounts. Every word must match; phone numbers match on digits.
+    def('dispatch.search', STAFF, false, (ctx, a) => {
+      const q = str(a.q, 80).toLowerCase().trim();
+      const out = { trips: [], customers: [], drivers: [], vehicles: [], accounts: [] };
+      if (!q) return out;
+      const words = q.split(/\s+/).filter(Boolean);
+      const digits = q.replace(/\D/g, '');
+      const hit = (parts, phones) => {
+        const hay = parts.filter(Boolean).join(' ').toLowerCase();
+        if (words.every((w) => hay.includes(w))) return true;
+        return digits.length >= 4 && digits.length === q.replace(/[\s()+.-]/g, '').length && (phones || []).some((p) => String(p || '').replace(/\D/g, '').includes(digits));
+      };
+      const cid = ctx.company.id, nowIso = now().toISOString();
+      const users = db.users.filter((u) => u.companyId === cid);
+      const nameOf = (id) => (users.find((u) => u.id === id) || {}).name || '';
+      // Upcoming trips first (soonest first), then past trips (newest first).
+      out.trips = db.trips.filter((t) => t.companyId === cid && hit([t.ref, t.passengerName, t.passengerEmail, t.pickup, t.dropoff, t.flight, t.signName, nameOf(t.driverId)], [t.passengerPhone]))
+        .sort((x, y) => { const ux = x.pickupAt >= nowIso, uy = y.pickupAt >= nowIso; return ux !== uy ? (ux ? -1 : 1) : ux ? x.pickupAt.localeCompare(y.pickupAt) : y.pickupAt.localeCompare(x.pickupAt); })
+        .slice(0, 8).map((t) => ({ id: t.id, ref: t.ref, passengerName: t.passengerName, pickupAt: t.pickupAt, pickup: t.pickup, dropoff: t.dropoff, status: t.status, statusLabel: t.noShow ? 'No-show' : STATUS_LABELS[t.status] }));
+      out.customers = users.filter((u) => u.role === 'customer' && hit([u.name, u.email, u.agent && u.agent.agency], [u.phone])).slice(0, 6).map((u) => ({ id: u.id, name: u.name, email: u.email || '', phone: u.phone || '', agent: !!u.agent }));
+      out.drivers = users.filter((u) => u.role === 'driver' && hit([u.name, u.email], [u.phone])).slice(0, 6).map((u) => ({ id: u.id, name: u.name, phone: u.phone || '' }));
+      out.vehicles = db.vehicles.filter((v) => v.companyId === cid && hit([v.name, v.plate, v.type])).slice(0, 6).map((v) => ({ id: v.id, name: v.name, plate: v.plate || '', type: v.type }));
+      out.accounts = db.accounts.filter((x) => x.companyId === cid && hit([x.name, x.contact, x.billingEmail], [x.phone])).slice(0, 6).map((x) => ({ id: x.id, name: x.name }));
+      return out;
+    });
     def('dispatch.quote', STAFF, false, (ctx, a) => {
       const b = a.booking || {};
       const email = str(b.passengerEmail, 120).toLowerCase();

@@ -281,7 +281,14 @@
   function go(route) { if (location.hash.slice(1) === route) render(); else location.hash = route; }
   window.addEventListener('hashchange', render);
 
-  function shell({ tabs, active, onTab, wide, narrow }) {
+  let quickSearch = null; // the office's search box opener, while the office app is showing
+  document.addEventListener('keydown', (e) => {
+    if (!quickSearch || modalEl || e.altKey) return;
+    const typing = /^(input|textarea|select)$/i.test((e.target && e.target.tagName) || '') || (e.target && e.target.isContentEditable);
+    if (((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') || (e.key === '/' && !typing && !e.ctrlKey && !e.metaKey)) { e.preventDefault(); quickSearch(); }
+  });
+  function shell({ tabs, active, onTab, wide, narrow, search }) {
+    quickSearch = search || null;
     const co = session && session.company;
     const brand = co ? co.color : null;
     document.documentElement.style.setProperty('--brand', brand || '#3d4f7c');
@@ -296,7 +303,7 @@
         <div class="navrow"><nav class="tabs" aria-label="Sections">${(tabs || []).map((t) => `<button type="button" data-tab="${t.key}" aria-current="${t.key === active}">${esc(t.label)}</button>`).join('')}</nav>
           ${tabs && tabs.length > 4 ? `<button type="button" class="tabmore" aria-haspopup="true" aria-expanded="false" hidden>More<span aria-hidden="true"> ▾</span></button>
           <div class="tabmenu" role="menu" hidden>${tabs.map((t) => `<button type="button" role="menuitem" data-go="${t.key}" aria-current="${t.key === active}">${esc(t.label)}</button>`).join('')}</div>` : ''}</div>
-        ${u ? `<div class="who"><span class="whoname" title="${esc(roleName)}">${esc(u.name)}${u.name.toLowerCase().includes(roleName.toLowerCase()) ? '' : `<small>${esc(roleName)}</small>`}</span><button class="btn sm" type="button" id="appbtn">${pwa.standalone ? 'Notifications' : 'Get the app'}</button><button class="btn sm" type="button" id="signout">Sign out</button></div>` : ''}
+        ${u ? `<div class="who">${search ? `<button type="button" class="qsbox" id="qsbox" aria-label="Search trips, people and pages" title="Search (/)"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M13 13l4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span class="qs-ph">Search</span><kbd>/</kbd></button>` : ''}<span class="whoname" title="${esc(roleName)}">${esc(u.name)}${u.name.toLowerCase().includes(roleName.toLowerCase()) ? '' : `<small>${esc(roleName)}</small>`}</span><button class="btn sm" type="button" id="appbtn">${pwa.standalone ? 'Notifications' : 'Get the app'}</button><button class="btn sm" type="button" id="signout">Sign out</button></div>` : ''}
       </header>
       ${DEMO ? `<div class="demobar"><span class="label">Demo</span>Switch login:
         ${DEMO_LOGINS.map((d) => `<button type="button" data-demo="${d.key}" aria-pressed="${d.key === demoKey}">${esc(d.label)}</button>`).join('')}
@@ -305,6 +312,7 @@
       ${session && session.user ? `<footer class="appfoot">${footLinks()}</footer>` : ''}`;
     $$('.tabs button', app).forEach((b) => { b.onclick = () => onTab && onTab(b.dataset.tab); });
     const ab = $('#appbtn', app); if (ab) ab.onclick = appModal;
+    const qs = $('#qsbox', app); if (qs) qs.onclick = () => search();
     const hdr = $('.topbar', app); if (hdr && tabs && tabs.length && tabs.length <= 4) hdr.classList.add('fewtabs');
     if (hdr && tabs && tabs.length > 6) hdr.classList.add('manytabs');
     fitTabs();
@@ -2643,10 +2651,82 @@
     inboxTimer = setInterval(() => { if (!document.hidden && session && session.user && STAFF_ROLES.includes(session.user.role) && $('[data-tab="inbox"]', app) && tab !== 'inbox') inboxBadge(); }, 20000);
     const go2 = (t) => { tab = t; store.set(tabKey, t); draw(); };
     const draw = () => {
-      const v = shell({ tabs, active: tab, onTab: go2, wide: tab === 'board' });
+      const v = shell({ tabs, active: tab, onTab: go2, wide: tab === 'board', search: openSearch });
       if (tab !== 'inbox') inboxBadge();
       ({ board: drawBoard, inbox: drawInbox, trips: drawTrips, calendar: drawCalendar, quotes: drawQuotes, flights: drawFlights, drivers: drawDrivers, fleet: drawFleet, incidents: drawIncidents, customers: drawCustomers, reports: drawReports, network: drawNetwork, pricing: drawPricing, messages: drawMessages, settings: drawSettings, team: drawTeam })[tab](v);
     };
+    // Quick search --------------------------------------------------------------
+    // One box for trips (ref, passenger, phone, address, flight), customers,
+    // drivers, cars, company accounts and the pages and settings of this app.
+    let pendingCust = null;
+    function jumpTo(t, find) {
+      closeModal(); go2(t);
+      if (!find) return;
+      const until = Date.now() + 5000;
+      (function look() {
+        const el = $$('#view h1, #view h2, #view h3, #view .field > span, #view .switch > span').find((x) => x.textContent.trim().toLowerCase() === find.toLowerCase());
+        if (!el) { if (Date.now() < until) setTimeout(look, 120); return; }
+        const box = el.closest('.panel, .field') || el;
+        box.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        box.classList.remove('qs-flash'); void box.offsetWidth; box.classList.add('qs-flash');
+      })();
+    }
+    function searchPages() {
+      const has = (k) => tabs.some((t) => t.key === k);
+      const out = tabs.map((t) => ({ label: t.label, where: 'Page', kw: { board: 'dispatch today live map', inbox: 'texts replies sms', trips: 'bookings rides', calendar: 'week month', quotes: 'events estimates', flights: 'airport arrivals landing', fleet: 'vehicles cars', incidents: 'damage complaints', reports: 'sales revenue', network: 'partners farm out affiliates', pricing: 'surge night weekend holiday', messages: 'templates sms email', settings: 'rates brand settings', team: 'staff dispatchers users access' }[t.key] || '', go: () => jumpTo(t.key) }));
+      const sub = (tabKey, label, kw, set) => { if (has(tabKey)) out.push({ label, where: (tabs.find((t) => t.key === tabKey) || {}).label, kw, go: () => { set(); jumpTo(tabKey); } }); };
+      sub('drivers', 'Auto-dispatch', 'wake-up calls auto assign on the way', () => { driverSub = 'auto'; });
+      if (P.pay) sub('drivers', 'Driver pay', 'payroll payouts', () => { driverSub = 'pay'; });
+      sub('customers', 'Travel agents', 'commission bookers', () => { custSub = 'agents'; });
+      sub('customers', 'Company accounts', 'business corporate net 30', () => { custSub = 'accounts'; });
+      if (P.customers) sub('customers', 'Invoices', 'billing monthly', () => { custSub = 'invoices'; });
+      for (const [k, l, kw] of [['board', 'Trip board', 'post city'], ['partners', 'Find operators', 'directory map companies'], ['messages', 'Network messages', 'partner chat'], ['balances', 'Network balances', 'owe settle'], ['auto', 'Auto farm-out', 'partners automatic'], ['settings', 'Network settings', 'cities airports coverage']]) sub('network', l, kw, () => { netState.sub = k; });
+      const sec = (tabKey, label, kw) => { if (has(tabKey)) out.push({ label, where: (tabs.find((t) => t.key === tabKey) || {}).label, kw, go: () => jumpTo(tabKey, label) }); };
+      for (const [l, kw] of [['Brand', 'color name'], ['Logo', 'upload picture'], ['Your booking page', 'link website book'], ['Rates', 'base fare per mile hourly'], ['Rates by vehicle', 'base fare per mile hourly minimum'], ['Cancellation, waiting and no-shows', 'cancel fee wait time'], ['Booking terms', 'policy terms'], ['How customers pay', 'cash card office payment'], ['Card payments', 'stripe card']]) sec('settings', l, kw);
+      for (const [l, kw] of [['Automatic adjustments', 'night weekend surge'], ['Busy dates', 'holiday events'], ['Add-ons', 'extras car seat'], ['Promo codes', 'discount coupon']]) sec('pricing', l, kw);
+      sec('messages', 'Messages to passengers', 'confirmation reminder templates');
+      if (isAdmin) sec('team', 'Master login', 'payment pin');
+      return out;
+    }
+    function openSearch() {
+      const m = openModal({ title: 'Search', body: `<div class="qs"><input class="input" id="qs-in" type="search" autocomplete="off" placeholder="Trip number, name, phone, address, car or page" aria-label="Search">
+        <div class="qs-res" id="qs-res" role="listbox"><p class="small faint">Type a trip number, passenger, phone number, driver, car or page name.</p></div></div>` });
+      m.classList.add('qs-overlay');
+      const inp = $('#qs-in', m), res = $('#qs-res', m);
+      const pages = searchPages();
+      let seq = 0, timer = null, items = [], act = 0;
+      const group = (title, rows) => rows.length ? `<div class="qs-g"><div class="qs-gt">${title}</div>${rows.join('')}</div>` : '';
+      const row = (i, main, sub2, tag) => `<button type="button" class="qs-item" role="option" data-i="${i}"><span class="qs-main">${main}</span>${tag || ''}${sub2 ? `<span class="qs-sub">${sub2}</span>` : ''}</button>`;
+      function show(q, d) {
+        items = []; const add = (fn) => { items.push(fn); return items.length - 1; };
+        const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+        const pg = words.length ? pages.filter((p) => { const h = `${p.label} ${p.where} ${p.kw}`.toLowerCase(); return words.every((w) => h.includes(w)); }).slice(0, 6) : [];
+        const html = [
+          group('Trips', (d ? d.trips : []).map((t) => row(add(() => { closeModal(); tripModal(t.id, () => current && current.refresh && current.refresh(true)); }), `<b>${esc(t.ref)}</b> · ${esc(t.passengerName || '')}`, `${esc(fmtDT(t.pickupAt))} · ${esc(t.pickup)}${t.dropoff ? ' → ' + esc(t.dropoff) : ''}`, `<span class="pill s-${esc(t.status)}">${esc(t.statusLabel)}</span>`))),
+          group('Customers', (d ? d.customers : []).map((c) => row(add(() => { pendingCust = c.id; custSub = 'people'; jumpTo('customers'); }), esc(c.name), [c.agent ? 'Travel agent' : '', c.phone, c.email].filter(Boolean).map(esc).join(' · ')))),
+          group('Drivers', (d ? d.drivers : []).map((x) => row(add(async () => { closeModal(); let veh = []; try { veh = await api('dispatch.vehicles'); } catch (e) { /* the modal still opens */ } driverModal(x.id, veh, () => tab === 'drivers' && draw()); }), esc(x.name), esc(x.phone)))),
+          group('Cars', (d ? d.vehicles : []).map((x) => row(add(() => { closeModal(); vehicleModal(x.id, () => tab === 'fleet' && draw()); }), esc(x.name), [x.type, x.plate].filter(Boolean).map(esc).join(' · ')))),
+          group('Company accounts', (d ? d.accounts : []).map((x) => row(add(() => { closeModal(); accountModal(x.id, () => tab === 'customers' && draw()); }), esc(x.name), ''))),
+          group('Pages and settings', pg.map((p) => row(add(p.go), esc(p.label), p.where === 'Page' ? '' : esc(p.where)))),
+        ].join('');
+        res.innerHTML = html || (q ? `<p class="small faint">${d ? `Nothing matches “${esc(q)}”.` : 'Searching…'}</p>` : res.innerHTML);
+        act = 0; mark();
+        $$('.qs-item', res).forEach((b) => { b.onclick = () => items[+b.dataset.i](); b.onmousemove = () => { if (act !== +b.dataset.i) { act = +b.dataset.i; mark(); } }; });
+      }
+      function mark() { $$('.qs-item', res).forEach((b) => b.setAttribute('aria-selected', String(+b.dataset.i === act))); const a = $(`.qs-item[data-i="${act}"]`, res); if (a) a.scrollIntoView({ block: 'nearest' }); }
+      inp.oninput = () => {
+        const q = inp.value.trim(); clearTimeout(timer);
+        if (!q) { res.innerHTML = '<p class="small faint">Type a trip number, name, phone number, car or page name.</p>'; items = []; return; }
+        show(q, null);
+        const my = ++seq;
+        timer = setTimeout(async () => { let d; try { d = await api('dispatch.search', { q }); } catch (e) { return; } if (my === seq) show(q, d); }, 160);
+      };
+      inp.onkeydown = (e) => {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (items.length) { act = (act + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length; mark(); } }
+        else if (e.key === 'Enter') { e.preventDefault(); if (items[act]) items[act](); }
+      };
+      inp.focus();
+    }
     const warnToast = (r, okText) => {
       if (r.warnings && r.warnings.length) toast(`${okText} Check: ${r.warnings.join(' ')}`, true, 7000);
       else toast(okText);
@@ -4509,6 +4589,7 @@
         if (cl) cl.onclick = () => busy(cl, async () => { try { custLoginDone(await api('dispatch.sendCustomerLogin', { id: c.id })); } catch (err) { showErr($('#cf-err', m), err); } });
         $('#cf-save', m).onclick = (e) => busy(e.currentTarget, async () => { try { await api('dispatch.saveCustomer', { ...formData($('#cf', m)), id: c.id }); closeModal(); toast('Customer saved.'); redraw(); } catch (err) { showErr($('#cf-err', m), err); } });
       }; });
+      if (pendingCust) { const r = $(`tr[data-id="${pendingCust}"]`, v); pendingCust = null; if (r) { r.scrollIntoView({ block: 'center' }); r.click(); } }
     }
 
     // Pricing ----------------------------------------------------------------
