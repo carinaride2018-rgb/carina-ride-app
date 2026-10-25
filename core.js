@@ -403,6 +403,29 @@
   // Stand-in for geocoding: airports have real coordinates, other addresses get
   // a stable spot within ~13 miles of the company's city. Replace with Google
   // Geocoding when Maps is connected.
+  // Well-known spots in other cities, for the ride when a passenger lands there.
+  const AWAY_PLACES = {
+    LAS: [
+      ['Bellagio', '3600 S Las Vegas Blvd, Las Vegas, NV 89109'], ['Caesars Palace', '3570 S Las Vegas Blvd, Las Vegas, NV 89109'],
+      ['The Venetian Resort', '3355 S Las Vegas Blvd, Las Vegas, NV 89109'], ['Wynn Las Vegas', '3131 S Las Vegas Blvd, Las Vegas, NV 89109'],
+      ['MGM Grand', '3799 S Las Vegas Blvd, Las Vegas, NV 89109'], ['ARIA Resort & Casino', '3730 S Las Vegas Blvd, Las Vegas, NV 89158'],
+      ['The Cosmopolitan of Las Vegas', '3708 S Las Vegas Blvd, Las Vegas, NV 89109'], ['Mandalay Bay', '3950 S Las Vegas Blvd, Las Vegas, NV 89119'],
+      ['Palms Casino Resort', '4321 W Flamingo Rd, Las Vegas, NV 89103'], ['Las Vegas Convention Center', '3150 Paradise Rd, Las Vegas, NV 89109'],
+    ],
+  };
+  // Suggestions for an address in the city a passenger flies to (code = its airport).
+  function suggestAway(code, query) {
+    const a = AIRPORTS[code]; if (!a) return [];
+    const city = `${a[2]}, ${stateOfAirport(code)}`;
+    const q = fold(query), words = q ? q.split(' ') : [];
+    const pool = [[a[0], a[1], 'airport'], ...(AWAY_PLACES[code] || []).map(([n, addr]) => [n, addr, 'place'])].map(([n, addr, kind]) => ({ label: n, sub: addr, address: `${n}, ${addr}`, kind }));
+    const out = pool.filter((p) => { const h = fold(p.label + ' ' + p.sub); return words.every((w) => h.includes(w)); })
+      .sort((x, y) => (fold(y.label).startsWith(q) ? 1 : 0) - (fold(x.label).startsWith(q) ? 1 : 0)).slice(0, 7);
+    // Whatever they typed, completed with that city.
+    const typed = str(query).trim().replace(/\s+/g, ' ');
+    if (typed.length >= 3 && !out.some((p) => fold(p.label) === fold(typed))) out.push({ label: typed.split(',')[0], sub: /,/.test(typed) ? typed.split(',').slice(1).join(',').trim() : city, address: /,/.test(typed) ? typed : `${typed}, ${city}`, kind: /^\d/.test(typed) ? 'street' : 'place' });
+    return out;
+  }
   const REGION_CENTER = { seattle: { lat: 47.6062, lng: -122.3321 }, dc: { lat: 38.9007, lng: -77.0369 }, denver: { lat: 39.7392, lng: -104.9903 } };
   const AIRPORT_POINTS = { SEA: { lat: 47.4502, lng: -122.3088 }, BFI: { lat: 47.53, lng: -122.3019 }, PAE: { lat: 47.9063, lng: -122.2816 }, DCA: { lat: 38.8512, lng: -77.0402 }, IAD: { lat: 38.9531, lng: -77.4565 }, BWI: { lat: 39.1774, lng: -76.6684 }, DEN: { lat: 39.8561, lng: -104.6737 } };
   const offset = (p, miles, angle) => ({ lat: p.lat + (miles / 69) * Math.cos(angle), lng: p.lng + (miles / (69 * Math.cos(p.lat * Math.PI / 180))) * Math.sin(angle) });
@@ -2057,6 +2080,14 @@
         for (const t of mine) for (const addr of [t.pickup, t.dropoff]) {
           const k = str(addr).toLowerCase(); if (!k || seen.has(k)) continue; seen.add(k); recent.push(str(addr));
         }
+      }
+      // An address in another city (where the passenger lands): look around that airport.
+      const near = str(a.near, 3).toUpperCase();
+      if (AIRPORTS[near] && AIRPORTS[near][6] !== regionOf(c)) {
+        const away = suggestAway(near, str(a.q, 120));
+        if (!providers.places || str(a.q, 120).length < 3) return away;
+        const live = await providers.places(str(a.q, 120), { lat: AIRPORTS[near][3], lng: AIRPORTS[near][4] });
+        return live && live.length ? live.slice(0, 8) : away;
       }
       const own = suggestPlaces(c, str(a.q, 120), recent.slice(0, u && u.role === 'customer' ? 6 : 4));
       // With Google Places on, real addresses follow the caller's own recent ones.

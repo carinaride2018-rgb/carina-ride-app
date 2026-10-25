@@ -1182,15 +1182,17 @@
       ${opts && opts.note ? `<p class="small faint">${esc(opts.note)}</p>` : ''}</div>`;
   }
   // Customers see the fare as one "Ride fare" line; the office sees how it was worked out.
-  function quoteLines(q, simple) {
-    if (simple == null) simple = !(session && session.user && ['admin', 'dispatcher', 'owner'].includes(session.user.role));
+  // The fare shows as one "Ride fare" line everywhere, office included (Dawit:
+  // no "mi at $/mi + base" formula on quotes). Rates are under Rates & brand.
+  function quoteLines(q, simple = true) {
     return q.lines.map((l) => `<div class="qline ${l.kind === 'discount' || l.kind === 'credit' ? 'disc' : ''}"><span>${esc(!simple ? l.label : l.kind === 'fare' ? 'Ride fare' : l.stop != null ? l.label.replace(/ \(.*\)$/, '') : l.label)}</span><span class="num">${l.amount == null ? '' : (l.amount < 0 ? '−' + money(-l.amount) : money(l.amount))}</span></div>`).join('');
   }
   // Address autofill. Suggestions come from places.suggest (simulated today,
   // Google Places later). Picking one fills the field and fires 'input'.
   const AC_ICON = { airport: '✈', recent: '↺', place: '●', street: '⌖' };
   let acSeq = 0;
-  function addressAutocomplete(input, slug) {
+  // near(): an airport code when the address is in the city the passenger flies to.
+  function addressAutocomplete(input, slug, near) {
     if (!input || input.readOnly || input.disabled) return;
     const wrap = input.parentElement; wrap.classList.add('acwrap');
     const list = document.createElement('ul');
@@ -1221,7 +1223,7 @@
       clearTimeout(timer);
       timer = setTimeout(async () => {
         const k = ++n;
-        try { const r = await api('places.suggest', { slug, q: input.value }); if (k !== n) return; items = r; render(); } catch (e) { close(); }
+        try { const r = await api('places.suggest', { slug, q: input.value, ...(near && near() ? { near: near() } : {}) }); if (k !== n) return; items = r; render(); } catch (e) { close(); }
       }, 120);
     };
     input.addEventListener('input', (e) => { if (e.constructor !== Event) load(); });
@@ -1778,6 +1780,7 @@
     const acSlug = (opts.info.company && opts.info.company.slug) || (session && session.company && session.company.slug);
     addressAutocomplete($('#bk-pickup', host), acSlug);
     addressAutocomplete($('#bk-dropoff', host), acSlug);
+    addressAutocomplete($('#bk-land-drop', host), acSlug, () => state.landDest);
     const cl = $('#bk-client', form);
     if (cl) cl.onchange = () => { const c = clients[+cl.value]; if (!c) return; $('#bk-name', form).value = c.name; $('#bk-phone', form).value = c.phone; $('#bk-email', form).value = c.email; cl.value = ''; sync(); requote(); };
     $('#bk-addstop', form).onclick = () => { sync(); stopList.push(''); stopWaits.push(defWait); drawStops(); sync(); const ins = $$('[data-stop]', form); if (ins.length) ins[ins.length - 1].focus(); };
