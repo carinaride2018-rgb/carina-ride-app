@@ -2727,6 +2727,8 @@
       };
       inp.focus();
     }
+    // A ride from A to B that has no return yet (a caller asks to book the way back).
+    const canReturn = (t) => t.service !== 'hourly' && !!t.dropoff && !t.returnOf && !(t.pair && t.pair.kind === 'return') && !t.farmIn && t.status !== 'cancelled';
     const warnToast = (r, okText) => {
       if (r.warnings && r.warnings.length) toast(`${okText} Check: ${r.warnings.join(' ')}`, true, 7000);
       else toast(okText);
@@ -3039,7 +3041,8 @@
     // swapped; the office sets the date and time (and flight from an airport).
     function returnModal(t, done) {
       const air = C.isAirport(t.dropoff);
-      const d0 = new Date(t.pickupAt); d0.setDate(d0.getDate() + 1);
+      // The day after the ride, or today when the ride was a while ago.
+      const d0 = new Date(Math.max(new Date(t.pickupAt).getTime() + 86400e3, Date.now()));
       const day = `${d0.getFullYear()}-${String(d0.getMonth() + 1).padStart(2, '0')}-${String(d0.getDate()).padStart(2, '0')}`;
       const m2 = openModal({
         title: `Return trip for ${t.ref}`,
@@ -3137,6 +3140,7 @@
             <div class="row"><button class="btn primary" type="submit">Save changes</button><span class="small faint">Booked ${t.agent ? `by ${esc(t.agent.name)} (${esc(t.agent.agency)}, travel agent${t.agent.pct ? `, ${t.agent.pct}% commission` : ''}${t.agent.payBy === 'passenger' ? ', client pays' : ''})` : esc(t.source === 'phone' ? 'by phone' : 'online')} ${esc(fmtDT(t.createdAt))}</span></div>
           </form>
           <div class="side">
+            ${canReturn(t) ? '<button class="btn retbtn" type="button" id="te-return">↩ Add return trip</button>' : ''}
             ${t.warnings && t.warnings.length ? `<div class="warnbox"><b>Check before the trip</b><ul>${t.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></div>` : ''}
             ${t.farmout ? `<div class="sidebox partnerbox"><div class="spread"><span class="label">${fo && fo.status === 'offered' ? 'Offered to partner' : 'Partner company'}</span>${pill(t)}</div>
               <b>${esc(t.farmout.toName)}</b>
@@ -3166,7 +3170,6 @@
               <button class="btn sm" type="button" id="te-sheet">Print trip sheet</button>
               ${t.status !== 'cancelled' && (t.passengerEmail || t.passengerPhone) ? '<button class="btn sm" type="button" id="te-confirm">Resend confirmation</button>' : ''}
               ${t.passengerPhone ? '<button class="btn sm" type="button" id="te-text">Text passenger</button>' : ''}
-              ${t.service !== 'hourly' && t.dropoff && !t.returnOf && !(t.pair && t.pair.kind === 'return') && !t.farmIn ? '<button class="btn sm" type="button" id="te-return">Add return trip</button>' : ''}
               ${canFarm ? '<button class="btn sm" type="button" id="te-farm">Send to a partner company</button><button class="btn sm" type="button" id="te-post">Post to city board</button>' : ''}
               ${t.netPost && ['open', 'closed'].includes(t.netPost.status) ? `<p class="small muted" style="margin:0">On the ${esc(t.netPost.label)} trip board${t.netPost.status === 'closed' ? ': prices are in, choose one' : ''}. <button class="linkbtn small" type="button" id="te-board">Open trip board</button></p>` : ''}
             </div>` : ''}
@@ -3634,12 +3637,16 @@
         else if (w === 'past') trips = trips.filter((t) => !open(t) && new Date(t.pickupAt) < dayStart).sort((x, y) => y.pickupAt.localeCompare(x.pickupAt));
         const more = trips.length - shown;
         trips = trips.slice(0, shown);
-        $('#t-list', v).innerHTML = trips.length ? `<div class="tablewrap"><table><thead><tr><th>Pickup</th><th>Ref</th><th>Passenger</th><th>Route</th><th>Vehicle</th><th>Driver</th><th>Status</th><th class="r">Total</th></tr></thead><tbody>
+        $('#t-list', v).innerHTML = trips.length ? `<div class="tablewrap"><table><thead><tr><th>Pickup</th><th>Ref</th><th>Passenger</th><th>Route</th><th>Vehicle</th><th>Driver</th><th>Status</th><th class="r">Total</th><th></th></tr></thead><tbody>
           ${trips.map((t) => `<tr class="click" data-id="${t.id}"><td class="mono small" style="white-space:nowrap">${esc(fmtDT(t.pickupAt))}</td><td class="mono small">${esc(t.ref)}</td><td>${esc(t.passengerName)}</td>
             <td class="small" style="min-width:220px">${esc(t.pickup)}${t.dropoff ? `<br><span class="faint">→ ${esc(t.dropoff)}</span>` : ''}${t.flight ? `<br><span class="mono faint">✈ ${esc(t.flight)}</span>` : ''}</td><td class="small">${esc(t.vehicle ? t.vehicle.name : t.vehicleType)}</td>
-            <td class="small">${t.driver ? esc(t.driver.name) : '<span class="warntext">Unassigned</span>'}</td><td>${pill(t)}</td><td class="r num">${money(t.price.total)}<br>${payPill(t)}</td></tr>`).join('')}
+            <td class="small">${t.driver ? esc(t.driver.name) : '<span class="warntext">Unassigned</span>'}</td><td>${pill(t)}</td><td class="r num">${money(t.price.total)}<br>${payPill(t)}</td><td>${canReturn(t) ? `<button class="btn sm nowrap" type="button" data-ret="${t.id}" title="Book the ride back for ${esc(t.passengerName)}">↩ Return</button>` : ''}</td></tr>`).join('')}
           </tbody></table></div>${more > 0 ? `<div class="row" style="justify-content:center;margin-top:12px"><button class="btn" type="button" id="t-more">Show ${Math.min(more, 50)} more</button></div>` : ''}` : `<div class="panel muted">${all && w !== 'all' ? `No ${w} trips. <button type="button" class="linkbtn" data-when="all">See all trips</button>` : 'No trips match.'}</div>`;
         $$('tr[data-id]', v).forEach((r) => { r.onclick = () => tripModal(r.dataset.id, () => { last = ''; refresh(); }); });
+        $$('[data-ret]', v).forEach((b) => { b.onclick = (e) => {
+          e.stopPropagation();
+          returnModal(trips.find((x) => x.id === b.dataset.ret), (r) => { closeModal(); toast(`Return trip ${r.ref} booked. We sent ${r.passengerName || 'the passenger'} a confirmation.`); last = ''; refresh(); tripModal(r.id, () => { last = ''; refresh(); }); });
+        }; });
         const mb = $('#t-more', v); if (mb) mb.onclick = () => { shown += 50; refresh(); };
         $$('#t-list [data-when]', v).forEach((b) => { b.onclick = () => setWhen(b.dataset.when); });
       }
