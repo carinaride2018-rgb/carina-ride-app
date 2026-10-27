@@ -71,10 +71,10 @@
     confirm_email: { label: 'Booking confirmed (email)', text: "Hi {hi_name},\n\nYour ride is confirmed.\n\nTrip confirmation: {ref}\nName: {passenger_name}\nCellphone: {cellphone}\nPickup Date and Time: {pickup_time}\nPickup Address: {pickup}\nDestination: {destination}\n{flight_info_line}Vehicle: {vehicle_choice}\nPassengers: {passenger_count}\nBags: {bag_count}\nTotal: {total}\n{landing_block}\nIf you need to change or cancel, {contact}.\n\nSincerely,\n{signer}" },
     reminder_sms: { label: '24-hour reminder (text)', text: "{company}: reminder, your ride {ref} is {pickup_time} from {pickup}.{flight_short_line} Reply or call {phone} to change it." },
     reminder_email: { label: '24-hour reminder (email)', text: "{company}: a reminder that your ride {ref} is {pickup_time}. Pickup: {pickup}.{dropoff_line} {vehicle_type}, {passengers}.{chauffeur_line}{flight_track_line} Need to change something? Call {phone}." },
-    accepted: { label: 'Chauffeur confirmed', text: '{company}: your chauffeur for {ref} is {driver}{vehicle_line}.' },
-    en_route: { label: 'On the way', text: '{company}: {driver} is on the way to {pickup}.{car_line}{track_line}' },
-    approach: { label: 'About 10 minutes away', text: '{company}: {driver_first} is about 10 minutes away from {pickup}.{track_line}' },
-    arrived: { label: 'Chauffeur arrived', text: '{company}: your chauffeur has arrived at {pickup}.{car_line}' },
+    accepted: { label: 'Chauffeur confirmed', text: '{company}:\n\nYour chauffeur for RES: {ref}\n\n{chauffeur_block}' },
+    en_route: { label: 'On the way', text: '{company}:\n\nYour chauffeur is on the way for RES: {ref}\n\n{chauffeur_block}{track_block}' },
+    approach: { label: 'About 10 minutes away', text: '{company}:\n\nYour chauffeur is about 10 minutes away for RES: {ref}\n\n{chauffeur_block}{track_block}' },
+    arrived: { label: 'Chauffeur arrived', text: '{company}:\n\nYour chauffeur has arrived for RES: {ref}\n\n{chauffeur_block}\nPickup: {pickup}' },
     receipt: { label: 'Receipt (email)', text: '{company}: thanks for riding with us. Receipt for {ref}: {total}.' },
     review_sms: { label: 'Review request (text)', text: '{company}: thank you for riding with us{driver_and}. How was your trip? Rate it in one tap: {review_link}' },
     review_email: { label: 'Review request (email)', text: '{company}: thank you for riding with us{driver_and}. How was your trip? Rate it in one tap: {review_link} Your feedback goes straight to our team.' },
@@ -85,7 +85,7 @@
     card_refund: { label: 'Refund to card', text: '{company}: we refunded {amount} to your card ending {last4} for {ref}.' },
     card_failed: { label: "Card couldn't be charged", text: "{company}: we couldn't charge {amount} to your card ending {last4} for ride {ref}. Please add a card here: {card_link}{call_line}" },
   };
-  const MSG_WORDS = ['company', 'ref', 'passenger', 'pickup_time', 'pickup', 'dropoff', 'vehicle_type', 'passengers', 'ride', 'driver', 'driver_first', 'driver_and', 'vehicle', 'plate', 'vehicle_line', 'car_line', 'total', 'phone', 'flight', 'track_link', 'review_link', 'call_line', 'wrong_line', 'dropoff_line', 'flight_line', 'flight_short_line', 'flight_track_line', 'chauffeur_line', 'track_line', 'landing_line', 'landing_short_line', 'waited', 'fee', 'fee_line', 'amount', 'last4', 'extras', 'card_link', 'hi_name', 'dropoff_to', 'signer', 'contact', 'passenger_name', 'cellphone', 'destination', 'flight_info_line', 'vehicle_choice', 'passenger_count', 'bag_count', 'landing_block'];
+  const MSG_WORDS = ['company', 'ref', 'passenger', 'pickup_time', 'pickup', 'dropoff', 'vehicle_type', 'passengers', 'ride', 'driver', 'driver_first', 'driver_and', 'vehicle', 'plate', 'vehicle_line', 'car_line', 'total', 'phone', 'flight', 'track_link', 'review_link', 'call_line', 'wrong_line', 'dropoff_line', 'flight_line', 'flight_short_line', 'flight_track_line', 'chauffeur_line', 'track_line', 'landing_line', 'landing_short_line', 'waited', 'fee', 'fee_line', 'amount', 'last4', 'extras', 'card_link', 'hi_name', 'dropoff_to', 'signer', 'contact', 'passenger_name', 'cellphone', 'destination', 'flight_info_line', 'vehicle_choice', 'passenger_count', 'bag_count', 'landing_block', 'chauffeur_block', 'track_block'];
   const INCIDENT_KINDS = { accident: 'Accident', damage: 'Vehicle damage', injury: 'Injury', complaint: 'Complaint', lost_item: 'Lost item', other: 'Other' };
   const DEFAULT_CLIENT_MSGS = { confirmText: true, confirmEmail: true, officeNew: true, remind24: true, approach: true, review: true, reviewDelayMin: 0 };
   // Corporate accounts: payment terms in days (0 = due on receipt).
@@ -927,6 +927,9 @@
         flight_track_line: t.flight ? ` We're tracking flight ${t.flight} and will adjust pickup if it's late.` : '',
         chauffeur_line: d && t.status !== 'assigned' && t.status !== 'confirmed' ? ` Your chauffeur is ${d.name.split(' ')[0]}${v ? `, ${[v.color, v.name].filter(Boolean).join(' ')}${v.plate ? `, plate ${v.plate}` : ''}` : ''}.` : '',
         track_line: t.trackToken ? ` Follow the car live: ${trackUrl(t)}` : '',
+        track_block: t.trackToken ? `\n\nFollow the car live: ${trackUrl(t)}` : '',
+        // Name, car and plate on their own lines, for the chauffeur messages.
+        chauffeur_block: [`Name: ${d && d.name ? d.name.split(' ')[0] : 'Your chauffeur'}`, `Vehicle: ${v ? [v.color, v.name].filter(Boolean).join(' ') : t.vehicleType}`, v && v.plate ? `License Plate: ${v.plate}` : ''].filter(Boolean).join('\n'),
         amount: `$${money(t.price.total)}`, last4: t.card ? t.card.last4 : '', extras: extrasText(t),
         waited: ns.waitedMin ? ` ${ns.waitedMin} min` : '', fee: ns.fee ? `$${money(ns.fee)}` : '', fee_line: ns.fee ? ` A no-show fee of $${money(ns.fee)} applies.` : '',
         ...(extra || {}),
@@ -982,17 +985,17 @@
       }
       if (kind === 'assigned' && driver && trip.driverId) say(driver.phone || driver.email, 'sms', `New trip ${trip.ref} ${when}: pickup ${trip.pickup}. Open the driver app to accept${extra && extra.minutes ? ` within ${extra.minutes} min` : ''}.`);
       if (kind === 'accepted' && driver) {
-        say(to, channel, msgText(trip, 'accepted'));
+        say(to, channel, msgText(trip, 'accepted'), 'chauffeur');
         // Booked with an email too: the chauffeur and car go there as well.
-        if (channel === 'sms' && trip.passengerEmail && cmsg(c).confirmEmail) say(trip.passengerEmail, 'email', msgText(trip, 'accepted'));
+        if (channel === 'sms' && trip.passengerEmail && cmsg(c).confirmEmail) say(trip.passengerEmail, 'email', msgText(trip, 'accepted'), 'chauffeur');
       }
       if (kind === 'en_route' && driver) {
-        say(to, channel, msgText(trip, 'en_route'));
+        say(to, channel, msgText(trip, 'en_route'), 'en_route');
         // The live map link goes by email too, so it arrives even when texts don't.
-        if (channel === 'sms' && trip.passengerEmail && cmsg(c).confirmEmail) say(trip.passengerEmail, 'email', msgText(trip, 'en_route'));
+        if (channel === 'sms' && trip.passengerEmail && cmsg(c).confirmEmail) say(trip.passengerEmail, 'email', msgText(trip, 'en_route'), 'en_route');
       }
-      if (kind === 'approach') say(to, channel, msgText(trip, 'approach'));
-      if (kind === 'arrived') say(to, channel, msgText(trip, 'arrived'));
+      if (kind === 'approach') say(to, channel, msgText(trip, 'approach'), 'approach');
+      if (kind === 'arrived') say(to, channel, msgText(trip, 'arrived'), 'arrived');
       if (kind === 'completed') {
         say(trip.passengerEmail || to, 'email', msgText(trip, 'receipt'));
         if (!trip.farmIn && cmsg(c).review && !trip.rating && !trip.reviewSentAt) {
