@@ -4102,7 +4102,8 @@
               <label class="field"><span>Hire date</span><input id="dm-hire" name="hireDate" type="date" value="${esc(d.hireDate || '')}"></label></div>
             <label class="field"><span>Notes</span><textarea id="dm-notes" name="notes">${esc(d.notes || '')}</textarea></label>
             <div id="dm-err"></div>
-            <div><button class="btn primary" type="submit">${id ? 'Save driver' : 'Add driver'}</button></div>
+            <div class="row"><button class="btn primary" type="submit">${id ? 'Save driver' : 'Add driver'}</button>${id ? `<button class="btn" type="button" id="dm-login">${d.active === false ? 'Reactivate and email login' : 'Email login link'}</button>` : ''}</div>
+            ${id ? `<p class="small muted" style="margin:0">${d.active === false ? 'This login is turned off. The button turns it back on and emails a link to choose a new password.' : 'Emails a link to choose a new password, for a driver who forgot it or is setting up a new phone.'}</p>` : ''}
           </form>
           ${id ? `
             ${s.reviews.length ? `<div class="stack"><h3>Recent reviews</h3>${s.reviews.map((r) => `<div class="qline"><span><span class="stars">${stars(r.stars)}</span> ${esc(r.comment)}</span><span class="mono small faint">${esc(r.ref)}</span></div>`).join('')}</div>` : ''}
@@ -4111,6 +4112,18 @@
       const reopen = () => { m._onClose = null; closeModal(); driverModal(id, vehicles, done); };
       const drawPhoto = (photo) => { const h = $('#dm-photo', m); if (!h) return; h.innerHTML = photoField(d.name, photo, 'dm-photofile'); wirePhoto(h, 'dm-photofile', async (p) => { const r = await api('dispatch.setDriverPhoto', { id, photo: p }); drawPhoto(r.photo); }); };
       if (id) drawPhoto(d.photo);
+      const lb = $('#dm-login', m); if (lb) lb.onclick = () => busy(lb, async () => {
+        try {
+          const r = await api('dispatch.sendDriverLogin', { id });
+          if (r.link) {
+            const mm = openModal({ title: 'Login link', body: `<div class="stack"><div class="note warn">Email isn't switched on yet, so nothing was emailed${r.reactivated ? '. The login is turned on again' : ''}. Send this link to ${esc(d.name)} yourself. It works for 7 days.</div><div class="row"><input class="input grow mono small" readonly id="dl-link" value="${esc(r.link)}"><button class="btn sm" type="button" id="dl-copy">Copy</button></div></div>`, footer: '<button class="btn" type="button" data-close>Done</button>' });
+            $('[data-close]', mm).onclick = () => { mm._onClose = null; closeModal(); driverModal(id, vehicles, done); };
+            $('#dl-copy', mm).onclick = async () => { const inp = $('#dl-link', mm); try { await navigator.clipboard.writeText(inp.value); toast('Link copied.'); } catch (e) { inp.select(); toast('Press Ctrl+C or ⌘C to copy.'); } };
+            return;
+          }
+          toast(`${r.reactivated ? 'Login turned back on. ' : ''}Login email sent to ${r.sent}.`); reopen();
+        } catch (err) { showErr($('#dm-err', m), err); }
+      });
       $('#dm', m).onsubmit = async (e) => {
         e.preventDefault();
         const f = formData(e.target);

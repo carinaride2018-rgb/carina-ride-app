@@ -2004,7 +2004,7 @@
       assign: ['dispatch.assign', 'dispatch.autoAssign', 'network.offer', 'network.respond', 'network.cancelOffer', 'network.handBack'],
       payments: ['dispatch.chargeCard', 'dispatch.markPaid', 'network.settle'],
       customers: ['dispatch.saveCustomer', 'dispatch.sendCustomerLogin', 'dispatch.saveAccount', 'dispatch.accountBooker', 'dispatch.bizRequests', 'dispatch.reviewBiz', 'dispatch.createInvoice', 'dispatch.invoiceAction', 'dispatch.invoices', 'dispatch.invoice'],
-      drivers: ['dispatch.saveDriver', 'dispatch.setDriverPhoto', 'dispatch.saveVehicle', 'dispatch.setVehiclePhoto', 'dispatch.addMaintenance', 'dispatch.deleteMaintenance'],
+      drivers: ['dispatch.saveDriver', 'dispatch.sendDriverLogin', 'dispatch.setDriverPhoto', 'dispatch.saveVehicle', 'dispatch.setVehiclePhoto', 'dispatch.addMaintenance', 'dispatch.deleteMaintenance'],
       pay: ['dispatch.payroll', 'dispatch.payrollMonths', 'dispatch.markPayout'],
       reports: ['dispatch.reports'],
     })) for (const n of names) PERM_OF[n] = perm;
@@ -5092,6 +5092,18 @@
       mailUser(u, c.id, 'login', `Hi ${u.name.split(' ')[0]}, here are your ${c.name} login details. Your sign-in email is ${u.email}. ${u.passHash ? 'Choose a new password' : 'Set your password'} with this link (it works for ${WELCOME_DAYS} days): ${link} Then sign in any time at ${site} to book rides, see your trips and keep your card on file.${c.phone ? ` Questions? Call ${c.phone}.` : ''}`);
       return link;
     }
+    // Driver login email from the office: turns the login back on if it was off
+    // and sends a link to choose a new password for the driver app.
+    def('dispatch.sendDriverLogin', STAFF, true, (ctx, a) => {
+      const c = ctx.company, u = ownDriver(ctx, a.id);
+      if (!emailOk(u.email)) fail('This driver has no email address. Add one first.');
+      const reactivated = u.active === false;
+      if (reactivated) { u.active = true; u.available = true; }
+      const link = loginLink(u, 'welcome');
+      const site = (opts.publicUrl || 'https://limorelay.com/').replace(/#.*$/, '');
+      mailUser(u, c.id, 'login', `Hi ${u.name.split(' ')[0]}, ${reactivated ? `your ${c.name} driver login is active again.` : `here are your ${c.name} driver login details.`} Your sign-in email is ${u.email}. Choose a ${u.passHash ? 'new ' : ''}password with this link (it works for ${WELCOME_DAYS} days): ${link} Then sign in at ${site} to see and accept your trips in the driver app.${c.phone ? ` Questions? Call ${c.phone}.` : ''}`);
+      return { sent: u.email, reactivated, emailOn: !!live.email, link: live.email ? '' : link };
+    });
     def('dispatch.sendCustomerLogin', STAFF, true, (ctx, a) => {
       const c = ctx.company;
       const pick = a.all ? db.users.filter((u) => u.companyId === c.id && u.role === 'customer' && u.active !== false && !u.passHash)
