@@ -1971,7 +1971,7 @@
       payments: ['dispatch.chargeCard', 'dispatch.markPaid', 'network.settle'],
       customers: ['dispatch.saveCustomer', 'dispatch.sendCustomerLogin', 'dispatch.saveAccount', 'dispatch.accountBooker', 'dispatch.bizRequests', 'dispatch.reviewBiz', 'dispatch.createInvoice', 'dispatch.invoiceAction', 'dispatch.invoices', 'dispatch.invoice'],
       drivers: ['dispatch.saveDriver', 'dispatch.setDriverPhoto', 'dispatch.saveVehicle', 'dispatch.setVehiclePhoto', 'dispatch.addMaintenance', 'dispatch.deleteMaintenance'],
-      pay: ['dispatch.payroll', 'dispatch.markPayout'],
+      pay: ['dispatch.payroll', 'dispatch.payrollMonths', 'dispatch.markPayout'],
       reports: ['dispatch.reports'],
     })) for (const n of names) PERM_OF[n] = perm;
     function staffPerms(u) {
@@ -4667,6 +4667,20 @@
         const paid = db.payouts.find((p) => p.driverId === u.id && p.from === a.from && p.to === a.to);
         return { driverId: u.id, name: u.name, payType: u.payType || 'percent', payRate: u.payRate == null ? 35 : u.payRate, ...driverPay(u, trips), paidAt: paid ? paid.paidAt : null, paidAmount: paid ? paid.amount : null };
       });
+    });
+    // One driver's pay month by month for a year (for 1099s and yearly totals).
+    def('dispatch.payrollMonths', STAFF, false, (ctx, a) => {
+      const u = ownDriver(ctx, a.driverId);
+      const year = Math.round(num(a.year, NaN));
+      if (!(year >= 2000 && year <= 2100)) fail('Choose a year.');
+      const tz = ctx.company.timezone;
+      const mine = db.trips.filter((t) => t.driverId === u.id && t.status === 'completed' && localParts(t.pickupAt, tz).date.slice(0, 4) === String(year));
+      const months = [];
+      for (let m = 1; m <= 12; m++) {
+        const key = `${year}-${String(m).padStart(2, '0')}`;
+        months.push({ month: key, ...driverPay(u, mine.filter((t) => localParts(t.pickupAt, tz).date.slice(0, 7) === key)) });
+      }
+      return { driverId: u.id, name: u.name, payType: u.payType || 'percent', payRate: u.payRate == null ? 35 : u.payRate, year, months, total: driverPay(u, mine) };
     });
     def('dispatch.markPayout', STAFF, true, (ctx, a) => {
       const u = ownDriver(ctx, a.driverId);

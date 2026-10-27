@@ -4083,6 +4083,9 @@
       const iso = (d) => toLocalInput(d).slice(0, 10);
       if (kind === 'last') { const a = new Date(monday); a.setDate(a.getDate() - 7); const b = new Date(monday); b.setDate(b.getDate() - 1); return { from: iso(a), to: iso(b), kind }; }
       if (kind === 'month') { const a = new Date(n.getFullYear(), n.getMonth(), 1, 12); return { from: iso(a), to: iso(n), kind }; }
+      if (kind === 'lastmonth') { const a = new Date(n.getFullYear(), n.getMonth() - 1, 1, 12), b = new Date(n.getFullYear(), n.getMonth(), 0, 12); return { from: iso(a), to: iso(b), kind }; }
+      if (kind === 'year') return { from: `${n.getFullYear()}-01-01`, to: iso(n), kind };
+      if (kind === 'lastyear') return { from: `${n.getFullYear() - 1}-01-01`, to: `${n.getFullYear() - 1}-12-31`, kind };
       const b = new Date(monday); b.setDate(b.getDate() + 6);
       return { from: iso(monday), to: iso(b), kind: 'week' };
     }
@@ -4092,10 +4095,12 @@
       try { rows = await api('dispatch.payroll', payPeriod); } catch (e) { return showErr(host, e); }
       const tot = rows.reduce((a, r) => ({ trips: a.trips + r.trips, hours: a.hours + Number(r.hours || 0), fares: a.fares + r.fares, base: a.base + r.base, tips: a.tips + r.tips, reimbursed: a.reimbursed + r.reimbursed, total: a.total + r.total }), { trips: 0, hours: 0, fares: 0, base: 0, tips: 0, reimbursed: 0, total: 0 });
       host.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Driver pay</h1><p class="muted">Pay for completed trips in the period, worked out from each driver's pay setting. Tips and tolls go to the driver in full.</p></div></div>
-        <div class="row" style="margin-bottom:14px"><div class="seg">${[['week', 'This week'], ['last', 'Last week'], ['month', 'This month']].map(([k, l]) => `<button type="button" data-per="${k}" aria-pressed="${payPeriod.kind === k}">${l}</button>`).join('')}</div>
-          <input class="input" style="width:auto" type="date" id="pp-from" value="${payPeriod.from}"><span class="small">to</span><input class="input" style="width:auto" type="date" id="pp-to" value="${payPeriod.to}"></div>
+        <div class="row" style="margin-bottom:14px;flex-wrap:wrap"><div class="seg pp-seg">${[['week', 'This week'], ['last', 'Last week'], ['month', 'This month'], ['lastmonth', 'Last month'], ['year', 'This year'], ['lastyear', 'Last year']].map(([k, l]) => `<button type="button" data-per="${k}" aria-pressed="${payPeriod.kind === k}">${l}</button>`).join('')}</div>
+          <input class="input" style="width:auto" type="date" id="pp-from" value="${payPeriod.from}"><span class="small">to</span><input class="input" style="width:auto" type="date" id="pp-to" value="${payPeriod.to}">
+          <button class="btn sm" type="button" id="pp-csv">Download spreadsheet</button></div>
+        <p class="small muted" style="margin:-6px 0 10px">Click a driver to see their pay month by month for the year.</p>
         <div class="tablewrap"><table><thead><tr><th>Driver</th><th>Paid by</th><th class="r">Trips</th><th class="r">Hours</th><th class="r">Fares</th><th class="r">Base pay</th><th class="r">Tips</th><th class="r">Tolls back</th><th class="r">Total pay</th><th class="r">Payout</th></tr></thead><tbody>
-        ${rows.map((r) => `<tr><td><b>${esc(r.name)}</b></td><td class="small">${r.payType === 'percent' ? `${r.payRate}% of fare` : r.payType === 'hourly' ? `${money(r.payRate)}/hr` : `${money(r.payRate)}/trip`}</td>
+        ${rows.map((r) => `<tr><td><button class="linkbtn" type="button" data-months="${r.driverId}"><b>${esc(r.name)}</b></button></td><td class="small">${r.payType === 'percent' ? `${r.payRate}% of fare` : r.payType === 'hourly' ? `${money(r.payRate)}/hr` : `${money(r.payRate)}/trip`}</td>
           <td class="r num">${r.trips}</td><td class="r num">${Number(r.hours || 0).toFixed(1)}</td><td class="r num">${money(r.fares)}</td><td class="r num">${money(r.base)}</td><td class="r num">${money(r.tips)}</td><td class="r num">${money(r.reimbursed)}</td><td class="r num"><b>${money(r.total)}</b></td>
           <td class="r">${r.paidAt ? `<span class="pill paid">Paid ${esc(fmtDate(r.paidAt))}</span> <button class="linkbtn small" type="button" data-unpay="${r.driverId}">Undo</button>` : r.total > 0 ? `<button class="btn sm" type="button" data-pay="${r.driverId}" data-amt="${r.total}">Mark paid</button>` : ''}</td></tr>`).join('')}
         <tr><td><b>Total</b></td><td></td><td class="r num"><b>${tot.trips}</b></td><td class="r num"><b>${tot.hours.toFixed(1)}</b></td><td class="r num"><b>${money(tot.fares)}</b></td><td class="r num"><b>${money(tot.base)}</b></td><td class="r num"><b>${money(tot.tips)}</b></td><td class="r num"><b>${money(tot.reimbursed)}</b></td><td class="r num"><b>${money(tot.total)}</b></td><td></td></tr>
@@ -4103,6 +4108,27 @@
       $$('[data-per]', host).forEach((b) => { b.onclick = () => { payPeriod = periodFor(b.dataset.per); redraw(); }; });
       const dates = () => { const f = $('#pp-from', host).value, t = $('#pp-to', host).value; if (f && t) { payPeriod = { from: f, to: t, kind: 'custom' }; redraw(); } };
       $('#pp-from', host).onchange = dates; $('#pp-to', host).onchange = dates;
+      const payType = (r) => (r.payType === 'percent' ? `${r.payRate}% of fare` : r.payType === 'hourly' ? `${money(r.payRate)}/hr` : `${money(r.payRate)}/trip`);
+      const csvRow = (label, k, v, r) => ({ [label]: k, ...(r ? { 'Paid by': payType(r) } : {}), Trips: v.trips, Hours: Number(v.hours || 0).toFixed(1), Fares: v.fares.toFixed(2), 'Base pay': v.base.toFixed(2), Tips: v.tips.toFixed(2), 'Tolls back': v.reimbursed.toFixed(2), 'Total pay': v.total.toFixed(2) });
+      $('#pp-csv', host).onclick = () => saveFile(`${session.company.slug}-driver-pay-${payPeriod.from}-to-${payPeriod.to}.csv`,
+        rowsCsv([...rows.map((r) => csvRow('Driver', r.name, r, r)), { ...csvRow('Driver', 'Total', tot), 'Paid by': '' }]), 'text/csv');
+      $$('[data-months]', host).forEach((b) => { b.onclick = () => payMonths(b.dataset.months, Number(payPeriod.to.slice(0, 4))); });
+      async function payMonths(driverId, year) {
+        let d;
+        try { d = await api('dispatch.payrollMonths', { driverId, year }); } catch (e) { return toast(e.message, true); }
+        const name = (k) => new Date(k + '-15T12:00:00').toLocaleDateString('en-US', { month: 'long' });
+        const line = (label, v, strong) => `<tr><td>${strong ? `<b>${label}</b>` : label}</td><td class="r num">${v.trips}</td><td class="r num">${Number(v.hours || 0).toFixed(1)}</td><td class="r num">${money(v.fares)}</td><td class="r num">${money(v.base)}</td><td class="r num">${money(v.tips)}</td><td class="r num">${money(v.reimbursed)}</td><td class="r num">${strong ? `<b>${money(v.total)}</b>` : money(v.total)}</td></tr>`;
+        const m = openModal({ title: `${d.name}: pay in ${d.year}`, wide: true,
+          body: `<div class="stack"><div class="spread"><span class="small muted">Paid by ${esc(payType(d))}. Completed trips by pickup date.</span>
+            <span class="row" style="gap:6px"><button class="btn sm" type="button" data-yr="${d.year - 1}">← ${d.year - 1}</button>${d.year < new Date().getFullYear() ? `<button class="btn sm" type="button" data-yr="${d.year + 1}">${d.year + 1} →</button>` : ''}</span></div>
+            <div class="tablewrap"><table><thead><tr><th>Month</th><th class="r">Trips</th><th class="r">Hours</th><th class="r">Fares</th><th class="r">Base pay</th><th class="r">Tips</th><th class="r">Tolls back</th><th class="r">Total pay</th></tr></thead><tbody>
+            ${d.months.map((x) => line(name(x.month), x)).join('')}${line(`Year ${d.year}`, d.total, true)}</tbody></table></div></div>`,
+          footer: '<button class="btn" type="button" id="pm-csv">Download spreadsheet</button><button class="btn" type="button" data-close>Close</button>' });
+        $('[data-close]', m).onclick = closeModal;
+        $$('[data-yr]', m).forEach((b) => { b.onclick = () => payMonths(driverId, Number(b.dataset.yr)); });
+        $('#pm-csv', m).onclick = () => saveFile(`${session.company.slug}-${d.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-pay-${d.year}.csv`,
+          rowsCsv([...d.months.map((x) => csvRow('Month', name(x.month), x)), csvRow('Month', `Year ${d.year}`, d.total)]), 'text/csv');
+      }
       $$('[data-pay]', host).forEach((b) => { b.onclick = () => busy(b, async () => { try { await api('dispatch.markPayout', { driverId: b.dataset.pay, from: payPeriod.from, to: payPeriod.to, amount: b.dataset.amt }); toast('Marked paid.'); redraw(); } catch (e) { toast(e.message, true); } }); });
       $$('[data-unpay]', host).forEach((b) => { b.onclick = async () => { try { await api('dispatch.markPayout', { driverId: b.dataset.unpay, from: payPeriod.from, to: payPeriod.to, undo: true }); redraw(); } catch (e) { toast(e.message, true); } }; });
     }
