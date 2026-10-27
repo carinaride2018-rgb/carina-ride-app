@@ -204,7 +204,7 @@
 
   // ---- UI primitives --------------------------------------------------------
   let toastTimer = null;
-  const HIST_LABELS = { wake_call: 'Wake-up call', wake_ok: 'Driver confirmed awake', wake_alert: 'Office alerted: no answer to wake-up call', late_alert: 'Office alerted: driver not on the way', confirm_resent: 'Confirmation sent again', receipt_sent: 'Receipt emailed', paid: 'Charged', refunded: 'Refunded', card_failed: 'Card declined', card_saved: 'Card saved', card_link: 'Card link sent', no_show: 'No-show', pickup_moved: 'Pickup moved', flight_cancelled: 'Flight cancelled', declined: 'Declined', edited: 'Edited', unassigned: 'Unassigned', no_answer: 'No answer in time', farm_offered: 'Offered to partner', farm_accepted: 'Partner accepted', farm_declined: 'Partner declined', farm_cancelled: 'Taken back from partner', farm_returned: 'Partner handed it back', farm_expired: 'Partner offer expired', farm_completed: 'Partner completed', auto_farm_none: 'Automatic farm-out stopped', posted: 'Posted to trip board', post_expired: 'Trip board: nobody took it', post_cancelled: 'Taken off the trip board' };
+  const HIST_LABELS = { wake_call: 'Wake-up call', wake_ok: 'Driver confirmed awake', wake_alert: 'Office alerted: no answer to wake-up call', late_alert: 'Office alerted: driver not on the way', confirm_resent: 'Confirmation sent again', receipt_sent: 'Receipt emailed', paid: 'Charged', refunded: 'Refunded', card_failed: 'Card declined', card_saved: 'Card saved', card_link: 'Card link sent', no_show: 'No-show', no_show_asked: 'Driver reported a no-show', no_show_declined: 'Dispatch: keep waiting', pickup_moved: 'Pickup moved', flight_cancelled: 'Flight cancelled', declined: 'Declined', edited: 'Edited', unassigned: 'Unassigned', no_answer: 'No answer in time', farm_offered: 'Offered to partner', farm_accepted: 'Partner accepted', farm_declined: 'Partner declined', farm_cancelled: 'Taken back from partner', farm_returned: 'Partner handed it back', farm_expired: 'Partner offer expired', farm_completed: 'Partner completed', auto_farm_none: 'Automatic farm-out stopped', posted: 'Posted to trip board', post_expired: 'Trip board: nobody took it', post_cancelled: 'Taken off the trip board' };
   function toast(text, bad, ms) {
     let el = $('.toast');
     if (!el) { el = document.createElement('div'); el.className = 'toast'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
@@ -2525,6 +2525,19 @@
   // Asks before closing a trip as a no-show; the note goes in the trip history.
   function noShowModal(t, method, done) {
     const fee = (t.price && t.price.total) || 0;
+    if (method === 'driver.noShow') {
+      const m = openModal({
+        title: `Passenger didn't show, ${t.ref}`,
+        body: `<div class="stack"><p>Dispatch gets your request and confirms the no-show. Keep waiting at the pickup until they do.</p>
+          <label class="field"><span>What happened (optional)</span><input id="ns-note" maxlength="200" placeholder="Called twice, no answer"></label><div id="ns-err"></div></div>`,
+        footer: '<button class="btn" type="button" data-close>Keep waiting</button><button class="btn danger" type="button" id="ns-go">Send to dispatch</button>',
+      });
+      $('[data-close]', m).onclick = closeModal;
+      $('#ns-go', m).onclick = (e) => busy(e.currentTarget, async () => {
+        try { await api(method, { id: t.id, note: $('#ns-note', m).value }); closeModal(); toast('Sent to dispatch. Wait for their answer.'); done(); } catch (err) { showErr($('#ns-err', m), err); }
+      });
+      return;
+    }
     const m = openModal({
       title: `Passenger no-show, ${t.ref}`,
       body: `<div class="stack"><p>${esc(t.passengerName || 'The passenger')} will get a text saying the trip is closed as a no-show${t.wait ? `. You arrived for a ${t.wait.freeMin} min free wait` : ''}.</p>
@@ -2605,7 +2618,11 @@
       const n = Date.now();
       if (n < from) { clock.textContent = `${free}:00`; note.textContent = `You're early. The ${free} min wait starts at pickup time, ${fmtTime(new Date(from).toISOString())}.`; btn.disabled = true; box.classList.remove('over'); return; }
       if (n < ends) { clock.textContent = mmss(ends - n); note.textContent = `Free waiting: ${free} min. If the passenger hasn't come by ${fmtTime(new Date(ends).toISOString())}, you can mark a no-show.`; btn.disabled = true; box.classList.remove('over'); return; }
-      clock.textContent = '+' + mmss(n - ends); note.textContent = `Free waiting is over (${free} min). Call the passenger or dispatch, or mark a no-show.`; btn.disabled = false; box.classList.add('over');
+      clock.textContent = '+' + mmss(n - ends); box.classList.add('over');
+      // The no-show goes to dispatch first; the driver leaves only once they confirm.
+      if (box.dataset.ask) { note.textContent = 'Sent to dispatch. Keep waiting until they confirm the no-show.'; btn.disabled = true; btn.textContent = 'Waiting for dispatch…'; return; }
+      note.textContent = box.dataset.no ? `Dispatch says keep waiting${box.dataset.no !== 'yes' ? ': ' + box.dataset.no : ''}. Ask again if the passenger still doesn't come.` : `Free waiting is over (${free} min). Call the passenger, or ask dispatch to confirm a no-show.`;
+      btn.disabled = false;
     };
     draw(); waitTick = setInterval(draw, 1000);
   }
@@ -2698,7 +2715,7 @@
               <button class="btn primary drv-next" type="button" data-act="advance" data-id="${live.id}">${esc(NEXT_LABEL[live.status])}</button>
               <div class="grid2 drv-btns"><a class="btn" href="${esc(mapsLink(live.status === 'on_board' && live.dropoff ? live.dropoff : live.pickup))}" target="_blank" rel="noopener">Navigate to ${live.status === 'on_board' && live.dropoff ? 'drop-off' : 'pickup'}</a>
               ${['accepted', 'en_route', 'arrived'].includes(live.status) ? `<button class="btn" type="button" data-act="sign" data-id="${live.id}">Show name sign</button>` : `<button class="btn" type="button" data-act="incident" data-id="${live.id}">Report an incident</button>`}</div>
-              ${live.status === 'arrived' && live.wait ? `<div class="waittimer" data-from="${esc(live.wait.from)}" data-ends="${esc(live.wait.endsAt)}">
+              ${live.status === 'arrived' && live.wait ? `<div class="waittimer" data-from="${esc(live.wait.from)}" data-ends="${esc(live.wait.endsAt)}" data-ask="${live.noShowAsk ? 1 : ''}" data-no="${live.noShowNo ? esc(live.noShowNo.note || 'yes') : ''}">
                 <div class="stack" style="gap:2px"><span class="label">Waiting time${live.wait.airport ? ' (airport)' : ''}</span><b class="wt-clock num">--:--</b><span class="small wt-note"></span></div>
                 <button class="btn danger" type="button" data-act="noshow" data-id="${live.id}" disabled>Passenger didn't show</button></div>` : ''}
               ${['arrived', 'on_board'].includes(live.status) ? `<form class="grid2" id="drv-extras" data-id="${live.id}">
@@ -3398,6 +3415,8 @@
               ${!noAssign ? `<div class="row"><input class="input grow" id="te-hbreason" placeholder="Reason (optional)"><button class="btn sm danger" type="button" id="te-handback">Hand it back</button></div>` : ''}
               <button class="btn sm" type="button" id="te-msgpartner" data-partner="${t.farmIn.fromCompanyId}">Message them</button>
             </div>` : ''}
+            ${t.noShowAsk && t.status === 'arrived' ? `<div class="sidebox nsask stack"><b>No-show to confirm</b><p class="small">${esc(t.noShowAsk.by)} waited ${t.noShowAsk.waitedMin} min and can't find ${esc(t.passengerName || 'the passenger')}.${t.noShowAsk.note ? ` “${esc(t.noShowAsk.note)}”` : ''}</p>
+              <div class="row"><button class="btn sm danger" type="button" id="te-nsyes">Confirm no-show</button><button class="btn sm" type="button" id="te-nsno">Keep waiting</button></div></div>` : ''}
             ${!t.farmout || t.farmout.done ? `<div class="sidebox"><div class="spread"><span class="label">Status</span>${pill(t)}</div>
               ${t.status === 'assigned' && t.offer && t.driver ? `<p class="small offertag">Waiting for ${esc(t.driver.name)} to accept · ${minsLeft(t.offer.expiresAt)} min left</p>` : ''}
               ${t.status === 'confirmed' && t.needsDriver ? `<p class="small needtag">Needs a driver: ${esc(t.needsDriver.why)}</p>` : ''}
@@ -3502,6 +3521,8 @@
       const rt = $('#te-return', m); if (rt) rt.onclick = () => returnModal(t, (r) => { m._onClose = null; closeModal(); toast(`Return trip ${r.ref} booked. We sent ${r.passengerName || 'the passenger'} a confirmation.${r.landingTrip ? ` The pickup where they land is ${r.landingTrip.ref}.` : ''}`); tripModal(r.id, done); });
       const shb = $('#te-sheet', m); if (shb) shb.onclick = () => printSheets([t], `${t.ref}, ${fmtDate(t.pickupAt)}`);
       const nsb = $('#te-noshow', m); if (nsb) nsb.onclick = () => noShowModal(t, 'dispatch.noShow', reopen);
+      const nsy = $('#te-nsyes', m); if (nsy) nsy.onclick = () => noShowModal(t, 'dispatch.noShow', reopen);
+      const nsn = $('#te-nsno', m); if (nsn) nsn.onclick = () => busy(nsn, async () => { try { await api('dispatch.noShowNo', { id: t.id }); toast(`Told the driver to keep waiting on ${t.ref}.`); reopen(); } catch (err) { toast(err.message, true); } });
       const ss = $('#te-setstatus', m); if (ss) ss.onclick = (e) => busy(e.currentTarget, async () => {
         try { await api('dispatch.setStatus', { id, status: $('#te-status', m).value }); toast('Status updated.'); reopen(); } catch (err) { toast(err.message, true); }
       });

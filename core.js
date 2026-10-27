@@ -1241,7 +1241,7 @@
       const w = waitInfo(t), pct = pcfg(findCompany(t.companyId)).noShowFeePct;
       const waitedMin = w ? Math.max(0, Math.round((now().getTime() - new Date(w.from).getTime()) / 60e3)) : 0;
       const fee = pct > 0 ? round2(t.price.total * pct / 100) : 0;
-      t.status = 'cancelled'; t.offer = null; t.needsDriver = null;
+      t.status = 'cancelled'; t.offer = null; t.needsDriver = null; delete t.noShowAsk; delete t.noShowNo;
       t.noShow = { at: now().toISOString(), by, waitedMin, fee, note: str(note, 200) };
       log(t, 'no_show', by, [waitedMin ? `Waited ${waitedMin} min` : '', fee ? `No-show fee $${money(fee)}` : '', t.noShow.note].filter(Boolean).join('. '));
       notify(t, 'no_show');
@@ -1668,6 +1668,7 @@
           const left = Math.max(0, Math.ceil((new Date(t.offer.expiresAt).getTime() - nowMs) / 60e3));
           out.push({ level: 'info', area: 'dispatch', text: `${t.ref}: waiting for ${d.name} to accept (${left} min left)`, tripId: t.id });
         }
+        if (t.noShowAsk && t.status === 'arrived') out.push({ level: 'bad', area: 'dispatch', text: `${t.ref}: ${t.noShowAsk.by} reports a no-show after ${t.noShowAsk.waitedMin} min. Open the trip to confirm or say keep waiting.`, tripId: t.id });
         if (cfg.lateStartMin && d && ['assigned', 'accepted'].includes(t.status) && nowMs >= pickMs - cfg.lateStartMin * 60e3 && nowMs < pickMs + 3600e3) {
           out.push({ level: 'bad', area: 'dispatch', text: `${t.ref}: ${d.name} hasn't set off yet. Pickup ${nowMs >= pickMs ? 'was' : 'is'} at ${at}.`, tripId: t.id });
         }
@@ -2007,7 +2008,7 @@
     };
     const PERM_OF = {};
     for (const [perm, names] of Object.entries({
-      bookings: ['dispatch.createTrip', 'dispatch.updateTrip', 'dispatch.resendConfirmation', 'dispatch.sendReceipt', 'dispatch.setStatus', 'dispatch.cancelSeries', 'dispatch.noShow', 'dispatch.importTrips', 'dispatch.applyFlight', 'dispatch.sendCardLink', 'dispatch.inboxSend', 'dispatch.saveQuote', 'dispatch.sendQuote', 'dispatch.quoteAction'],
+      bookings: ['dispatch.createTrip', 'dispatch.updateTrip', 'dispatch.resendConfirmation', 'dispatch.sendReceipt', 'dispatch.setStatus', 'dispatch.cancelSeries', 'dispatch.noShow', 'dispatch.noShowNo', 'dispatch.importTrips', 'dispatch.applyFlight', 'dispatch.sendCardLink', 'dispatch.inboxSend', 'dispatch.saveQuote', 'dispatch.sendQuote', 'dispatch.quoteAction'],
       assign: ['dispatch.assign', 'dispatch.autoAssign', 'network.offer', 'network.respond', 'network.cancelOffer', 'network.handBack'],
       payments: ['dispatch.chargeCard', 'dispatch.markPaid', 'network.settle'],
       customers: ['dispatch.saveCustomer', 'dispatch.sendCustomerLogin', 'dispatch.saveAccount', 'dispatch.accountBooker', 'dispatch.bizRequests', 'dispatch.reviewBiz', 'dispatch.createInvoice', 'dispatch.invoiceAction', 'dispatch.invoices', 'dispatch.invoice'],
@@ -2258,6 +2259,8 @@
           if (t.driverId !== u.id) continue;
           if (t.status === 'assigned' && t.offer) add(`offer:${t.id}:${t.offer.sentAt}`, `New trip ${t.ref}`, `${at(t)} from ${t.pickup}. Accept within ${Math.max(0, Math.ceil((new Date(t.offer.expiresAt).getTime() - n) / 60e3))} min.`, '#driver', t.offer.sentAt);
           else if (t.status === 'assigned' && recent(lastOf(t, 'assigned') && lastOf(t, 'assigned').at)) add(`assigned:${t.id}`, `New trip ${t.ref}`, `${at(t)} from ${t.pickup}. Open the app to accept.`, '#driver');
+          if (t.noShowNo && t.status === 'arrived' && recent(t.noShowNo.at, 2)) add(`noshowno:${t.id}:${t.noShowNo.at}`, `Keep waiting: ${t.ref}`, `Dispatch says keep waiting for ${t.passengerName || 'the passenger'}.${t.noShowNo.note ? ' ' + t.noShowNo.note : ''}`, '#driver', t.noShowNo.at);
+          if (t.noShow && recent(t.noShow.at, 2) && t.noShow.by !== u.name) add(`noshowok:${t.id}`, `No-show confirmed: ${t.ref}`, 'Dispatch closed the trip as a no-show. You can leave.', '#driver', t.noShow.at);
           const mv = lastOf(t, 'pickup_moved');
           if (mv && recent(mv.at) && busyStatus(t.status)) add(`moved:${t.id}:${t.pickupAt}`, `Pickup moved for ${t.ref}`, `New pickup time ${at(t)}. ${mv.note || ''}`.trim(), '#driver', mv.at);
           const cx = lastOf(t, 'cancelled');
@@ -2291,6 +2294,7 @@
           if (la && ['assigned', 'accepted'].includes(t.status) && recent(la.at, 2)) { const dd = findUser(t.driverId); add(`late:${t.id}:${la.min}`, `Driver not on the way: ${t.ref}`, `${dd ? dd.name : 'The driver'} hasn't tapped On the way. Pickup ${at(t)} from ${t.pickup}.`, '#dispatch', la.at); }
           if (t.status === 'confirmed' && t.needsDriver && !t.farmout && recent(t.needsDriver.at)) add(`need:${t.id}:${t.needsDriver.at}`, `${t.ref} needs a driver`, `${t.needsDriver.why}. Pickup ${at(t)}.`, '#dispatch', t.needsDriver.at);
           const cx = lastOf(t, 'cancelled');
+          if (t.noShowAsk && t.status === 'arrived') add(`noshowask:${t.id}:${t.noShowAsk.at}`, `No-show to confirm: ${t.ref}`, `${t.noShowAsk.by} waited ${t.noShowAsk.waitedMin} min for ${t.passengerName || 'the passenger'}. Confirm the no-show or say keep waiting.`, '#dispatch', t.noShowAsk.at);
           if (t.noShow && recent(t.noShow.at, 3) && t.noShow.by !== u.name) add(`noshow:${t.id}`, `No-show on ${t.ref}`, `${t.passengerName || 'Passenger'}. ${t.noShow.waitedMin ? `Driver waited ${t.noShow.waitedMin} min.` : ''}${t.noShow.fee ? ` Fee $${money(t.noShow.fee)}.` : ''}`.trim(), '#dispatch', t.noShow.at);
           const pv = onFile(t) && payView(t);
           if (pv && pv.failed) add(`cardfail:${t.id}:${pv.failed.at}`, `Card declined on ${t.ref}`, `${t.passengerName || 'Passenger'}: $${money(pv.failed.amount)} didn't go through. We texted them a link to add a card.`, '#dispatch', pv.failed.at);
@@ -2868,7 +2872,7 @@
       if (!t) fail('Trip not found.', 404);
       const next = DRIVER_FLOW[t.status];
       if (!next) fail('This trip has no next step.');
-      t.status = next; log(t, next, ctx.user.name);
+      t.status = next; log(t, next, ctx.user.name); delete t.noShowAsk;
       if (next === 'en_route') startTracking(t);
       notify(t, next);
       if (next === 'completed' && t.vehicleId) {
@@ -2882,7 +2886,25 @@
       if (t.status !== 'arrived') fail('Tap Arrived first. The free waiting time starts then.');
       const w = waitInfo(t);
       if (now() < new Date(w.endsAt)) fail(`Free waiting runs until ${fmtLocal(w.endsAt, ctx.company, true)}. Keep trying the passenger, or call dispatch.`);
-      markNoShow(t, ctx.user.name, a.note);
+      // The driver only asks; dispatch confirms the no-show (or says keep waiting).
+      if (t.noShowAsk) fail('Dispatch already has your no-show request. Wait for their answer.');
+      const waitedMin = Math.max(0, Math.round((now().getTime() - new Date(w.from).getTime()) / 60e3));
+      const stamp = now().toISOString();
+      t.noShowAsk = { at: stamp, by: ctx.user.name, waitedMin, note: str(a.note, 200) };
+      delete t.noShowNo;
+      log(t, 'no_show_asked', ctx.user.name, [`Waited ${waitedMin} min`, t.noShowAsk.note].filter(Boolean).join('. '));
+      const office = officeEmail(ctx.company);
+      if (office) db.messages.unshift({ id: id('msg'), companyId: ctx.company.id, tripId: t.id, ref: t.ref, at: stamp, recipient: office, channel: 'email', kind: 'noshow_ask',
+        body: [`${ctx.user.name} reports a no-show on ${t.ref} and is waiting for your OK.`, '', `Passenger: ${t.passengerName || '-'} (${t.passengerPhone || 'no phone'})`, `Pickup: ${t.pickup}`, `Driver waited: ${waitedMin} min`, ...(t.noShowAsk.note ? [`Driver's note: ${t.noShowAsk.note}`] : []), '', 'Open the trip to confirm the no-show or tell the driver to keep waiting.'].join('\n') });
+      return tripView(t);
+    });
+    // Dispatch turns down the driver's no-show request: the driver keeps waiting.
+    def('dispatch.noShowNo', STAFF, true, (ctx, a) => {
+      const t = ownTrip(ctx, a.id);
+      if (!t.noShowAsk) fail('There is no no-show request on this trip.');
+      t.noShowNo = { at: now().toISOString(), by: ctx.user.name, note: str(a.note, 200) };
+      delete t.noShowAsk;
+      log(t, 'no_show_declined', ctx.user.name, t.noShowNo.note || 'Keep waiting');
       return tripView(t);
     });
     def('driver.location', ['driver'], true, (ctx, a) => {

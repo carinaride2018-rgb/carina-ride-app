@@ -582,6 +582,7 @@ a.quotecard:hover { border-color: var(--brand); }
 .switch > input[type="checkbox"] { width: 40px; height: 22px; min-height: 0; padding: 0; border: 0; flex-shrink: 0; }
 .waittimer { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 14px; border: 2px solid var(--line, #e3e5ea); border-radius: 12px; }
 .waittimer .wt-clock { font-size: 34px; line-height: 1.1; letter-spacing: .02em; }
+.sidebox.nsask { border-color: var(--bad); }
 .waittimer.over { border-color: var(--bad, #c0392b); }
 .waittimer.over .wt-clock { color: var(--bad, #c0392b); }
 .waitbox { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--line, #e3e5ea); border-radius: 10px; }
