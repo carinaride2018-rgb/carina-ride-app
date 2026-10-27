@@ -5183,11 +5183,18 @@
       const company = str(a.company, 80), name = str(a.name, 80), email = str(a.email, 120).toLowerCase();
       const phone = str(a.phone, 30), city = str(a.city, 80), fleet = str(a.fleet, 20), note = str(a.note, 600);
       const pw = String(a.password || '');
-      if (!company) fail('Enter your company name.');
-      if (!name) fail('Enter your name.');
+      // Every field is required (Dawit 2026-10-27); the form checks the same first.
+      if (company.length < 2) fail('Enter your company name.');
+      if (name.split(/\s+/).filter((w) => w.length > 0).length < 2) fail('Enter your first and last name.');
       if (!emailOk(email)) fail('Enter a valid email address.');
-      if (phone.replace(/\D/g, '').length < 10) fail('Enter your phone number.');
+      const digits = phone.replace(/\D/g, '');
+      if (!(digits.length === 10 || (digits.length === 11 && digits[0] === '1'))) fail('Enter a 10-digit mobile phone number.');
       if (pw.length < 8) fail('Choose a password of at least 8 characters.');
+      if (city.length < 2) fail('Enter your city.');
+      if (!['1-3', '4-10', '11-25', '26+'].includes(fleet)) fail('Choose how many vehicles are in your fleet.');
+      if (!SIGNUP_TZ.includes(a.timezone)) fail('Choose your time zone.');
+      if (!PLANS[a.plan]) fail('Choose a membership.');
+      if (note.length < 3) fail('Tell us a little about your company.');
       if (!a.terms) fail('Please agree to the Terms to continue.');
       if (loginTaken(email)) fail('That email already has a login. Sign in, or use Forgot password.');
       const slug = slugify(a.slug || company);

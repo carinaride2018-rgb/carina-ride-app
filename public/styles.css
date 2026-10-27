@@ -916,3 +916,6 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 .pfleet figcaption { display: grid; gap: 2px; padding: 8px 10px; }
 .trip.offer.faded { opacity: .6; }
 .findbar .seg { align-self: flex-end; }
+
+.field.bad input, .field.bad select, .field.bad textarea { border-color: var(--bad); }
+.field .ferr { color: var(--bad); }

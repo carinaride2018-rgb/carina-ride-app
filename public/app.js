@@ -1199,8 +1199,8 @@
           <div class="grid2"><label class="field"><span>Email (you sign in with this)</span><input id="tr-email" name="email" type="email" autocomplete="email"></label><label class="field"><span>Choose a password</span><input id="tr-pw" name="password" type="password" autocomplete="new-password" minlength="8"><span class="hint">At least 8 characters.</span></label></div>
           <div class="grid2"><label class="field"><span>City</span><input id="tr-city" name="city"></label><label class="field"><span>Vehicles in your fleet</span><select id="tr-fleet" name="fleet"><option value="">Choose</option><option>1-3</option><option>4-10</option><option>11-25</option><option>26+</option></select></label></div>
           <label class="field"><span>Time zone</span><select id="tr-tz" name="timezone">${[['America/Los_Angeles', 'Pacific'], ['America/Denver', 'Mountain'], ['America/Phoenix', 'Arizona'], ['America/Chicago', 'Central'], ['America/New_York', 'Eastern'], ['America/Anchorage', 'Alaska'], ['Pacific/Honolulu', 'Hawaii']].map(([z, l]) => `<option value="${z}" ${z === myTz ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-          <label class="field"><span>Membership</span><select id="tr-plan" name="plan">${['founding', 'standard', 'fleet'].map((k) => `<option value="${k}">${esc(P[k].label)}, $${P[k].monthly}/month after the free trial</option>`).join('')}</select></label>
-          <label class="field"><span>Anything we should know? (optional)</span><textarea id="tr-note" name="note" placeholder="The software you use today, when you want to start"></textarea></label>
+          <label class="field"><span>Membership</span><select id="tr-plan" name="plan"><option value="">Choose</option>${['founding', 'standard', 'fleet'].map((k) => `<option value="${k}">${esc(P[k].label)}, $${P[k].monthly}/month after the free trial</option>`).join('')}</select></label>
+          <label class="field"><span>Tell us about your company</span><textarea id="tr-note" name="note" placeholder="The software you use today, when you want to start"></textarea></label>
           <label class="check"><input type="checkbox" id="tr-terms" name="terms" value="1"> <span>I agree to the ${termsLink()} and ${privacyLink()}.</span></label>
           <div id="tr-err"></div>
           <div><button class="btn brand" type="submit" id="tr-go">Sign up my company</button></div>
@@ -1227,13 +1227,44 @@
     let slugEdited = false;
     const slugOf = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
     const showSlug = () => { $('#tr-slughint b', v).textContent = slugOf($('#tr-slug', v).value) || 'your-company'; };
-    $('#tr-company', v).oninput = () => { if (!slugEdited) { $('#tr-slug', v).value = slugOf($('#tr-company', v).value); showSlug(); } };
+    $('#tr-company', v).oninput = () => { if (!slugEdited) { $('#tr-slug', v).value = slugOf($('#tr-company', v).value); showSlug(); if ($('#tr-slug', v).closest('.field.bad')) checkSignup($('#tr-form', v), $('#tr-slug', v)); } };
     $('#tr-slug', v).oninput = () => { slugEdited = true; showSlug(); };
     // When the owner approves sign-ups by hand, say so before they sign up.
     api('public.signupInfo').then((r) => { const l = $('#tr-lead', v); if (l && !r.instant) l.innerHTML = `It takes two minutes. We welcome every new member personally and email you as soon as you’re approved, within 3 to 7 business days. Your free trial starts then, with no card needed. Questions? Email ${mailLink()}.`; }).catch(() => {});
+    // Every field must be filled in correctly; the problems show under each field.
+    const SIGNUP_CHECKS = [
+      ['company', (x) => x.trim().length >= 2, 'Enter your company name.'],
+      ['slug', (x) => slugOf(x).length >= 3, 'At least 3 letters or numbers.'],
+      ['name', (x) => x.trim().split(/\s+/).length >= 2, 'Enter your first and last name.'],
+      ['phone', (x) => { const d = x.replace(/\D/g, ''); return d.length === 10 || (d.length === 11 && d[0] === '1'); }, 'Enter a 10-digit mobile number.'],
+      ['email', (x) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(x.trim()), 'Enter a valid email address.'],
+      ['password', (x) => x.length >= 8, 'That password is too short.'],
+      ['city', (x) => x.trim().length >= 2, 'Enter your city.'],
+      ['fleet', (x) => !!x, 'Choose your fleet size.'],
+      ['timezone', (x) => !!x, 'Choose your time zone.'],
+      ['plan', (x) => !!x, 'Choose a membership.'],
+      ['note', (x) => x.trim().length >= 3, 'Tell us a little about your company.'],
+    ];
+    const checkSignup = (form, only) => {
+      let bad = 0;
+      for (const [k, ok, msg] of SIGNUP_CHECKS) {
+        const el = form.elements[k]; if (!el || (only && el !== only)) continue;
+        const fld = el.closest('.field'), good = ok(el.value || '');
+        fld.classList.toggle('bad', !good);
+        let m = $('.ferr', fld);
+        if (!good) { if (!m) { m = document.createElement('span'); m.className = 'ferr small'; fld.appendChild(m); } m.textContent = msg; bad++; } else if (m) m.remove();
+      }
+      return bad;
+    };
+    // A field's red note clears as soon as it's typed right (not on blur, which would shift the Sign up button under the click).
+    $('#tr-form', v).addEventListener('input', (e) => { if (e.target.closest('.field.bad')) checkSignup(e.currentTarget, e.target); });
     $('#tr-form', v).onsubmit = async (e) => {
       e.preventDefault();
       const f = formData(e.target);
+      const bad = checkSignup(e.target);
+      const terms = $('#tr-terms', v).checked;
+      if (bad || !terms) { showErr($('#tr-err', v), new Error(bad ? `Please fix the ${bad === 1 ? 'field' : `${bad} fields`} marked in red.` : 'Please agree to the Terms to continue.')); const first = $('.field.bad input, .field.bad select, .field.bad textarea', e.target); if (first) first.focus(); return; }
+      $('#tr-err', v).innerHTML = '';
       await busy($('#tr-go', v), async () => {
         try {
           const res = await api('public.companySignup', { ...f, terms: $('#tr-terms', v).checked });
