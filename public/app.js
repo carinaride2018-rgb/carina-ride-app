@@ -1514,6 +1514,8 @@
     const pr = init.prefs || {};
     const state = { bags: 0, signName: '', repOn: false, repUntil: '', retOn: false, landOn: false, landDest: '', landDrop: '', retDate: init.date, retTime: '', retFlight: '', prefTemp: pr.temp || '', prefMusic: pr.music || '', prefQuiet: !!pr.quiet, ...init };
     let stopList = Array.isArray(init.stopList) ? init.stopList.slice() : [];
+    // "Add another ride": more transfers booked together, each its own trip.
+    let moreList = Array.isArray(init.moreList) ? init.moreList.map((x) => ({ ...x })) : [];
     const defWait = ad.stopWait == null ? 10 : ad.stopWait;
     let stopWaits = stopList.map((x, i) => (Array.isArray(init.stopWaits) && init.stopWaits[i] != null ? init.stopWaits[i] : defWait));
     const pol = opts.info.policy || null;
@@ -1557,6 +1559,8 @@
               <span class="hint" id="bk-flight-hint">For pickups at the airport, set the pickup time to when the flight lands. We track the flight and move the pickup if it's late.</span></label>
             <div></div>
           </div>
+          <div class="stack morerides" data-hide="hourly" style="gap:10px"><div id="bk-more" class="stack" style="gap:10px"></div>
+            <div><button class="linkbtn" type="button" id="bk-addride">+ Add another ride</button> <span class="small faint">Same passenger and car, for example hotel to pier, then pier to the airport.</span></div></div>
           ${twoStep ? `<div id="bk-err1"></div><button class="btn brand big" type="button" id="bk-next">Get my quote</button>` : ''}
           </div>
           ${twoStep ? `<div class="bkstep-sum" id="bk-sum" hidden><div class="stack" style="gap:2px"><span class="label">Your ride</span><span id="bk-sumtext"></span></div><button class="btn sm" type="button" id="bk-back">Change</button></div>
@@ -1705,6 +1709,22 @@
       $$('[data-stop]', box).forEach((inp) => addressAutocomplete(inp, acSlug));
       $$('[data-rmstop]', box).forEach((b) => { b.onclick = () => { stopList.splice(+b.dataset.rmstop, 1); stopWaits.splice(+b.dataset.rmstop, 1); drawStops(); sync(); requote(); }; });
     }
+    function drawMore() {
+      const box = $('#bk-more', form);
+      box.innerHTML = moreList.map((m, i) => `<div class="moreride stack" style="gap:8px"><div class="spread"><b>Ride ${i + 2}</b><button class="linkbtn small danger" type="button" data-rmride="${i}">Remove</button></div>
+        <div class="grid3"><label class="field"><span>Pickup date</span><input type="date" data-mr="${i}" data-k="date" value="${esc(m.date)}"></label>
+          <label class="field"><span>Pickup time</span><input type="time" step="300" data-mr="${i}" data-k="time" value="${esc(m.time)}"></label>
+          <label class="field"><span>Flight <span class="faint">(airport pickup)</span></span><input class="mono" data-mr="${i}" data-k="flight" placeholder="AA 1342" autocomplete="off" value="${esc(m.flight)}"></label></div>
+        <label class="field"><span>Pickup address</span><input data-mr="${i}" data-k="pickup" autocomplete="off" placeholder="Hotel, pier, airport or street address" value="${esc(m.pickup)}"></label>
+        <label class="field"><span>Drop-off address</span><input data-mr="${i}" data-k="dropoff" autocomplete="off" placeholder="Where to?" value="${esc(m.dropoff)}"></label></div>`).join('');
+      $$('[data-mr]', box).forEach((inp) => {
+        const upd = () => { moreList[+inp.dataset.mr][inp.dataset.k] = inp.value; requote(); };
+        inp.addEventListener('input', upd); inp.addEventListener('change', upd);
+        if (inp.dataset.k === 'pickup' || inp.dataset.k === 'dropoff') addressAutocomplete(inp, acSlug);
+      });
+      $$('[data-rmride]', box).forEach((b) => { b.onclick = () => { moreList.splice(+b.dataset.rmride, 1); drawMore(); requote(); }; });
+      $('#bk-addride', form).hidden = moreList.length >= 9;
+    }
     function drawPolicy() {
       const el = $('#bk-policy', host);
       if (!el || !pol) return;
@@ -1772,6 +1792,9 @@
       if (landDest || landOn) out.landing = { on: !!landOn && !$('#bk-land', host).hidden, dest: state.flight === landFlight ? landDest : '', dropoff: landDrop };
       if (repOn) out.repeat = { on: true, days: $$('[data-rday]:checked', host).map((x) => x.dataset.rday), until: repUntil };
       if (retOn && state.service !== 'hourly') { out.returnAt = rwhen && !isNaN(rwhen) ? rwhen.toISOString() : 'missing'; out.returnFlight = retFlight; }
+      const mr = state.service === 'hourly' ? [] : moreList.filter((m) => m.pickup.trim() || m.dropoff.trim());
+      if (mr.length) out.moreRides = mr.map((m) => { const w = m.date && m.time ? new Date(`${m.date}T${m.time}`) : null; return { pickupAt: w && !isNaN(w) ? w.toISOString() : '', pickup: m.pickup.trim(), dropoff: m.dropoff.trim(), flight: m.flight.trim() }; });
+      out.moreList = moreList;
       delete out.cardNo; delete out.cardExp; delete out.payDriver;
       if (opts.guest) { const ge = $('#bk-gemail', host); out.guestEmail = ge ? ge.value.trim() : ''; }
       if (!agent) delete out.payBy;
@@ -1809,12 +1832,18 @@
         try {
           const b = booking();
           const withRet = b.returnAt && b.returnAt !== 'missing';
-          const [q, rq] = await Promise.all([opts.quoteFn(b), withRet ? opts.quoteFn(returnOf(b)).catch(() => null) : null]);
+          const mr = (b.moreRides || []).map((m, i) => ({ ...m, n: i + 2 }));
+          const moreQ = (m) => (m.pickup && m.dropoff && m.pickupAt ? opts.quoteFn({ ...b, service: 'transfer', pickup: m.pickup, dropoff: m.dropoff, pickupAt: m.pickupAt, flight: m.flight, stopList: [], stopWaits: [], returnAt: undefined, returnFlight: undefined, landing: undefined, repeat: undefined, moreRides: undefined, moreList: undefined, promoCode: '' }).catch((e) => ({ error: e.message })) : Promise.resolve(null));
+          const [q, rq, ...mq] = await Promise.all([opts.quoteFn(b), withRet ? opts.quoteFn(returnOf(b)).catch(() => null) : null, ...mr.map(moreQ)]);
           if (n !== qn) return;
           const lp = drawLanding(q.landing), lpOn = lp && state.landOn;
-          out.innerHTML = `<div class="total">${money(q.total + (rq ? rq.total : 0) + (lpOn ? lp.price : 0))}</div>
+          const sbtn = $('#bk-submit', host); if (sbtn && !opts.submitLabel) sbtn.textContent = mr.length ? `Book these ${mr.length + 1} rides` : 'Book this ride';
+          const moreTot = mq.reduce((s2, x) => s2 + (x && !x.error ? x.total : 0), 0);
+          const moreHtml = mr.length ? `${rq ? '' : `<div class="qline"><span>Ride 1</span><span class="num">${money(q.total)}</span></div>`}${mr.map((m, i) => `<div class="qline"><span>Ride ${m.n}${m.pickup && m.dropoff ? `: ${esc(m.pickup.split(',')[0])} to ${esc(m.dropoff.split(',')[0])}` : ''}${mq[i] && mq[i].error ? `<br><span class="err small">${esc(mq[i].error)}</span>` : !mq[i] ? '<br><span class="small faint">Add the date, time and both addresses</span>' : ''}</span><span class="num">${mq[i] && !mq[i].error ? money(mq[i].total) : ''}</span></div>`).join('')}` : '';
+          out.innerHTML = `<div class="total">${money(q.total + (rq ? rq.total : 0) + (lpOn ? lp.price : 0) + moreTot)}</div>
             <div class="small muted">${esc(C.SERVICES[q.service])} · ${esc(q.vehicleType)}${q.miles ? ` · about ${q.miles} mi, ${q.minutes} min` : ''}${stopList.filter(Boolean).length ? ` · ${stopList.filter(Boolean).length} stop${stopList.filter(Boolean).length > 1 ? 's' : ''}` : ''}</div>
             ${rq ? `<div class="qline"><span>First ride</span><span class="num">${money(q.total)}</span></div><div class="qline"><span>Return ride${rq.miles ? `, about ${rq.miles} mi` : ''}</span><span class="num">${money(rq.total)}</span></div><details class="small"><summary>First ride details</summary>${quoteLines(q)}</details>` : `<div>${quoteLines(q)}</div>`}
+            ${moreHtml}
             ${lpOn ? `<div class="qline"><span>${dispatch ? 'Pickup' : 'Ride'} when ${dispatch ? 'they land' : 'you land'} in ${esc(lp.dest.city)}${lp.estimate ? ' (estimate)' : ''}</span><span class="num">${money(lp.price)}</span></div>` : ''}
             ${state.repOn && repeatCount() ? `<div class="qline"><span>Repeats ${repeatCount()} more time${repeatCount() === 1 ? '' : 's'} (about ${money(q.total + (rq ? rq.total : 0))} each, charged 24 hours before each ride)</span><span class="num">${money((q.total + (rq ? rq.total : 0)) * repeatCount())}</span></div>` : ''}
             ${(() => { const ac = accts.find((a) => a.id === state.accountId); return ac && ac.reward === 'credit' && ac.pct ? `<p class="small note ok" id="bk-earns">This business ride saves you <b>${money(Math.round(q.subtotal * ac.pct) / 100)}</b> credit (${ac.pct}%) for your own personal rides, once it's done.</p>` : ''; })()}
@@ -1829,6 +1858,14 @@
     addressAutocomplete($('#bk-land-drop', host), acSlug, () => state.landDest);
     const cl = $('#bk-client', form);
     if (cl) cl.onchange = () => { const c = clients[+cl.value]; if (!c) return; $('#bk-name', form).value = c.name; $('#bk-phone', form).value = c.phone; $('#bk-email', form).value = c.email; cl.value = ''; sync(); requote(); };
+    $('#bk-addride', form).onclick = () => {
+      sync();
+      const prev = moreList[moreList.length - 1] || { date: state.date, pickup: state.pickup, dropoff: state.dropoff };
+      moreList.push({ date: prev.date || state.date, time: '', pickup: prev.dropoff || '', dropoff: '', flight: '' });
+      drawMore(); requote();
+      const ins = $$('[data-k="time"]', form); if (ins.length) ins[ins.length - 1].focus();
+    };
+    drawMore();
     $('#bk-addstop', form).onclick = () => { sync(); stopList.push(''); stopWaits.push(defWait); drawStops(); sync(); const ins = $$('[data-stop]', form); if (ins.length) ins[ins.length - 1].focus(); };
     drawStops();
     getLive().then((i) => { const n = $('#bk-mapnote', host); if (n && i.live && i.live.maps) n.remove(); });
@@ -1865,7 +1902,7 @@
       sync();
       if (n === 2) {
         const b = booking(), stops = (b.stopList || []).length;
-        $('#bk-sumtext', host).innerHTML = `<b>${esc(fmtDT(b.pickupAt))}</b>${b.service === 'hourly' ? ` · ${esc(b.hours)} hours` : ''}<br><span class="small">${esc(b.pickup)}${stops ? ` · ${stops} stop${stops > 1 ? 's' : ''}` : ''}${b.dropoff ? ` to ${esc(b.dropoff)}` : ''}</span>`;
+        $('#bk-sumtext', host).innerHTML = `<b>${esc(fmtDT(b.pickupAt))}</b>${b.service === 'hourly' ? ` · ${esc(b.hours)} hours` : ''}<br><span class="small">${esc(b.pickup)}${stops ? ` · ${stops} stop${stops > 1 ? 's' : ''}` : ''}${b.dropoff ? ` to ${esc(b.dropoff)}` : ''}</span>${(b.moreRides || []).length ? `<br><span class="small">+ ${b.moreRides.length} more ride${b.moreRides.length > 1 ? 's' : ''}</span>` : ''}`;
         priceVehicles();
       }
       host.style.scrollMarginTop = '90px'; host.scrollIntoView({ block: 'start', behavior: 'smooth' });
@@ -1874,7 +1911,9 @@
       $('#bk-next', host).onclick = (e) => busy(e.currentTarget, async () => {
         sync(); const err = $('#bk-err1', host); err.innerHTML = '';
         const miss = !state.date || !state.time ? 'Choose the pickup date and time.' : !state.pickup.trim() ? 'Enter the pickup address.' : state.service !== 'hourly' && !state.dropoff.trim() ? 'Enter the drop-off address.' : C.isAirport(state.pickup) && !String(state.flight || '').trim() ? 'Pickups at the airport need the flight number, for example AS 331, so we can follow the landing.' : '';
-        try { if (miss) throw new Error(miss); await opts.quoteFn(quoteOnly()); showStep(2); } catch (x) { showErr(err, x); }
+        const mi = state.service === 'hourly' ? -1 : moreList.findIndex((m) => !m.date || !m.time || !m.pickup.trim() || !m.dropoff.trim());
+        const miss2 = mi >= 0 ? `Ride ${mi + 2}: add the date, time, pickup and drop-off, or remove it.` : '';
+        try { if (miss || miss2) throw new Error(miss || miss2); await opts.quoteFn(quoteOnly()); showStep(2); } catch (x) { showErr(err, x); }
       });
       $('#bk-back', host).onclick = () => showStep(1);
     }
@@ -1985,9 +2024,10 @@
       $('#book-host', v).hidden = true;
       const host = $('#auth-host', v);
       host.innerHTML = `<div class="panel stack" style="margin-top:20px;max-width:560px" id="guest-done">
-        <h2>Thank you, your ride is booked</h2>
+        <h2>Thank you, your ride${(t.moreTrips || []).length ? 's are' : ' is'} booked</h2>
         <p>Reference number <b class="mono">${esc(t.ref)}</b>${t.returnTrip ? `, return ride <b class="mono">${esc(t.returnTrip.ref)}</b>` : ''}${t.landingTrip ? `, ride when you land <b class="mono">${esc(t.landingTrip.ref)}</b>` : ''}</p>
         <dl class="kv"><dt>Pickup</dt><dd>${esc(fmtDT(t.pickupAt))}<div class="small faint">${esc(t.pickup || '')}</div></dd>${t.dropoff ? `<dt>Drop-off</dt><dd class="small">${esc(t.dropoff)}</dd>` : ''}${t.price ? `<dt>Total</dt><dd class="num">${money(t.price.total)}</dd>` : ''}</dl>
+        ${(t.moreTrips || []).map((x, i) => `<dl class="kv"><dt>Ride ${i + 2}</dt><dd><b class="mono">${esc(x.ref)}</b> · ${esc(fmtDT(x.pickupAt))}<div class="small faint">${esc(x.pickup)} to ${esc(x.dropoff)}</div></dd><dt>Total</dt><dd class="num">${money(x.price.total)}</dd></dl>`).join('')}
         <p class="small muted">We emailed your confirmation to <b>${esc(t.email)}</b>.${t.accountEmail ? ' We also sent a link to set up your account, so you can see and change your rides any time.' : ' Sign in with that email to see your rides.'}</p>
         <div class="row"><a class="btn" href="#book.${esc(slug)}" id="guest-again">Book another ride</a>${info.company.phone ? `<a class="btn" href="tel:${esc(info.company.phone)}">Call ${esc(info.company.name)}</a>` : ''}</div></div>`;
       host.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -2264,6 +2304,7 @@
           ${t.agent ? `<div class="small forline">For <b>${esc(t.passengerName || 'client')}</b>${t.passengerPhone ? ` · ${esc(t.passengerPhone)}` : ''}${t.agent.payBy === 'passenger' ? ' · client pays' : ''}${t.agent.pct ? ` · ${t.agent.pct}% commission` : ''}</div>` : ''}
           ${routeHtml(t)}
           ${t.pair ? `<div class="small muted">${t.pair.kind === 'return' ? `Return trip booked: ${esc(t.pair.ref)}, ${esc(fmtDT(t.pair.pickupAt))}` : `Return of ${esc(t.pair.ref)}`}</div>` : ''}
+          ${t.group ? `<div class="small muted">Booked together: ${t.group.filter((g) => g.id !== t.id).map((g) => `${esc(g.ref)}, ${esc(fmtDT(g.pickupAt))}`).join('; ')}</div>` : ''}
           ${t.series ? `<div class="small muted">Repeating ride ${t.series.n} of ${t.series.of}, every ${esc(t.series.days.map((d) => d[0].toUpperCase() + d.slice(1, 3)).join(', '))} until ${esc(fmtDay(t.series.until))}</div>` : ''}
           ${t.landing ? `<div class="small landtag">${t.landing.kind === 'landing' ? `Ride when you land${t.landing.city ? ` in ${esc(t.landing.city)}` : ''}: ${esc(t.landing.ref)}` : `Your ride when you land, after ${esc(t.landing.ref)}`}${t.awayTime ? ` · ${esc(t.awayTime)}` : ''}${t.outOfTown && t.outOfTown.partnerName ? ` · driven by ${esc(t.outOfTown.partnerName)}` : t.outOfTown ? ' · we are booking a local car' : ''}</div>` : ''}
           ${extrasList(t).length ? `<div class="small muted">${esc(extrasList(t).join(' · '))}</div>` : ''}
@@ -2676,7 +2717,7 @@
       location.href = r.url; await new Promise(() => {});
     }
   }
-  const bookedMsg = (t) => (t.returnTrip ? `Booked ${t.ref} and the return ${t.returnTrip.ref}.` : `Booked. Reference ${t.ref}.`) + (t.landingTrip ? ` Your ride when you land is ${t.landingTrip.ref}.` : '') + (t.repeats ? ` It repeats ${t.repeats} more time${t.repeats === 1 ? '' : 's'}.` : '');
+  const bookedMsg = (t) => (t.returnTrip ? `Booked ${t.ref} and the return ${t.returnTrip.ref}.` : `Booked. Reference ${t.ref}.`) + ((t.moreTrips || []).length ? ` Also booked: ${t.moreTrips.map((x) => x.ref).join(', ')}.` : '') + (t.landingTrip ? ` Your ride when you land is ${t.landingTrip.ref}.` : '') + (t.repeats ? ` It repeats ${t.repeats} more time${t.repeats === 1 ? '' : 's'}.` : '');
 
   // ---- Dispatch -------------------------------------------------------------
   const todayStr = () => toLocalInput(new Date()).slice(0, 10);
@@ -3137,7 +3178,7 @@
       bookingForm($('#nb', m), {
         info, mode: 'dispatch', submitLabel: 'Create booking', accounts: info.accounts,
         quoteFn: (b) => api('dispatch.quote', { booking: b }),
-        onSubmit: async (b) => { const t = await api('dispatch.createTrip', { booking: b }); closeModal(); toast((t.driver ? `${t.ref} created and sent to ${t.driver.name}. Waiting for them to accept.` : `${t.ref} created. Assign a driver next.`) + (t.returnTrip ? ` Return trip ${t.returnTrip.ref} created too.` : '') + (t.landingTrip ? ` Landing pickup ${t.landingTrip.ref} ${t.landingTrip.farmout ? `sent to ${t.landingTrip.farmout.toName}` : 'needs a local company'}.` : '')); done && done(); },
+        onSubmit: async (b) => { const t = await api('dispatch.createTrip', { booking: b }); closeModal(); toast((t.driver ? `${t.ref} created and sent to ${t.driver.name}. Waiting for them to accept.` : `${t.ref} created. Assign a driver next.`) + (t.returnTrip ? ` Return trip ${t.returnTrip.ref} created too.` : '') + ((t.moreTrips || []).length ? ` Also created: ${t.moreTrips.map((x) => x.ref).join(', ')}.` : '') + (t.landingTrip ? ` Landing pickup ${t.landingTrip.ref} ${t.landingTrip.farmout ? `sent to ${t.landingTrip.farmout.toName}` : 'needs a local company'}.` : '')); done && done(); },
       });
     }
 
@@ -3253,6 +3294,7 @@
             </div>
             ${t.prefs && (t.prefs.temp || t.prefs.music || t.prefs.quiet) ? `<p class="small muted">Passenger preferences: ${esc([t.prefs.temp ? C.TEMPS[t.prefs.temp] + ' cabin' : '', t.prefs.music ? C.MUSIC[t.prefs.music] : '', t.prefs.quiet ? 'Quiet ride' : ''].filter(Boolean).join(' · '))}</p>` : ''}
             ${t.pair ? `<p class="small muted">${t.pair.kind === 'return' ? `Return trip: ${esc(t.pair.ref)} on ${esc(fmtDT(t.pair.pickupAt))}` : `This is the return of ${esc(t.pair.ref)}`}</p>` : ''}
+            ${t.group ? `<p class="small muted">Booked together: ${t.group.filter((g) => g.id !== t.id).map((g) => `<button class="linkbtn small" type="button" data-grp="${g.id}">${esc(g.ref)}</button> ${esc(fmtDT(g.pickupAt))}`).join(' · ')}</p>` : ''}
             ${t.landing ? `<p class="small landtag">${t.landing.kind === 'landing' ? `Pickup when they land${t.landing.city ? ` in ${esc(t.landing.city)}` : ''}: ${esc(t.landing.ref)}` : `Pickup when they land, after ${esc(t.landing.ref)}`}${t.awayTime ? `, ${esc(t.awayTime)}` : ''}.${t.outOfTown ? (t.farmout ? ` With ${esc(t.farmout.toName)}.` : ` Out of town: send it to a partner in ${esc(t.outOfTown.city)} or book a local company, then mark it done.`) : ''}</p>` : ''}
             ${t.cancelFee ? `<p class="small muted">Cancelled late by the customer. Fee: ${money(t.cancelFee)}</p>` : ''}
             ${t.noShow ? `<p class="small muted">No-show, marked by ${esc(t.noShow.by)}${t.noShow.waitedMin ? ` after waiting ${t.noShow.waitedMin} min` : ''}.${t.noShow.fee ? ` Fee: ${money(t.noShow.fee)}${t.payment.status === 'paid' ? ' (fare already paid)' : ', not collected yet'}.` : ''}${t.noShow.note ? ` ${esc(t.noShow.note)}` : ''}</p>` : ''}
@@ -3397,6 +3439,7 @@
       const rc = $('#te-confirm', m); if (rc) rc.onclick = (e) => busy(e.currentTarget, async () => {
         try { const r = await api('dispatch.resendConfirmation', { id }); toast(`Confirmation sent to ${r.sent.join(' and ')}.`); reopen(); } catch (err) { toast(err.message, true); }
       });
+      $$('[data-grp]', m).forEach((b) => { b.onclick = () => { m._onClose = null; closeModal(); tripModal(b.dataset.grp, done); }; });
       const rcb = $('#te-receipt', m); if (rcb) rcb.onclick = () => { m._onClose = null; receiptModal(t, 'dispatch.sendReceipt', () => tripModal(id, done)); };
       const rt = $('#te-return', m); if (rt) rt.onclick = () => returnModal(t, (r) => { m._onClose = null; closeModal(); toast(`Return trip ${r.ref} booked. We sent ${r.passengerName || 'the passenger'} a confirmation.${r.landingTrip ? ` The pickup where they land is ${r.landingTrip.ref}.` : ''}`); tripModal(r.id, done); });
       const shb = $('#te-sheet', m); if (shb) shb.onclick = () => printSheets([t], `${t.ref}, ${fmtDate(t.pickupAt)}`);

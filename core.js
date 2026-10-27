@@ -790,6 +790,7 @@
         `Pickup Address: ${t.pickup}`, `Destination: ${v.destination}`];
       if (t.flight) lines.push(`Flight: ${t.flight}`);
       lines.push(`Vehicle: ${v.vehicle_choice}`, `Passengers: ${v.passenger_count}`, `Bags: ${v.bag_count}`, `Total: ${v.total}`);
+      const mbk = moreBlock(t); if (mbk) lines.push(mbk.replace(/\n+$/, ''));
       const lt = t.landingId && db.trips.find((x) => x.id === t.landingId);
       if (lt) {
         const o = lt.outOfTown, tz = o ? { timezone: o.tz } : c;
@@ -862,6 +863,17 @@
     }
     // A pickup booked for when they land in another city: its own details.
     function landingBlock(t) {
+      return landingOnly(t) + moreBlock(t);
+    }
+    // The other rides booked together with this one ("Add another ride").
+    function moreBlock(t) {
+      const c = findCompany(t.companyId);
+      const more = (t.groupIds || []).map((x) => db.trips.find((y) => y.id === x)).filter((x) => x && x.status !== 'cancelled');
+      if (!more.length) return '';
+      return more.map((m, i) => ['', `Ride ${i + 2}`, `Trip confirmation: ${m.ref}`, `Pickup Date and Time: ${fmtLocal(m.pickupAt, c, true)}`, `Pickup Address: ${m.pickup}`, `Destination: ${m.dropoff}`,
+        ...(m.flight ? [`Flight Information: ${m.flight}`] : []), `Total: $${money(m.price.total)}`].join('\n')).join('\n') + `\n\nAll ${more.length + 1} rides: $${money([t, ...more].reduce((s2, x) => s2 + x.price.total, 0))}\n`;
+    }
+    function landingOnly(t) {
       const c = findCompany(t.companyId), lt = t.landingId && db.trips.find((x) => x.id === t.landingId);
       if (!lt || lt.status === 'cancelled') return '';
       const tz = lt.outOfTown ? { timezone: lt.outOfTown.tz } : c;
@@ -893,7 +905,7 @@
       return {
         company: c.name, ref: t.ref, passenger: (t.passengerName || '').split(' ')[0], pickup_time: fmtLocal(t.pickupAt, away(t), true) + (t.outOfTown ? ` ${t.outOfTown.city} time` : ''),
         landing_line: lt && lt.status !== 'cancelled' ? ` Your pickup when you land: ${lt.ref}, ${lt.pickup.split(',')[0]}, ${fmtLocal(lt.pickupAt, away(lt), true)}${lt.outOfTown ? ` ${lt.outOfTown.city} time` : ''}, to ${lt.dropoff}. We follow your flight and move it if you land late.` : '',
-        landing_short_line: lt && lt.status !== 'cancelled' ? ` Pickup when you land: ${lt.ref}.` : '', pickup: t.pickup, dropoff: t.dropoff || '',
+        landing_short_line: (lt && lt.status !== 'cancelled' ? ` Pickup when you land: ${lt.ref}.` : '') + ((t.groupIds || []).length ? ` Also booked: ${(t.groupIds || []).map((x) => db.trips.find((y) => y.id === x)).filter((x) => x && x.status !== 'cancelled').map((x) => `${x.ref} ${fmtLocal(x.pickupAt, c, true)}`).join(', ')}.` : ''), pickup: t.pickup, dropoff: t.dropoff || '',
         vehicle_type: t.vehicleType, passengers: `${t.passengers} passenger${t.passengers === 1 ? '' : 's'}`,
         ride: `${SERVICES[t.service] || 'Ride'}${t.service === 'hourly' ? `, ${t.hours} h` : ''}, ${t.vehicleType}, ${t.passengers} passenger${t.passengers === 1 ? '' : 's'}`,
         driver: d ? d.name : 'Your chauffeur', driver_first: d && d.name ? d.name.split(' ')[0] : 'Your chauffeur', driver_and: d && d.name ? ` and ${d.name.split(' ')[0]}` : '',
@@ -1052,6 +1064,7 @@
         wake: t.wake ? { calls: t.wake.calls.length, lastCall: t.wake.calls[t.wake.calls.length - 1] || null, ok: t.wake.ok || null, alerted: t.wake.alerted || null } : null,
         landing: (() => { const o = (t.landingId || t.landingOf) && db.trips.find((x) => x.id === (t.landingId || t.landingOf)); return o ? { kind: t.landingId ? 'landing' : 'outbound', id: o.id, ref: o.ref, pickupAt: o.pickupAt, status: o.status, city: (o.outOfTown || t.outOfTown || {}).city || '' } : null; })(),
         awayTime: t.outOfTown ? `${fmtLocal(t.pickupAt, { timezone: t.outOfTown.tz }, true)} ${t.outOfTown.city} time` : '',
+        group: (() => { const head = t.groupOf ? db.trips.find((x) => x.id === t.groupOf) : t; const ids = head ? [head.id, ...(head.groupIds || [])] : []; return ids.length > 1 ? ids.map((x) => db.trips.find((y) => y.id === x)).filter(Boolean).map((x) => ({ id: x.id, ref: x.ref, pickupAt: x.pickupAt, pickup: x.pickup, dropoff: x.dropoff, status: x.status })) : null; })(),
         pair: (() => { const o = (t.returnId || t.returnOf) && db.trips.find((x) => x.id === (t.returnId || t.returnOf)); return o ? { kind: t.returnId ? 'return' : 'outbound', id: o.id, ref: o.ref, pickupAt: o.pickupAt } : null; })(),
         driver: d ? { id: d.id, name: d.name, phone: d.phone } : (t.affiliate && t.affiliate.driver ? { id: null, name: t.affiliate.driver.name, phone: t.affiliate.driver.phone, partner: t.affiliate.companyName } : null),
         vehicle: v ? { id: v.id, name: v.name, type: v.type, plate: v.plate, capacity: v.capacity, color: v.color || '', year: v.year || null } : (t.affiliate && t.affiliate.vehicle ? { id: null, ...t.affiliate.vehicle } : null),
@@ -1082,6 +1095,27 @@
       } catch (e) { if (e instanceof ApiError) e.message = 'Return trip: ' + e.message; throw e; }
       if (new Date(r.pickupAt) <= new Date(b.pickupAt)) fail('Return trip: the return pickup must be after the first pickup.');
       return [b, r];
+    }
+    // "Add another ride": more transfers in the same booking (airport to hotel,
+    // hotel to pier, pier to airport). Same passenger, vehicle and payment; each
+    // has its own time, addresses and flight. All are checked before any is made.
+    const MAX_MORE = 9;
+    function moreBookings(company, raw, b, o) {
+      const list = Array.isArray(raw.moreRides) ? raw.moreRides : [];
+      if (!list.length) return [];
+      if (list.length > MAX_MORE) fail(`Book up to ${MAX_MORE + 1} rides at once.`);
+      if (raw.repeat && raw.repeat.on) fail('Repeat works for a single ride. Book the extra rides without repeat.');
+      return list.map((m, i) => {
+        try {
+          return cleanBooking(company, { ...raw, service: 'transfer', pickup: m && m.pickup, dropoff: m && m.dropoff, pickupAt: m && m.pickupAt, flight: (m && m.flight) || '',
+            stopList: [], stopWaits: [], meetGreet: !!(m && m.pickup && isAirport(m.pickup)) && !!b.meetGreet, returnAt: undefined, returnFlight: undefined, landing: undefined, repeat: undefined, moreRides: undefined, promoCode: '' }, o);
+        } catch (e) { if (e instanceof ApiError) e.message = `Ride ${i + 2}: ` + e.message; throw e; }
+      });
+    }
+    function bookMore(company, t, mb, customer, source, by) {
+      const made = mb.map((x) => { if (t.termsAgreed) x.termsAgreed = t.termsAgreed; const m = newTrip(company, x, customer, source, by, '', true); m.groupOf = t.id; return m; });
+      if (made.length) t.groupIds = made.map((m) => m.id);
+      return made;
     }
     // ---- Repeating rides ----------------------------------------------------------
     // "Every Mon, Wed and Fri until Dec 18": the first ride is booked as usual and
@@ -2492,6 +2526,8 @@
       }
       const [b, rb] = bookingPair(ctx.company, a.booking || {});
       checkNotice(ctx.company, b.pickupAt);
+      const mb = moreBookings(ctx.company, a.booking || {}, b);
+      for (const x of mb) checkNotice(ctx.company, x.pickupAt);
       const plan = repeatPlan(ctx.company, b, a.booking || {});
       const agreed = agreeTerms(ctx.company, a.booking || {}, ctx.user.name);
       if (agreed) { b.termsAgreed = agreed; if (rb) rb.termsAgreed = agreed; }
@@ -2504,20 +2540,21 @@
       const card = cardIn && !cash && !payByPassenger && payMode === 'demo' && !b.accountId && cardsOn(ctx.company) ? demoCard(cardIn, ctx.user.name) : null;
       if (!card && !cash && !payByPassenger && !ctx.user.card && !b.accountId && cardsOn(ctx.company) && payMode === 'demo') fail(`Add a card. ${chargeNote(ctx.company)}.`);
       if (card) ctx.user.card = card;
-      if (cash) { b.payCash = true; if (rb) rb.payCash = true; }
+      if (cash) { b.payCash = true; if (rb) rb.payCash = true; for (const x of mb) x.payCash = true; }
       const wantsLanding = !!((a.booking || {}).landing && a.booking.landing.on);
-      const t = newTrip(ctx.company, b, ctx.user, 'online', ctx.user.name, (a.booking || {}).promoCode, wantsLanding);
+      const t = newTrip(ctx.company, b, ctx.user, 'online', ctx.user.name, (a.booking || {}).promoCode, wantsLanding || mb.length > 0);
       let r = null;
       if (rb) { r = newTrip(ctx.company, rb, ctx.user, 'online', ctx.user.name, ''); linkReturn(t, r); }
       const lt = wantsLanding ? landingTrip(ctx.company, t, a.booking, ctx.user, 'online', ctx.user.name) : null;
-      if (lt) notify(t, 'booked');
+      const more = bookMore(ctx.company, t, mb, ctx.user, 'online', ctx.user.name);
+      if (lt || more.length) notify(t, 'booked');
       const reps = bookRepeats(ctx.company, a.booking || {}, plan, t, r, ctx.user, 'online', ctx.user.name);
-      if (cash) for (const x of [t, r, lt, ...reps]) if (x) payCash(x);
-      if (agent) agentBooked(ctx, [t, r, lt, ...reps].filter(Boolean), payByPassenger);
-      payStep(t); if (r) payStep(r); if (lt) payStep(lt); reps.forEach(payStep);
+      if (cash) for (const x of [t, r, lt, ...more, ...reps]) if (x) payCash(x);
+      if (agent) agentBooked(ctx, [t, r, lt, ...more, ...reps].filter(Boolean), payByPassenger);
+      payStep(t); if (r) payStep(r); if (lt) payStep(lt); more.forEach(payStep); reps.forEach(payStep);
       // Remember how they like to ride for next time (an agent's clients differ).
       if (!agent) ctx.user.prefs = { ...b.prefs, signName: b.signName || (ctx.user.prefs && ctx.user.prefs.signName) || '' };
-      return { ...tripView(t), returnTrip: r ? tripView(r) : null, landingTrip: lt ? tripView(lt) : null, repeats: reps.filter((x) => !x.returnOf).length };
+      return { ...tripView(t), returnTrip: r ? tripView(r) : null, landingTrip: lt ? tripView(lt) : null, moreTrips: more.map(tripView), repeats: reps.filter((x) => !x.returnOf).length };
     });
     // Booking without an account: the guest types their name, mobile and email.
     // The ride goes under a customer record for that email (made if new), but a
@@ -2951,6 +2988,7 @@
     def('dispatch.createTrip', STAFF, true, async (ctx, a) => {
       const [b, rb] = bookingPair(ctx.company, a.booking || {}, { allowPast: true });
       if (!b.passengerName) fail('Enter the passenger name.');
+      const mb = moreBookings(ctx.company, a.booking || {}, b, { allowPast: true });
       const plan = repeatPlan(ctx.company, b, a.booking || {});
       let customer = null;
       if (b.passengerEmail) {
@@ -2964,14 +3002,15 @@
         }
       }
       const wantsLanding = !!((a.booking || {}).landing && a.booking.landing.on);
-      const t = newTrip(ctx.company, b, customer, 'phone', ctx.user.name, (a.booking || {}).promoCode, wantsLanding);
+      const t = newTrip(ctx.company, b, customer, 'phone', ctx.user.name, (a.booking || {}).promoCode, wantsLanding || mb.length > 0);
       let r = null;
       if (rb) { r = newTrip(ctx.company, rb, customer, 'phone', ctx.user.name, ''); linkReturn(t, r); }
       const lt = wantsLanding ? landingTrip(ctx.company, t, a.booking, customer, 'phone', ctx.user.name) : null;
-      if (lt) notify(t, 'booked');
+      const more = bookMore(ctx.company, t, mb, customer, 'phone', ctx.user.name);
+      if (lt || more.length) notify(t, 'booked');
       const reps = bookRepeats(ctx.company, a.booking || {}, plan, t, r, customer, 'phone', ctx.user.name, { allowPast: true });
       sweepDispatch(ctx.company, true);
-      return { ...tripView(t), returnTrip: r ? tripView(r) : null, landingTrip: lt ? tripView(lt) : null, repeats: reps.filter((x) => !x.returnOf).length };
+      return { ...tripView(t), returnTrip: r ? tripView(r) : null, landingTrip: lt ? tripView(lt) : null, moreTrips: more.map(tripView), repeats: reps.filter((x) => !x.returnOf).length };
     });
     // Return trip from an existing booking: same passenger, vehicle, extras and
     // billing, pickup and drop-off swapped. The office only picks the time (and

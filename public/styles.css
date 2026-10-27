@@ -573,6 +573,7 @@ a.quotecard:hover { border-color: var(--brand); }
 .stoprow { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
 .stoprow .grow { flex: 1 1 220px; }
 .stoprow .swait { flex: 0 0 110px; }
+.moreride { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--bg); }
 .namesign { position: fixed; inset: 0; z-index: 1000; background: #fff; color: #111; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 24px; text-align: center; cursor: pointer; }
 .namesign .ns-name { font-size: clamp(44px, 13vw, 140px); font-weight: 800; line-height: 1.05; letter-spacing: -0.02em; word-break: break-word; }
 .namesign .ns-co { font-size: clamp(18px, 4vw, 32px); font-weight: 600; color: #444; }
