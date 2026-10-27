@@ -1238,9 +1238,16 @@
         try {
           const res = await api('public.companySignup', { ...f, terms: $('#tr-terms', v).checked });
           // Trial started: sign them straight in to the setup guide.
-          if (res.started) { setSession({ token: res.token, user: res.user, company: res.company, remember: true }); toast(`Welcome aboard! Your free trial has started.`); go(HOME[res.user.role]); return; }
-          const first = (f.name.trim().split(/\s+/)[0] || '').replace(/^./, (ch) => ch.toUpperCase());
-          $('#tr-form', v).outerHTML = `<div class="note ok" id="tr-done"><b>Welcome aboard, ${esc(first)}!</b> We’ve received the sign-up for ${esc(f.company)}. Watch for an email at ${esc(f.email)} saying you’re approved, within 3 to 7 business days. Then sign in with that email and the password you just chose. Questions? Email ${mailLink()}.</div>`;
+          if (res.started) {
+            setSession({ token: res.token, user: res.user, company: res.company, remember: true });
+            // render() closes any open window, so the thank-you opens once the Board is up.
+            const home = HOME[res.user.role];
+            if (location.hash.slice(1) === home) render(); else { location.hash = home; await new Promise((ok) => window.addEventListener('hashchange', () => setTimeout(ok, 0), { once: true })); }
+            const m = openModal({ title: 'Thank you for signing up!', body: `<div class="stack"><p><b>Thank you for signing up with LimoRelay.</b> Our service team will reach out to you soon.</p><p class="muted">Your free trial has started. The setup guide on your Board walks you through the first steps.</p></div>`, footer: '<button class="btn primary" type="button" data-close>Get started</button>' });
+            $('[data-close]', m).onclick = closeModal;
+            return;
+          }
+          $('#tr-form', v).outerHTML = `<div class="note ok stack" id="tr-done"><b>Thank you for signing up with LimoRelay.</b><span>Our service team will reach out to you soon.</span><span class="small">We’ll email ${esc(f.email)} when ${esc(f.company)} is approved. Then sign in with that email and the password you just chose.</span></div>`;
         } catch (err) { showErr($('#tr-err', v), err); }
       });
     };
