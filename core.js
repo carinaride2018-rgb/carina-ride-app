@@ -76,8 +76,8 @@
     approach: { label: 'About 10 minutes away', text: '{company}:\n\nYour chauffeur is about 10 minutes away for RES: {ref}\n\n{chauffeur_block}{track_block}' },
     arrived: { label: 'Chauffeur arrived', text: '{company}:\n\nYour chauffeur has arrived for RES: {ref}\n\n{chauffeur_block}\nPickup: {pickup}' },
     receipt: { label: 'Receipt (email)', text: '{company}: thanks for riding with us. Receipt for {ref}: {total}.' },
-    review_sms: { label: 'Review request (text)', text: '{company}: thank you for riding with us{driver_and}. How was your trip? Rate it in one tap: {review_link}' },
-    review_email: { label: 'Review request (email)', text: '{company}: thank you for riding with us{driver_and}. How was your trip? Rate it in one tap: {review_link} Your feedback goes straight to our team.' },
+    review_sms: { label: 'Review request (text)', text: '{company}:\n\nThank you for riding with us{driver_and}. How was your trip?\n\nRate it in one tap: {review_link}' },
+    review_email: { label: 'Review request (email)', text: '{company}:\n\nThank you for riding with us{driver_and}. How was your trip?\n\nRate it in one tap: {review_link}\n\nSincerely,\n{signer}' },
     cancelled: { label: 'Booking cancelled', text: '{company}: booking {ref} has been cancelled.' },
     no_show: { label: 'No-show', text: "{company}: your chauffeur waited{waited} at {pickup} and couldn't find you, so {ref} is closed as a no-show.{fee_line}{wrong_line}" },
     card_charged: { label: 'Fare charged to card', text: '{company}: we charged {amount} to your card ending {last4} for ride {ref}, {pickup_time}.' },
@@ -87,7 +87,7 @@
   };
   const MSG_WORDS = ['company', 'ref', 'passenger', 'pickup_time', 'pickup', 'dropoff', 'vehicle_type', 'passengers', 'ride', 'driver', 'driver_first', 'driver_and', 'vehicle', 'plate', 'vehicle_line', 'car_line', 'total', 'phone', 'flight', 'track_link', 'review_link', 'call_line', 'wrong_line', 'dropoff_line', 'flight_line', 'flight_short_line', 'flight_track_line', 'chauffeur_line', 'track_line', 'landing_line', 'landing_short_line', 'waited', 'fee', 'fee_line', 'amount', 'last4', 'extras', 'card_link', 'hi_name', 'dropoff_to', 'signer', 'contact', 'passenger_name', 'cellphone', 'destination', 'flight_info_line', 'vehicle_choice', 'passenger_count', 'bag_count', 'landing_block', 'chauffeur_block', 'track_block'];
   const INCIDENT_KINDS = { accident: 'Accident', damage: 'Vehicle damage', injury: 'Injury', complaint: 'Complaint', lost_item: 'Lost item', other: 'Other' };
-  const DEFAULT_CLIENT_MSGS = { confirmText: true, confirmEmail: true, officeNew: true, remind24: true, approach: true, review: true, reviewDelayMin: 0 };
+  const DEFAULT_CLIENT_MSGS = { confirmText: true, confirmEmail: true, officeNew: true, remind24: true, approach: true, review: true, reviewDelayMin: 0, reviewUrl: '' };
   // Corporate accounts: payment terms in days (0 = due on receipt).
   const ACCOUNT_TERMS = [0, 15, 30, 45];
   // Smart dispatch: auto-assign, accept timer, reminders, late-start alert.
@@ -912,7 +912,7 @@
         vehicle: v ? v.name : t.vehicleType, plate: v ? v.plate || '' : '', vehicle_line: v ? `, ${[v.color, v.name].filter(Boolean).join(' ')}${v.plate ? `, plate ${v.plate}` : ''}` : '',
         car_line: v ? ` Look for a ${[v.color, v.name].filter(Boolean).join(' ')}${v.plate ? `, plate ${v.plate}` : ''}.` : '',
         total: `$${money(t.price.total)}`, phone: c.phone || 'us', flight: t.flight || '',
-        track_link: t.trackToken ? trackUrl(t) : '', review_link: t.reviewToken ? reviewUrl(t) : '', card_link: t.cardToken ? cardUrl(t) : '',
+        track_link: t.trackToken ? trackUrl(t) : '', review_link: cmsg(c).reviewUrl || (t.reviewToken ? reviewUrl(t) : ''), card_link: t.cardToken ? cardUrl(t) : '',
         call_line: c.phone ? ` Questions? Call ${c.phone}.` : '', wrong_line: c.phone ? ` If this is wrong, call ${c.phone}.` : '',
         dropoff_line: t.dropoff ? ` Drop-off: ${t.dropoff}.` : '',
         hi_name: (t.passengerName || '').trim().split(' ')[0] || 'there', dropoff_to: t.dropoff ? ` to ${t.dropoff}` : '',
@@ -3415,6 +3415,10 @@
       const r = a.settings || {}, cur = cmsg(ctx.company);
       const b = (k) => (k in r ? !!r[k] : cur[k]);
       ctx.company.clientMsgs = { confirmText: b('confirmText'), confirmEmail: b('confirmEmail'), officeNew: b('officeNew'), remind24: b('remind24'), approach: b('approach'), review: b('review'), reviewDelayMin: Math.min(1440, Math.max(0, Math.round(num(r.reviewDelayMin, cur.reviewDelayMin)))) };
+      // Optional outside review page (Google, Yelp). Empty: our own review page.
+      const ru = 'reviewUrl' in r ? str(r.reviewUrl, 300) : cur.reviewUrl || '';
+      if (ru && !/^https:\/\/[^\s]+\.[^\s]+$/i.test(ru)) fail('The review link must be a full web address starting with https://');
+      if (ru) ctx.company.clientMsgs.reviewUrl = ru;
       return clone(ctx.company.clientMsgs);
     });
     def('dispatch.saveRules', ['admin'], true, (ctx, a) => {
