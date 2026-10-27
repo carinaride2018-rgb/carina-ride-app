@@ -2203,7 +2203,7 @@
       const v = tripView(t);
       return {
         company: pubCompany(c), ref: t.ref, status: t.status, statusLabel: t.noShow ? 'No-show' : STATUS_LABELS[t.status], pickup: t.pickup, dropoff: t.dropoff, pickupAt: t.pickupAt,
-        passengerName: (t.passengerName || '').split(' ')[0], driver: v.driver ? { name: v.driver.name.split(' ')[0], photo: driverPhoto(t), partner: v.driver.partner || '' } : null,
+        passengerName: (t.passengerName || '').split(' ')[0], driver: v.driver ? { name: v.driver.name.split(' ')[0], photo: driverPhoto(t), partner: v.driver.partner || '', ...(['accepted', 'en_route', 'arrived'].includes(t.status) && v.driver.phone ? { phone: v.driver.phone } : {}) } : null,
         vehicle: v.vehicle ? { name: v.vehicle.name, type: v.vehicle.type, plate: v.vehicle.plate, color: v.vehicle.color || '', year: v.vehicle.year || null } : null, live: v.live,
       };
     });

@@ -888,6 +888,7 @@
         ${d.driver ? `<div class="panel">${chauffeurCard(d.driver, d.vehicle)}</div>` : ''}
         <div class="panel"><dl class="kv">${!d.driver && d.vehicle ? `<dt>Vehicle</dt><dd>${esc(carLine(d.vehicle))}</dd>${d.vehicle.plate ? `<dt>Plate</dt><dd class="mono">${esc(d.vehicle.plate)}</dd>` : ''}` : ''}
           <dt>Pickup</dt><dd>${esc(d.pickup)}</dd><dt>Time</dt><dd>${esc(fmtDT(d.pickupAt))}</dd></dl></div>
+        ${d.driver && d.driver.phone ? `<a class="btn primary" href="tel:${esc(d.driver.phone.replace(/[^\d+]/g, ''))}">Call your driver</a>` : ''}
         ${d.company.phone ? `<a class="btn" href="tel:${esc(d.company.phone.replace(/[^\d+]/g, ''))}">Call ${esc(d.company.name)}</a>` : ''}
       </div>`;
 
