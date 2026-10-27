@@ -3520,7 +3520,7 @@
       const out = {
         id: q.id, number: q.number, status, statusLabel: QUOTE_LABELS[status], company: pubCompany(c), contact: clone(q.contact), eventType: q.eventType, eventName: q.eventName, eventDate: q.lines.length ? q.lines.map((l) => l.pickupAt).sort()[0] : null,
         notes: q.notes, message: q.message, depositPct: q.depositPct, validUntil: q.validUntil, createdAt: q.createdAt, sentAt: q.sentAt || null, decidedAt: q.decidedAt || null, declineReason: q.declineReason || '',
-        depositPaid: q.depositPaid ? clone(q.depositPaid) : null, ...quoteTotals(q), source: q.source,
+        depositPaid: q.depositPaid ? clone(q.depositPaid) : null, ...quoteTotals(q), source: q.source, direct: !!q.direct,
         card: pubCard(q.card), cards: cardsOn(c), chargeWhen: atBooking(c) ? 'booking' : 'before', chargeHours: pcfg(c).chargeHours, needsCard: status === 'accepted' && cardsOn(c) && !q.card && (q.tripIds || []).some((tid) => { const t = db.trips.find((x) => x.id === tid); return t && onFile(t) && !['completed', 'cancelled'].includes(t.status); }),
         lines: q.lines.map((l) => ({ ...clone(l), serviceLabel: SERVICES[l.service], lineTotal: round2((l.unitPrice || 0) * l.count) })),
         trips: (q.tripIds || []).map((tid) => db.trips.find((t) => t.id === tid)).filter(Boolean).map((t) => ({ id: t.id, ref: t.ref, pickupAt: t.pickupAt, vehicleType: t.vehicleType, status: t.status, statusLabel: STATUS_LABELS[t.status] })),
@@ -3621,6 +3621,35 @@
       const q = newQuote(c, a, 'online', cust, null);
       quoteSay(q, `${c.name}: we got your quote request ${q.number}. We'll text you the price soon.`, `${c.name}: thank you for your quote request ${q.number}${q.eventName ? ` for ${q.eventName}` : ''}. Our team is pricing it now and will send you a link to review and book.`);
       return { number: q.number, company: pubCompany(c) };
+    });
+    // Event rides booked straight away (Dawit 2026-10-27): each vehicle is priced
+    // at the company's normal rates, then the customer books on the quote page.
+    function eventPrices(c, lines) {
+      return (Array.isArray(lines) ? lines.slice(0, 12) : []).map((l) => {
+        const count = Math.min(20, Math.max(1, Math.round(num(l && l.count, 1)))), pax = Math.max(1, Math.round(num(l && l.passengers, 1)));
+        try {
+          const b = cleanBooking(c, { ...l, passengers: splitPax(pax, count, 0) }, { allowPast: false });
+          const each = round2(quoteFor(c, b, null).total);
+          return { each, count, total: round2(each * count) };
+        } catch (e) { return { error: e.message, count }; }
+      });
+    }
+    def('public.eventPrice', 'public', false, (ctx, a) => ({ lines: eventPrices(companyBySlug(a.slug), a.lines) }));
+    def('public.eventBook', 'public', true, (ctx, a) => {
+      const c = companyBySlug(a.slug);
+      const s = ctx.token && db.sessions[ctx.token];
+      const u = s && findUser(s.userId);
+      const cust = u && u.role === 'customer' && u.companyId === c.id && u.active !== false ? u : null;
+      if (Array.isArray(a.lines)) for (const l of a.lines) if (l && l.pickupAt && !isNaN(new Date(l.pickupAt))) checkNotice(c, new Date(l.pickupAt).toISOString());
+      const q = newQuote(c, a, 'online', cust, null);
+      const prices = eventPrices(c, q.lines);
+      const bad = prices.findIndex((x) => x.error);
+      if (bad >= 0) { db.quotes.splice(db.quotes.indexOf(q), 1); c.nextQuote--; fail(`Ride ${bad + 1}: ${prices[bad].error}`); }
+      q.lines.forEach((l, i) => { l.unitPrice = prices[i].each; });
+      q.status = 'sent'; q.sentAt = now().toISOString(); q.direct = true;
+      q.validUntil = new Date(Date.parse(todayIn(c) + 'T12:00:00Z') + qcfg(c).validDays * 86400e3).toISOString().slice(0, 10);
+      qlog(q, 'Priced at your rates for booking online', q.contact.name);
+      return { token: q.token, number: q.number, total: quoteTotals(q).total };
     });
     // The card link: anyone with it can add or replace the card for that ride.
     const tripByCardToken = (tok) => { const t = str(tok, 40) && db.trips.find((x) => x.cardToken === str(tok, 40)); if (!t || !onFile(t)) fail('This card link is not valid.', 404); return t; };

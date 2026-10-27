@@ -919,3 +919,5 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 
 .field.bad input, .field.bad select, .field.bad textarea { border-color: var(--bad); }
 .field .ferr { color: var(--bad); }
+.qline.qsum { border-top: 2px solid var(--ink, currentColor); border-bottom: 0; padding-top: 10px; margin-top: 6px; }
+.qline.qsum b { font-size: 18px; }

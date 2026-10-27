@@ -1455,7 +1455,7 @@
     document.documentElement.style.setProperty('--brand', info.company.color);
     const me = signedHere ? session.user : {};
     v.innerHTML = `
-      <div class="brandhead">${info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : ''}<div class="stack" style="gap:6px"><h1>Request a quote</h1><p>${esc(info.company.name)} · weddings, proms, corporate events and groups</p></div>
+      <div class="brandhead">${info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : ''}<div class="stack" style="gap:6px"><h1>Book your event</h1><p>${esc(info.company.name)} · weddings, proms, corporate events and groups</p></div>
         <div class="small" style="opacity:.9">${esc(info.company.phone || '')} · <a href="#book.${esc(slug)}" style="color:#fff">Book a single ride instead</a></div></div>
       <form id="rq" class="stack" novalidate style="max-width:860px">
         <section class="panel stack"><h2>Your event</h2>
@@ -1463,6 +1463,7 @@
             <label class="field"><span>Event name (optional)</span><input name="eventName" maxlength="100" placeholder="Smith wedding"></label></div>
         </section>
         <section class="panel stack"><h2>Rides</h2><p class="muted small">Add each ride: for example the bridal party to the ceremony, then guests to the reception. Give the total passengers and we'll work out the vehicles.</p><div id="rq-rides" class="stack"></div></section>
+        <section class="panel stack" id="rq-price"><h2>Price</h2><div id="rq-lines" class="stack" style="gap:0"><p class="faint small">Add the date, time and addresses to see the price of each ride.</p></div></section>
         <section class="panel stack"><h2>Your details</h2>
           <div class="grid2"><label class="field"><span>Your name</span><input name="name" value="${esc(me.name || '')}" autocomplete="name"></label>
             <label class="field"><span>Mobile</span><input name="phone" type="tel" value="${esc(me.phone || '')}" autocomplete="tel" placeholder="(206) 555-0100"></label></div>
@@ -1472,17 +1473,30 @@
           <label class="field"><span>Anything else we should know?</span><textarea name="notes" maxlength="800" placeholder="Timings, special requests, a particular car"></textarea></label>
         </section>
         <div id="rq-err"></div>
-        <div class="row"><button class="btn brand big" type="submit">Send quote request</button><span class="small muted">No payment now. We'll send you a price to review.</span></div>
+        <div class="row"><button class="btn brand big" type="submit" id="rq-go">Book these rides</button><span class="small muted">Next you check the prices and save a card to book.</span></div>
       </form>`;
-    const rides = rideEditor($('#rq-rides', v), { vehicleTypes: info.vehicleTypes, slug, lines: [{ ...blankRide(), vehicleType: (info.vehicleTypes.find((x) => x.type === 'SUV') || info.vehicleTypes[0] || {}).type }] });
+    // Each ride is priced at the company's rates as it's filled in, with the total below.
+    let priceTimer = null, priceN = 0;
+    const reprice = () => { clearTimeout(priceTimer); priceTimer = setTimeout(async () => {
+      const n = ++priceN, ls = rides.get();
+      let r; try { r = await api('public.eventPrice', { slug, lines: ls }); } catch (e) { return; }
+      if (n !== priceN) return;
+      const box = $('#rq-lines', v); if (!box) return;
+      const ok = r.lines.filter((x) => !x.error), cars = r.lines.reduce((s2, x) => s2 + x.count, 0);
+      box.innerHTML = r.lines.map((x, i) => { const l = ls[i] || {}; const where = l.service === 'hourly' ? `${esc((l.pickup || '').split(',')[0])}, ${l.hours || 4} h` : l.pickup && l.dropoff ? `${esc(l.pickup.split(',')[0])} to ${esc(l.dropoff.split(',')[0])}` : '';
+        return `<div class="qline"><span><b>Ride ${i + 1}</b>${where ? `: ${where}` : ''}<br><span class="small muted">${x.count} × ${esc(l.vehicleType || '')}${x.error ? '' : ` at ${money(x.each)} each`}</span>${x.error ? `<br><span class="small faint">${esc(/date|time|pickup|address|drop/i.test(x.error) ? 'Add the date, time and addresses' : x.error)}</span>` : ''}</span><span class="num">${x.error ? '' : money(x.total)}</span></div>`; }).join('')
+        + `<div class="qline qsum"><span><b>Total for ${cars} trip${cars === 1 ? '' : 's'}</b>${ok.length < r.lines.length ? '<br><span class="small faint">Rides still missing details are not counted yet</span>' : ''}</span><span class="num"><b>${money(ok.reduce((s2, x) => s2 + x.total, 0))}</b></span></div>`;
+    }, 300); };
+    const rides = rideEditor($('#rq-rides', v), { vehicleTypes: info.vehicleTypes, slug, onChange: reprice, lines: [{ ...blankRide(), vehicleType: (info.vehicleTypes.find((x) => x.type === 'SUV') || info.vehicleTypes[0] || {}).type }] });
+    $('#rq-rides', v).addEventListener('click', (e) => { if (e.target.closest('[data-add],[data-rm]')) reprice(); });
+    reprice();
     $('#rq', v).onsubmit = async (e) => {
       e.preventDefault();
       const f = formData(e.target);
       await busy($('button[type=submit]', e.target), async () => {
         try {
-          const r = await api('public.requestQuote', { slug, eventType: f.eventType, eventName: f.eventName, notes: f.notes, contact: { name: f.name, phone: f.phone, email: f.email, org: f.org, smsOk: !!f.smsOk && !!String(f.phone || '').trim() }, lines: rides.get() });
-          $('#rq', v).outerHTML = `<div class="panel stack" style="max-width:640px;text-align:center"><h2>Thank you, we've got your request</h2><p>Your reference is <b class="mono">${esc(r.number)}</b>.</p><p class="muted">${esc(info.company.name)} will price it and send you a link by ${f.email && f.phone ? 'text and email' : f.email ? 'email' : 'text'} to review and book.${signedHere ? ' It will also show on your My trips page.' : ''}</p><div class="row" style="justify-content:center"><a class="btn" href="#book.${esc(slug)}">Back to booking</a>${signedHere ? '<a class="btn brand" href="#customer">My trips</a>' : ''}</div></div>`;
-          window.scrollTo(0, 0);
+          const r = await api('public.eventBook', { slug, eventType: f.eventType, eventName: f.eventName, notes: f.notes, contact: { name: f.name, phone: f.phone, email: f.email, org: f.org, smsOk: !!f.smsOk && !!String(f.phone || '').trim() }, lines: rides.get() });
+          go('quote.' + r.token);
         } catch (err) { showErr($('#rq-err', v), err); }
       });
     };
@@ -1506,13 +1520,13 @@
         : `<div class="grid2"><label class="field"><span>Card number</span><input name="number" class="mono" inputmode="numeric" autocomplete="cc-number" value="4242 4242 4242 4242"></label><label class="field"><span>Expiry (MM/YY)</span><input name="exp" class="mono" autocomplete="cc-exp" value="12/30"></label></div>
           <p class="small muted">${cardHow}${q.company.payMode === 'demo' ? ' Demo: no real card is charged.' : ''}</p>`;
       v.innerHTML = `<div class="stack">
-        <div class="spread"><div><h1 style="font-size:24px">${q.status === 'accepted' ? 'You’re booked' : 'Your quote'}</h1><p class="muted small">${esc(q.company.name)} · ${esc(q.number)}${what ? ' · ' + esc(what) : ''}</p></div>${qPill(q)}</div>
+        <div class="spread"><div><h1 style="font-size:24px">${q.status === 'accepted' ? 'You’re booked' : q.direct ? 'Check your rides and book' : 'Your quote'}</h1><p class="muted small">${esc(q.company.name)} · ${esc(q.number)}${what ? ' · ' + esc(what) : ''}</p></div>${q.direct && q.status === 'sent' ? '' : qPill(q)}</div>
         ${q.status === 'new' ? `<div class="panel muted">We're pricing your request now. You'll get a text or email with the price.</div>` : `
         <div class="panel stack">
           ${q.lines.map((l, i) => `<div class="qride"><div class="spread"><b>${esc(fmtDT(l.pickupAt))}</b><b class="num">${money(l.lineTotal)}</b></div>
             <div class="small">${esc(l.pickup)}${l.service === 'hourly' ? ` · ${l.hours} hours` : ` to ${esc(l.dropoff)}`}</div>
             <div class="small muted">${l.count} × ${esc(l.vehicleType)} at ${money(l.unitPrice)} each · ${l.passengers} passengers${l.notes ? ' · ' + esc(l.notes) : ''}${l.phone ? ' · ' + esc(l.phone) : ''}</div></div>`).join('')}
-          <div class="qline"><span>Total, including gratuity and taxes</span><b class="num">${money(q.total)}</b></div>
+          <div class="qline"><span>${q.direct ? (() => { const n = q.lines.reduce((s2, l) => s2 + (l.count || 1), 0); return `Total for ${n} trip${n === 1 ? '' : 's'}, including gratuity and taxes`; })() : 'Total, including gratuity and taxes'}</span><b class="num">${money(q.total)}</b></div>
           ${q.depositPaid ? `<div class="qline"><span>Deposit paid</span><b class="num">${money(q.depositPaid.amount)}</b></div>` : ''}
           ${q.message ? `<div class="note">${esc(q.message)}</div>` : ''}
           ${open && q.validUntil ? `<p class="small muted">This price is held until ${esc(fmtDate(q.validUntil + 'T12:00:00'))}.</p>` : ''}
@@ -1531,7 +1545,7 @@
           ${q.terms ? `<label class="check small"><input type="checkbox" name="agreeTerms"> <span>I agree to ${esc(q.company.name)}'s <a href="#" id="qa-terms">booking terms</a></span></label>` : ''}
           <div id="qa-err"></div>
           <button class="btn brand big" type="submit">${cardOn ? 'Save card and book' : 'Accept and book'}</button>
-          <button class="linkbtn" type="button" id="qa-no">No thanks, decline this quote</button></form>` : ''}
+          ${q.direct ? '' : '<button class="linkbtn" type="button" id="qa-no">No thanks, decline this quote</button>'}</form>` : ''}
         ${q.company.phone ? `<a class="btn" href="tel:${esc(q.company.phone.replace(/[^\d+]/g, ''))}">Call ${esc(q.company.name)}</a>` : ''}
       </div>`;
       const qc = $('#qc', v);
@@ -1557,7 +1571,7 @@
           } catch (err) { showErr($('#qa-err', v), err); }
         });
       };
-      $('#qa-no', v).onclick = () => {
+      if ($('#qa-no', v)) $('#qa-no', v).onclick = () => {
         const m = openModal({ title: 'Decline this quote', body: `<label class="field"><span>Tell us why (optional)</span><textarea id="qd-why" maxlength="300" placeholder="Found another option, dates changed, over budget"></textarea></label><div id="qd-err"></div>`, footer: '<button class="btn" type="button" data-close>Keep the quote</button><button class="btn danger" type="button" id="qd-go">Decline</button>' });
         $('[data-close]', m).onclick = closeModal;
         $('#qd-go', m).onclick = async () => { try { q = await api('public.declineQuote', { token, reason: $('#qd-why', m).value }); closeModal(); draw(); } catch (err) { showErr($('#qd-err', m), err); } };
@@ -1915,7 +1929,23 @@
           const lp = drawLanding(q.landing), lpOn = lp && state.landOn;
           const sbtn = $('#bk-submit', host); if (sbtn && !opts.submitLabel) sbtn.textContent = mr.length ? `Book these ${mr.length + 1} rides` : 'Book this ride';
           const moreTot = mq.reduce((s2, x) => s2 + (x && !x.error ? x.total : 0), 0);
-          const moreHtml = mr.length ? `${rq ? '' : `<div class="qline"><span>Ride 1</span><span class="num">${money(q.total)}</span></div>`}${mr.map((m, i) => `<div class="qline"><span>Ride ${m.n}${m.pickup && m.dropoff ? `: ${esc(m.pickup.split(',')[0])} to ${esc(m.dropoff.split(',')[0])}` : ''}${mq[i] && mq[i].error ? `<br><span class="err small">${esc(mq[i].error)}</span>` : !mq[i] ? '<br><span class="small faint">Add the date, time and both addresses</span>' : ''}</span><span class="num">${mq[i] && !mq[i].error ? money(mq[i].total) : ''}</span></div>`).join('')}` : '';
+          const grand = q.total + (rq ? rq.total : 0) + (lpOn ? lp.price : 0) + moreTot;
+          // Several rides: each ride's price on its own line, the total at the bottom.
+          if (mr.length) {
+            const place = (x) => esc(String(x || '').split(',')[0]);
+            const n = mr.length + 1 + (rq ? 1 : 0);
+            out.innerHTML = `<div class="small muted">${n} rides · ${esc(q.vehicleType)}</div>
+              <div class="qline"><span><b>Ride 1</b>: ${place(b.pickup)}${b.dropoff ? ` to ${place(b.dropoff)}` : ''}</span><span class="num">${money(q.total)}</span></div>
+              <details class="small"><summary>Ride 1 price details</summary>${quoteLines(q)}</details>
+              ${rq ? `<div class="qline"><span><b>Return ride</b></span><span class="num">${money(rq.total)}</span></div>` : ''}
+              ${mr.map((m, i) => `<div class="qline"><span><b>Ride ${m.n}</b>${m.pickup && m.dropoff ? `: ${place(m.pickup)} to ${place(m.dropoff)}` : ''}${mq[i] && mq[i].error ? `<br><span class="err small">${esc(mq[i].error)}</span>` : !mq[i] ? '<br><span class="small faint">Add the date, time and both addresses</span>' : ''}</span><span class="num">${mq[i] && !mq[i].error ? money(mq[i].total) : ''}</span></div>`).join('')}
+              ${lpOn ? `<div class="qline"><span>${dispatch ? 'Pickup' : 'Ride'} when ${dispatch ? 'they land' : 'you land'} in ${esc(lp.dest.city)}${lp.estimate ? ' (estimate)' : ''}</span><span class="num">${money(lp.price)}</span></div>` : ''}
+              <div class="qline qsum"><span><b>Total for ${n + (lpOn ? 1 : 0)} rides</b></span><span class="num"><b>${money(grand)}</b></span></div>
+              ${q.promoError ? `<div class="err small">${esc(q.promoError)}</div>` : ''}`;
+            fbox.innerHTML = flightBox(q.flight, {});
+            return;
+          }
+          const moreHtml = '';
           out.innerHTML = `<div class="total">${money(q.total + (rq ? rq.total : 0) + (lpOn ? lp.price : 0) + moreTot)}</div>
             <div class="small muted">${esc(C.SERVICES[q.service])} · ${esc(q.vehicleType)}${q.miles ? ` · about ${q.miles} mi, ${q.minutes} min` : ''}${stopList.filter(Boolean).length ? ` · ${stopList.filter(Boolean).length} stop${stopList.filter(Boolean).length > 1 ? 's' : ''}` : ''}</div>
             ${rq ? `<div class="qline"><span>First ride</span><span class="num">${money(q.total)}</span></div><div class="qline"><span>Return ride${rq.miles ? `, about ${rq.miles} mi` : ''}</span><span class="num">${money(rq.total)}</span></div><details class="small"><summary>First ride details</summary>${quoteLines(q)}</details>` : `<div>${quoteLines(q)}</div>`}
@@ -2015,7 +2045,7 @@
     v.innerHTML = `
       <div class="brandhead">${info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : ''}<div class="stack" style="gap:6px"><h1>${esc(info.company.name)}</h1><p>${esc(info.company.tagline || 'Book your ride')}</p></div>
         <div class="small" style="opacity:.9">${esc(info.company.phone || '')}${signedHere ? ` · Signed in as ${esc(session.user.name)} · <a href="#customer" style="color:#fff">My trips</a>` : ''}</div></div>
-      <a class="eventlink" href="#request.${esc(slug)}"><span>Planning a wedding, prom, corporate event or group trip?</span><b>Request a quote</b></a>
+      <a class="eventlink" href="#request.${esc(slug)}"><span>Planning a wedding, prom, corporate event or group trip?</span><b>Book your event</b></a>
       <a class="eventlink" href="#agent.${esc(slug)}" id="agent-link"><span>Travel agent, assistant or concierge booking for clients? Earn commission on every ride.</span><b>Agent sign-up or login</b></a>
       <div id="book-host"></div><div id="auth-host"></div>`;
     const pending = { booking: null };
@@ -2337,7 +2367,7 @@
         const past = trips.filter((t) => ['completed', 'cancelled'].includes(t.status));
         v.innerHTML = `
           <div class="pagehead"><div class="stack" style="gap:4px"><h1>${AG ? 'Bookings' : 'My trips'}</h1><p class="muted">Hello ${esc(session.user.name.split(' ')[0])}. ${AG ? `Rides you booked for ${esc(AG.agency)} clients with ${esc(session.company.name)}.` : mode === 'business' ? (bizAcct() ? `Your business rides for ${esc(bizAcct().name)}.` : 'Your business rides.') : `Your personal rides with ${esc(session.company.name)}.`}</p>${modeSwitch()}</div>
-            <div class="row"><a class="btn" href="#request.${esc(session.company.slug)}">Request an event quote</a><button class="btn brand" type="button" id="new-trip">Book a ride</button></div></div>
+            <div class="row"><a class="btn" href="#request.${esc(session.company.slug)}">Book an event</a><button class="btn brand" type="button" id="new-trip">Book a ride</button></div></div>
           ${cr && (cr.balance > 0 || cr.account || cr.log.length) && !(bizAcct() && mode === 'business' && !cr.balance) ? `<div class="panel creditbox" id="cr-box"><div class="spread"><div class="stack" style="gap:2px"><span class="label">Business ride credit</span><b class="num" style="font-size:24px">${money(cr.balance)}</b></div>
               ${cr.balance > 0 ? '<button class="btn sm" type="button" id="cr-book">Use it on a ride</button>' : ''}</div>
             <p class="small muted">${cr.account ? `Every business ride you book for ${esc(cr.account.name)} saves ${cr.account.pct}% as credit. ` : ''}Use it on your own personal rides: it comes off the price when you book.</p>
