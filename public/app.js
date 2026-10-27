@@ -2711,7 +2711,7 @@
                 <dt>Service</dt><dd>${esc(live.serviceLabel)}${live.service === 'hourly' ? `, ${live.hours} h` : ''}</dd>
                 ${extrasList(live).length ? `<dt>Requests</dt><dd>${esc(extrasList(live).join(' · '))}</dd>` : ''}
                 ${live.notes ? `<dt>Notes</dt><dd>${esc(live.notes)}</dd>` : ''}
-                ${live.farmIn ? `<dt>Fare</dt><dd>Billed to ${esc(live.farmIn.fromName)}. Don't collect payment.</dd>` : live.pay ? `<dt>Fare</dt><dd><span class="num">${money(live.price.total)}</span> · on the customer's card. Don't collect payment; waiting time and tolls you add go on the card after the ride.</dd>` : `<dt>Fare</dt><dd><span class="num">${money(live.price.total)}</span> · the office handles payment. Don't take payment from the passenger.</dd>`}</dl>
+                ${live.farmIn ? `<dt>Fare</dt><dd>Billed to ${esc(live.farmIn.fromName)}. Don't collect payment.</dd>` : live.pay ? `<dt>Fare</dt><dd><span class="num">${money(live.price.total)}</span> · on the customer's card. Don't collect payment; waiting time you add goes on the card after the ride.</dd>` : `<dt>Fare</dt><dd><span class="num">${money(live.price.total)}</span> · the office handles payment. Don't take payment from the passenger.</dd>`}</dl>
               <button class="btn primary drv-next" type="button" data-act="advance" data-id="${live.id}">${esc(NEXT_LABEL[live.status])}</button>
               <div class="grid2 drv-btns"><a class="btn" href="${esc(mapsLink(live.status === 'on_board' && live.dropoff ? live.dropoff : live.pickup))}" target="_blank" rel="noopener">Navigate to ${live.status === 'on_board' && live.dropoff ? 'drop-off' : 'pickup'}</a>
               ${['accepted', 'en_route', 'arrived'].includes(live.status) ? `<button class="btn" type="button" data-act="sign" data-id="${live.id}">Show name sign</button>` : `<button class="btn" type="button" data-act="incident" data-id="${live.id}">Report an incident</button>`}</div>
@@ -2720,7 +2720,6 @@
                 <button class="btn danger" type="button" data-act="noshow" data-id="${live.id}" disabled>Passenger didn't show</button></div>` : ''}
               ${['arrived', 'on_board'].includes(live.status) ? `<form class="grid2" id="drv-extras" data-id="${live.id}">
                 <label class="field"><span>Wait time (min)</span><input id="ex-wait" name="waitMin" type="number" min="0" value="${live.waitMin || 0}"></label>
-                <label class="field"><span>Tolls and parking ($)</span><input id="ex-tolls" name="tolls" type="number" min="0" step="0.01" value="${live.tolls || 0}"></label>
                 <button class="btn" type="submit" style="grid-column:1/-1">Save extras</button></form>` : ''}
               ${['accepted', 'en_route', 'arrived'].includes(live.status) ? `<button class="linkbtn small drv-inc" type="button" data-act="incident" data-id="${live.id}">Report an incident</button>` : ''}
             </div></div>` : (waiting.length ? '' : '<div class="panel muted">No trips right now. New assignments show up here.</div>')}

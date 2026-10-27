@@ -2923,7 +2923,7 @@
       if (!t) fail('Trip not found.', 404);
       if (t.status === 'completed' && t.payment.status === 'paid' && !onFile(t)) fail('This trip is closed and paid.');
       t.waitMin = Math.min(600, Math.max(0, Math.round(num(a.waitMin, 0))));
-      t.tolls = Math.min(1000, Math.max(0, round2(num(a.tolls, 0))));
+      if ('tolls' in a) t.tolls = Math.min(1000, Math.max(0, round2(num(a.tolls, 0))));
       reprice(t);
       return tripView(t);
     });
