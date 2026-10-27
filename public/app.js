@@ -2552,6 +2552,25 @@
     $('[data-close]', m).onclick = closeModal;
     $('#sheet-go', m).onclick = () => { document.body.classList.add('printing-sheet'); setTimeout(() => { window.print(); document.body.classList.remove('printing-sheet'); }, 50); };
   }
+  // The driver's wait clock after "Arrived": counts down the free waiting
+  // (airport and other pickups have their own minutes), then the no-show button opens.
+  let waitTick = null;
+  function waitTimer(box) {
+    clearInterval(waitTick); waitTick = null;
+    if (!box) return;
+    const from = new Date(box.dataset.from).getTime(), ends = new Date(box.dataset.ends).getTime();
+    const free = Math.round((ends - from) / 60e3);
+    const clock = $('.wt-clock', box), note = $('.wt-note', box), btn = $('[data-act="noshow"]', box);
+    const mmss = (ms) => { const sec = Math.max(0, Math.round(ms / 1000)); return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`; };
+    const draw = () => {
+      if (!box.isConnected) { clearInterval(waitTick); waitTick = null; return; }
+      const n = Date.now();
+      if (n < from) { clock.textContent = `${free}:00`; note.textContent = `You're early. The ${free} min wait starts at pickup time, ${fmtTime(new Date(from).toISOString())}.`; btn.disabled = true; box.classList.remove('over'); return; }
+      if (n < ends) { clock.textContent = mmss(ends - n); note.textContent = `Free waiting: ${free} min. If the passenger hasn't come by ${fmtTime(new Date(ends).toISOString())}, you can mark a no-show.`; btn.disabled = true; box.classList.remove('over'); return; }
+      clock.textContent = '+' + mmss(n - ends); note.textContent = `Free waiting is over (${free} min). Call the passenger or dispatch, or mark a no-show.`; btn.disabled = false; box.classList.add('over');
+    };
+    draw(); waitTick = setInterval(draw, 1000);
+  }
   const waitLine = (t) => { if (!t.wait) return ''; const over = new Date(t.wait.endsAt) <= new Date(); return `${over ? 'Free waiting ended' : 'Free waiting until'} <b>${esc(fmtTime(t.wait.endsAt))}</b> (${t.wait.freeMin} min${t.wait.airport ? ' at the airport' : ''})`; };
   const NEXT_LABEL = { accepted: 'Start trip: drive to pickup', en_route: "I've arrived at pickup", arrived: 'Passenger on board', on_board: 'Complete trip' };
   const stars = (n) => '★★★★★'.slice(0, Math.round(n)) + '☆☆☆☆☆'.slice(0, 5 - Math.round(n));
@@ -2641,7 +2660,9 @@
               <button class="btn primary drv-next" type="button" data-act="advance" data-id="${live.id}">${esc(NEXT_LABEL[live.status])}</button>
               <div class="grid2 drv-btns"><a class="btn" href="${esc(mapsLink(live.status === 'on_board' && live.dropoff ? live.dropoff : live.pickup))}" target="_blank" rel="noopener">Navigate to ${live.status === 'on_board' && live.dropoff ? 'drop-off' : 'pickup'}</a>
               ${['accepted', 'en_route', 'arrived'].includes(live.status) ? `<button class="btn" type="button" data-act="sign" data-id="${live.id}">Show name sign</button>` : `<button class="btn" type="button" data-act="incident" data-id="${live.id}">Report an incident</button>`}</div>
-              ${live.status === 'arrived' && live.wait ? `<div class="waitbox"><span class="small">${waitLine(live)}</span><button class="btn sm danger" type="button" data-act="noshow" data-id="${live.id}">Passenger didn't show</button></div>` : ''}
+              ${live.status === 'arrived' && live.wait ? `<div class="waittimer" data-from="${esc(live.wait.from)}" data-ends="${esc(live.wait.endsAt)}">
+                <div class="stack" style="gap:2px"><span class="label">Waiting time${live.wait.airport ? ' (airport)' : ''}</span><b class="wt-clock num">--:--</b><span class="small wt-note"></span></div>
+                <button class="btn danger" type="button" data-act="noshow" data-id="${live.id}" disabled>Passenger didn't show</button></div>` : ''}
               ${['arrived', 'on_board'].includes(live.status) ? `<form class="grid2" id="drv-extras" data-id="${live.id}">
                 <label class="field"><span>Wait time (min)</span><input id="ex-wait" name="waitMin" type="number" min="0" value="${live.waitMin || 0}"></label>
                 <label class="field"><span>Tolls and parking ($)</span><input id="ex-tolls" name="tolls" type="number" min="0" step="0.01" value="${live.tolls || 0}"></label>
@@ -2664,6 +2685,7 @@
       shareLocation(live && ['en_route', 'arrived', 'on_board'].includes(live.status) ? live.id : null);
       $('#drv-avail', v).onchange = async (e) => { try { await api('driver.availability', { available: e.target.checked }); last = ''; refresh(); } catch (err) { toast(err.message, true); } };
       wirePhoto(v, 'drv-photo', savePhoto);
+      waitTimer($('.waittimer', v));
       $$('[data-act]', v).forEach((b) => { b.onclick = () => b.dataset.act === 'calendar' ? driverCalendar() : b.dataset.act === 'photo' ? myPhoto(me) : b.dataset.act === 'sign' ? nameSign(trips.find((x) => x.id === b.dataset.id)) : b.dataset.act === 'incident' ? incidentModal({ trip: (() => { const t = trips.find((x) => x.id === b.dataset.id); return t ? { id: t.id, ref: t.ref, pickupAt: t.pickupAt, passengerName: t.passengerName } : null; })() }, { done: () => {} }) : b.dataset.act === 'noshow' ? noShowModal(trips.find((x) => x.id === b.dataset.id), 'driver.noShow', () => { last = ''; refresh(); }) : busy(b, async () => {
         const id = b.dataset.id;
         try {

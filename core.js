@@ -111,7 +111,7 @@
   // Travel agents and other bookers who book rides for their clients earn a
   // commission on the ride price (before gratuity and tax).
   const DEFAULT_AGENTS = { commissionPct: 10, on: true };
-  const DEFAULT_POLICY = { editHours: 24, cancelHours: 24, cancelFeePct: 100, waitAirport: 60, waitOther: 15, noShowFeePct: 100, chargeWhen: 'booking', chargeHours: 24 };
+  const DEFAULT_POLICY = { editHours: 24, cancelHours: 24, cancelFeePct: 100, waitAirport: 60, waitOther: 20, noShowFeePct: 100, chargeWhen: 'booking', chargeHours: 24 };
   // Ride preferences a passenger can ask for; saved on their profile.
   const TEMPS = { '': 'No preference', cool: 'Cool', warm: 'Warm' };
   const MUSIC = { '': 'No preference', soft: 'Soft music', none: 'No music', own: 'Own music by Bluetooth' };
