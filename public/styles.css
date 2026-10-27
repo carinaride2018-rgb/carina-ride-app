@@ -648,6 +648,7 @@ a.quotecard:hover { border-color: var(--brand); }
 .fm-scale line { stroke: var(--ink-2); stroke-width: 2; }
 .fm-scale text { fill: var(--ink-2); font: 11px var(--font-ui); }
 .fm-google { height: 420px; width: 100%; }
+.tm-google { height: 300px; width: 100%; }
 .fm-side { max-height: 420px; overflow-y: auto; }
 .fm-list { list-style: none; margin: 0; padding: 0; }
 .fm-list li { display: flex; gap: 8px; align-items: flex-start; padding: 8px 6px; border-bottom: 1px solid var(--line); font-size: 13px; }

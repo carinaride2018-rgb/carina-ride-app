@@ -986,7 +986,11 @@
         // Booked with an email too: the chauffeur and car go there as well.
         if (channel === 'sms' && trip.passengerEmail && cmsg(c).confirmEmail) say(trip.passengerEmail, 'email', msgText(trip, 'accepted'));
       }
-      if (kind === 'en_route' && driver) say(to, channel, msgText(trip, 'en_route'));
+      if (kind === 'en_route' && driver) {
+        say(to, channel, msgText(trip, 'en_route'));
+        // The live map link goes by email too, so it arrives even when texts don't.
+        if (channel === 'sms' && trip.passengerEmail && cmsg(c).confirmEmail) say(trip.passengerEmail, 'email', msgText(trip, 'en_route'));
+      }
       if (kind === 'approach') say(to, channel, msgText(trip, 'approach'));
       if (kind === 'arrived') say(to, channel, msgText(trip, 'arrived'));
       if (kind === 'completed') {

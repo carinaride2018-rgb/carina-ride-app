@@ -199,6 +199,9 @@
   let liveInfo = null;
   const getLive = async () => { if (!liveInfo) { try { liveInfo = await api('public.info'); } catch (e) { liveInfo = { live: {}, payMode: 'demo' }; } } return liveInfo; };
 
+  let gmaps = null; // the Google script, loaded once
+  const loadGoogle = (key) => gmaps || (gmaps = new Promise((ok, no) => { const sc = document.createElement('script'); sc.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&v=weekly`; sc.async = true; sc.onload = () => ok(); sc.onerror = () => { gmaps = null; no(new Error('Google Maps did not load')); }; document.head.appendChild(sc); }));
+
   // ---- UI primitives --------------------------------------------------------
   let toastTimer = null;
   const HIST_LABELS = { wake_call: 'Wake-up call', wake_ok: 'Driver confirmed awake', wake_alert: 'Office alerted: no answer to wake-up call', late_alert: 'Office alerted: driver not on the way', confirm_resent: 'Confirmation sent again', receipt_sent: 'Receipt emailed', paid: 'Charged', refunded: 'Refunded', card_failed: 'Card declined', card_saved: 'Card saved', card_link: 'Card link sent', no_show: 'No-show', pickup_moved: 'Pickup moved', flight_cancelled: 'Flight cancelled', declined: 'Declined', edited: 'Edited', unassigned: 'Unassigned', no_answer: 'No answer in time', farm_offered: 'Offered to partner', farm_accepted: 'Partner accepted', farm_declined: 'Partner declined', farm_cancelled: 'Taken back from partner', farm_returned: 'Partner handed it back', farm_expired: 'Partner offer expired', farm_completed: 'Partner completed', auto_farm_none: 'Automatic farm-out stopped', posted: 'Posted to trip board', post_expired: 'Trip board: nobody took it', post_cancelled: 'Taken off the trip board' };
@@ -853,17 +856,22 @@
     let route = '';
     if (gps || live.arrived) route = `<line x1="${px}" y1="${py}" x2="${tx}" y2="${ty}" class="tm-route" />`;
     else { const [fx, fy] = P(live.from), [qx, qy] = P(live.ctrl); route = `<path d="M${fx} ${fy} Q${qx} ${qy} ${tx} ${ty}" class="tm-route" /><circle cx="${fx}" cy="${fy}" r="4" class="tm-start" />`; }
-    const ago = Math.max(0, Math.round((Date.now() - new Date(live.updatedAt).getTime()) / 1000));
     return `<div class="trackmap" role="img" aria-label="${esc(live.arrived ? 'Chauffeur has arrived at the pickup' : `Chauffeur about ${live.etaMin} minutes away`)}">
       <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
         ${route}
         <g transform="translate(${tx} ${ty})"><path d="M0 0C-7-9-10-13-10-18a10 10 0 0 1 20 0c0 5-3 9-10 18z" class="tm-pin" /><circle cy="-18" r="3.5" class="tm-pinhole" /></g>
         ${live.arrived ? '' : `<g transform="translate(${px} ${py})"><circle r="16" class="tm-pulse" /><circle r="8" class="tm-car" /></g>`}
       </svg>
-      <div class="tm-info"><b>${live.arrived ? 'Arrived at the pickup' : `About ${live.etaMin} min away`}</b><span class="small muted">${live.arrived ? esc(label || '') : `${live.milesLeft} mi to ${esc(label || 'pickup')}`}</span>
-        <span class="small faint">${gps ? `Live GPS · updated ${ago < 60 ? ago + ' s' : Math.round(ago / 60) + ' min'} ago` : 'Estimated position'}</span></div>
+      ${trackLine(live, label)}
     </div>`;
   }
+  const trackLine = (live, label) => {
+    const ago = Math.max(0, Math.round((Date.now() - new Date(live.updatedAt).getTime()) / 1000));
+    return `<div class="tm-info"><b>${live.arrived ? 'Arrived at the pickup' : `About ${live.etaMin} min away`}</b><span class="small muted">${live.arrived ? esc(label || '') : `${live.milesLeft} mi to ${esc(label || 'pickup')}`}</span>
+        <span class="small faint">${live.arrived ? '' : live.source === 'gps' ? `Live GPS · updated ${ago < 60 ? ago + ' s' : Math.round(ago / 60) + ' min'} ago` : 'Waiting for the chauffeur’s GPS. Showing an estimate.'}</span></div>`;
+  };
+  // The Google map version: the map goes in the slot, the same info line below.
+  const trackInfo = (live, label, slot) => `<div class="trackmap" role="img" aria-label="${esc(live.arrived ? 'Chauffeur has arrived at the pickup' : `Chauffeur about ${live.etaMin} minutes away`)}">${slot}${trackLine(live, label)}</div>`;
 
   // ---- Passenger tracking page (#track.<token>) ------------------------------
   async function viewTrack(token) {
@@ -876,15 +884,44 @@
       const done = ['on_board', 'completed', 'cancelled'].includes(d.status);
       v.innerHTML = `<div class="stack">
         <div class="spread"><div><h1 style="font-size:24px">${d.live && !d.live.arrived ? 'Your car is on the way' : d.status === 'arrived' ? 'Your car is here' : esc(d.statusLabel)}</h1><p class="muted small">${esc(d.company.name)} · ${esc(d.ref)}</p></div>${pill(d)}</div>
-        ${d.live ? trackMap(d.live, d.pickup) : `<div class="panel muted">${done ? (d.status === 'cancelled' ? 'This trip was cancelled.' : 'Your chauffeur has picked you up. Enjoy the ride.') : 'Tracking starts when your chauffeur sets off.'}</div>`}
+        ${d.live ? (tg.on ? trackInfo(d.live, d.pickup, '<div class="tm-slot"></div>') : trackMap(d.live, d.pickup)) : `<div class="panel muted">${done ? (d.status === 'cancelled' ? 'This trip was cancelled.' : 'Your chauffeur has picked you up. Enjoy the ride.') : 'Tracking starts when your chauffeur sets off.'}</div>`}
         ${d.driver ? `<div class="panel">${chauffeurCard(d.driver, d.vehicle)}</div>` : ''}
         <div class="panel"><dl class="kv">${!d.driver && d.vehicle ? `<dt>Vehicle</dt><dd>${esc(carLine(d.vehicle))}</dd>${d.vehicle.plate ? `<dt>Plate</dt><dd class="mono">${esc(d.vehicle.plate)}</dd>` : ''}` : ''}
           <dt>Pickup</dt><dd>${esc(d.pickup)}</dd><dt>Time</dt><dd>${esc(fmtDT(d.pickupAt))}</dd></dl></div>
         ${d.company.phone ? `<a class="btn" href="tel:${esc(d.company.phone.replace(/[^\d+]/g, ''))}">Call ${esc(d.company.name)}</a>` : ''}
       </div>`;
+
+      return d;
     };
-    current = { poll: true, refresh: load };
-    await load();
+    // With a Google Maps key the passenger gets a real street map: the car at
+    // the driver's live GPS spot and the pickup pin. The map survives refreshes.
+    const tg = { on: false };
+    const info = await getLive();
+    if (!DEMO && info.mapsKey) { try { await loadGoogle(info.mapsKey); tg.on = true; } catch (e) { tg.on = false; } }
+    const paint = (d) => {
+      const slot = d && d.live && tg.on && $('#view .tm-slot');
+      if (!slot) return;
+      const g = window.google.maps, L = d.live, showCar = !L.arrived && L.source === 'gps';
+      if (!tg.map) {
+        tg.div = document.createElement('div'); tg.div.className = 'tm-google';
+        tg.map = new g.Map(tg.div, { center: L.to, zoom: 13, mapTypeControl: false, streetViewControl: false, fullscreenControl: false });
+        tg.pin = new g.Marker({ map: tg.map, title: 'Pickup' });
+        tg.car = new g.Marker({ map: null, title: 'Your chauffeur', icon: { path: g.SymbolPath.CIRCLE, scale: 10, fillColor: '#1a73e8', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 3 } });
+        tg.fit = true;
+      }
+      slot.appendChild(tg.div);
+      tg.pin.setPosition(L.to);
+      tg.car.setMap(showCar ? tg.map : null);
+      if (showCar) tg.car.setPosition(L.pos);
+      const seen = tg.map.getBounds();
+      if (tg.fit || (showCar && seen && !seen.contains(L.pos))) {
+        if (showCar) { const bd = new g.LatLngBounds(); bd.extend(L.to); bd.extend(L.pos); tg.map.fitBounds(bd, 50); } else { tg.map.setCenter(L.to); tg.map.setZoom(15); }
+        tg.fit = false;
+      }
+    };
+    const refresh = async () => { const d = await load(); paint(d); };
+    current = { poll: true, refresh };
+    await refresh();
   }
 
   // ---- Passenger review page (#review.<token>) ------------------------------
@@ -3131,8 +3168,6 @@
         for (const [key, pl] of gm.lines) if (!keep.has(key)) { pl.setMap(null); gm.lines.delete(key); }
         if (gm.fit && (d.cars.length || d.pickups.length)) { const bd = new g.LatLngBounds(); [...d.cars.map((c) => c.pos), ...d.pickups.map((p) => p.pos)].forEach((p) => bd.extend(p)); gm.map.fitBounds(bd, 40); gm.fit = false; }
       }
-      let gmaps = null; // the Google script, loaded once
-      const loadGoogle = (key) => gmaps || (gmaps = new Promise((ok, no) => { const sc = document.createElement('script'); sc.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&v=weekly`; sc.async = true; sc.onload = () => ok(); sc.onerror = () => no(new Error('Google Maps did not load')); document.head.appendChild(sc); }));
       function draw() {
         if (!data) return;
         const d = data, open = isOpen();
