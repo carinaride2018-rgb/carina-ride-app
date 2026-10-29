@@ -673,6 +673,15 @@
   function render() {
     closeModal();
     const route = location.hash.slice(1) || '';
+    // booking.limorelay.com opens straight on the nationwide booking page.
+    if (route === '' && /^booking\./i.test(location.hostname)) {
+      getLive().then((i) => { if (i.houseSlug) { history.replaceState(null, '', '#book.' + i.houseSlug); viewBook(i.houseSlug); } else if (!session) viewSignin(); else render2(); });
+      return;
+    }
+    return render2();
+  }
+  function render2() {
+    const route = location.hash.slice(1) || '';
     if (route.startsWith('book.')) return viewBook(route.slice(5));
     if (route.startsWith('track.')) return viewTrack(route.slice(6));
     if (route.startsWith('review.')) return viewReview(route.slice(7));
@@ -1893,6 +1902,8 @@
       const mr = state.service === 'hourly' ? [] : moreList.filter((m) => m.pickup.trim() || m.dropoff.trim());
       if (mr.length) out.moreRides = mr.map((m) => { const w = m.date && m.time ? new Date(`${m.date}T${m.time}`) : null; return { pickupAt: w && !isNaN(w) ? w.toISOString() : '', pickup: m.pickup.trim(), dropoff: m.dropoff.trim(), flight: m.flight.trim() }; });
       out.moreList = moreList;
+      // The nationwide site reads the times as the pickup city's local time.
+      if (opts.info.company && opts.info.company.house) { try { out.browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { /* server keeps the time as sent */ } }
       delete out.cardNo; delete out.cardExp; delete out.payDriver;
       if (opts.guest) { const ge = $('#bk-gemail', host); out.guestEmail = ge ? ge.value.trim() : ''; }
       if (!agent) delete out.payBy;
@@ -2059,9 +2070,9 @@
     document.documentElement.style.setProperty('--brand', info.company.color);
     v.innerHTML = `
       <div class="brandhead">${info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : ''}<div class="stack" style="gap:6px"><h1>${esc(info.company.name)}</h1><p>${esc(info.company.tagline || 'Book your ride')}</p></div>
-        <div class="small" style="opacity:.9">${esc(info.company.phone || '')}${signedHere ? ` · Signed in as ${esc(session.user.name)} · <a href="#customer" style="color:#fff">My trips</a>` : ''}</div></div>
-      <a class="eventlink" href="#request.${esc(slug)}"><span>Planning a wedding, prom, corporate event or group trip?</span><b>Book your event</b></a>
-      <a class="eventlink" href="#agent.${esc(slug)}" id="agent-link"><span>Travel agent, assistant or concierge booking for clients? Earn commission on every ride.</span><b>Agent sign-up or login</b></a>
+        <div class="small" style="opacity:.9">${esc(info.company.phone || '')}${signedHere ? ` · Signed in as ${esc(session.user.name)} · <a href="#customer">My trips</a>` : ''}</div></div>
+      ${info.company.house ? `<p class="housenote">Book a chauffeured car in any US city. Enter the pickup time in that city's local time. A LimoRelay company in that city drives your ride.</p>` : `<a class="eventlink" href="#request.${esc(slug)}"><span>Planning a wedding, prom, corporate event or group trip?</span><b>Book your event</b></a>
+      <a class="eventlink" href="#agent.${esc(slug)}" id="agent-link"><span>Travel agent, assistant or concierge booking for clients? Earn commission on every ride.</span><b>Agent sign-up or login</b></a>`}
       <div id="book-host"></div><div id="auth-host"></div>`;
     const pending = { booking: null };
     // A new company with no cars yet can't take online bookings.
@@ -5355,9 +5366,48 @@
   function viewOwner() {
     let tab = 'companies';
     const draw = () => {
-      const v = shell({ tabs: [{ key: 'companies', label: 'Companies' }, { key: 'billing', label: 'Billing' }, { key: 'connections', label: 'Connections' }], active: tab, onTab: (t) => { tab = t; draw(); } });
-      ({ companies: drawCompanies, billing: drawBilling, connections: drawConnections })[tab](v);
+      const v = shell({ tabs: [{ key: 'companies', label: 'Companies' }, { key: 'national', label: 'Nationwide booking' }, { key: 'billing', label: 'Billing' }, { key: 'connections', label: 'Connections' }], active: tab, onTab: (t) => { tab = t; draw(); } });
+      ({ companies: drawCompanies, national: drawNational, billing: drawBilling, connections: drawConnections })[tab](v);
     };
+    // booking.limorelay.com: LimoRelay's own booking page for every US city.
+    async function drawNational(v) {
+      current = { poll: false };
+      let n;
+      try { n = await api('owner.national'); } catch (e) { return showErr(v, e); }
+      const site = 'booking.limorelay.com';
+      const how = `<section class="panel stack" style="margin-top:16px" id="nb-how"><h2>How it works</h2><ol class="stack small" style="gap:6px;margin:0;padding-left:20px">
+          <li>A passenger books any US city on <b>${site}</b>. The card is charged by LimoRelay (connect LimoRelay's own Stripe in the LimoRelay dispatch office, Connections).</li>
+          <li>The ride goes straight to a LimoRelay company that serves the pickup city and runs that car. With two companies in a city, they take turns.</li>
+          <li>The company has ${n.answerMin || 15} minutes to accept. If it passes or doesn't answer, the next company in that city gets it. The company that drives keeps the fare less your commission (Network balances).</li>
+          <li>If no company covers the city, or every one passes, LimoRelay dispatch and you get an <b>urgent</b> email, notification and Board alert to place the ride by hand.</li></ol></section>`;
+      const form = (set) => `<form id="nb-form" class="panel stack" novalidate style="max-width:640px"><h2>${set ? 'Settings' : 'Set up the nationwide booking site'}</h2>
+          ${set ? '' : `<p class="small muted">This makes a LimoRelay dispatch office with its own login. It has no cars: it only places rides with your member companies and watches for ones nobody takes.</p>
+          <div class="grid2"><label class="field"><span>Who runs LimoRelay dispatch</span><input name="adminName" id="nb-name" value="${esc(session.user.name || '')}"></label>
+          <label class="field"><span>Their login email</span><input name="adminEmail" id="nb-email" type="email" placeholder="dispatch@limorelay.com"><span class="hint">Must be different from your owner login. Urgent alerts go here too.</span></label></div>
+          <label class="field"><span>Phone shown on the booking page</span><input name="phone" id="nb-phone" type="tel"></label>`}
+          <div class="grid2"><label class="field"><span>LimoRelay commission</span><input name="commission" id="nb-pct" type="number" min="0" max="50" step="0.5" value="${esc(n.commission)}"><span class="hint">% of the fare you keep. The company that drives gets the rest.</span></label>
+          <label class="field"><span>Minutes a company has to accept</span><input name="answerMin" id="nb-min" type="number" min="5" max="240" value="${esc(n.answerMin)}"></label></div>
+          <div id="nb-err"></div><div><button class="btn primary" type="submit" id="nb-save">${set ? 'Save' : 'Set it up'}</button></div></form>`;
+      v.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Nationwide booking</h1><p class="muted">One booking site for every US city. Rides go to your member companies automatically.</p></div></div>
+        ${n.set ? `<div class="tiles" style="margin-bottom:16px"><div class="tile"><span class="label">Booking page</span><b><a href="#book.${esc(n.slug)}">${site}</a></b><span class="small faint">Until the domain is added: limorelay.com/#book.${esc(n.slug)}</span></div>
+          <div class="tile"><span class="label">Bookings</span><b>${n.bookings}</b></div><div class="tile"><span class="label">Need a company now</span><b class="${n.urgent ? 'bad' : ''}">${n.urgent}</b></div>
+          <div class="tile"><span class="label">LimoRelay dispatch login</span><b class="small">${esc(n.adminEmail)}</b></div></div>
+          <p class="small muted">Cities covered by member companies: ${n.cities.length ? n.cities.map(esc).join(', ') : 'none yet'}.</p>` : ''}
+        ${form(n.set)}${how}
+        <section class="panel stack" style="margin-top:16px"><h2>Turn on ${site}</h2><ol class="stack small" style="gap:6px;margin:0;padding-left:20px">
+          <li>Render: open the livery service, Settings, Custom Domains, Add, type <span class="mono">${site}</span>.</li>
+          <li>GoDaddy: DNS for limorelay.com, Add record: Type <b>CNAME</b>, Name <span class="mono">booking</span>, Value <span class="mono">livery-9xtm.onrender.com</span>.</li>
+          <li>Back in Render, wait for it to say Verified and Certificate issued.</li></ol></section>`;
+      $('#nb-form', v).onsubmit = (e) => { e.preventDefault(); busy($('#nb-save', v), async () => {
+        const err = $('#nb-err', v); err.innerHTML = '';
+        try {
+          const r = await api('owner.saveNational', formData($('#nb-form', v)));
+          toast(n.set ? 'Saved.' : r.emailOn ? `Set up. A login email went to ${r.adminEmail}.` : 'Set up.');
+          if (r.loginLink) prompt('Email is off, so send this login link yourself:', r.loginLink);
+          drawNational(v);
+        } catch (x) { showErr(err, x); }
+      }); };
+    }
     // Which outside services are real. Keys live in the host's settings, never here.
     async function drawConnections(v) {
       current = { poll: false };

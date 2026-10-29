@@ -350,6 +350,20 @@
   // Service places for the network directory: "City, ST" names and airport codes.
   const stateOfAirport = (code) => { const m = AIRPORTS[code] && AIRPORTS[code][1].match(/,\s*([A-Z]{2})\b/); return m ? m[1] : ''; };
   const cityName = (x) => str(x).split(',')[0].trim();
+  // Main time zone of each state, for nationwide bookings timed in the pickup city.
+  const STATE_TZ = (() => {
+    const z = { 'America/New_York': 'CT DE DC FL GA IN KY ME MD MA MI NH NJ NY NC OH PA RI SC VT VA WV', 'America/Chicago': 'AL AR IL IA KS LA MN MS MO NE ND OK SD TN TX WI',
+      'America/Denver': 'CO MT NM UT WY ID', 'America/Phoenix': 'AZ', 'America/Los_Angeles': 'CA NV OR WA', 'America/Anchorage': 'AK', 'Pacific/Honolulu': 'HI' };
+    const out = {}; for (const [tz, list] of Object.entries(z)) for (const st of list.split(' ')) out[st] = tz; return out;
+  })();
+  // The time zone of a pickup address: its airport's, or its state's.
+  function placeTz(addr) {
+    const code = airportCode(addr);
+    if (code && AIRPORTS[code]) return AIRPORTS[code][5];
+    const all = [...str(addr).matchAll(/,\s*([A-Z]{2})\b/g)];
+    for (let i = all.length - 1; i >= 0; i--) if (STATE_TZ[all[i][1]]) return STATE_TZ[all[i][1]];
+    return '';
+  }
   const cleanCity = (x) => { const [c, s] = str(x, 60).split(',').map((y) => y.trim()); return c ? (s ? `${c[0].toUpperCase()}${c.slice(1)}, ${s.toUpperCase().slice(0, 2)}` : `${c[0].toUpperCase()}${c.slice(1)}`) : ''; };
   // Where a pickup is: its airport, or the "City, ST" in the address.
   function placeOfAddr(addr) {
@@ -771,7 +785,7 @@
     const payOpts = (c) => ({ card: true, cash: false, ...((c && c.payOptions) || {}) });
     const cardsOn = (c) => payOpts(c).card !== false && (payMode === 'demo' || (payMode === 'stripe' && !!(c.stripe && c.stripe.ready)));
     const cashOn = (c) => !!payOpts(c).cash;
-    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), cash: cashOn(c), cardChoice: payOpts(c).card !== false, payMode, logo: c.logo || '' });
+    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), cash: cashOn(c), cardChoice: payOpts(c).card !== false, payMode, logo: c.logo || '', ...(c.house ? { house: true } : {}) });
 
     async function hashPw(pw, salt) { return hash(String(pw), salt); }
     async function setPassword(u, pw) { u.salt = randomId(8); u.passHash = await hashPw(pw, u.salt); }
@@ -901,7 +915,7 @@
       const v = t.vehicleId ? findVehicle(t.vehicleId) : aff && aff.vehicle ? aff.vehicle : null;
       const ns = t.noShow || {};
       const lt = t.landingId && db.trips.find((x) => x.id === t.landingId);
-      const away = (x) => (x.outOfTown ? { timezone: x.outOfTown.tz } : c);
+      const away = (x) => (x.outOfTown ? { timezone: x.outOfTown.tz } : x.tz ? { timezone: x.tz } : c);
       return {
         company: c.name, ref: t.ref, passenger: (t.passengerName || '').split(' ')[0], pickup_time: fmtLocal(t.pickupAt, away(t), true) + (t.outOfTown ? ` ${t.outOfTown.city} time` : ''),
         landing_line: lt && lt.status !== 'cancelled' ? ` Your pickup when you land: ${lt.ref}, ${lt.pickup.split(',')[0]}, ${fmtLocal(lt.pickupAt, away(lt), true)}${lt.outOfTown ? ` ${lt.outOfTown.city} time` : ''}, to ${lt.dropoff}. We follow your flight and move it if you land late.` : '',
@@ -1422,12 +1436,19 @@
       }
       // Airport pickups are timed to the landing, so the flight is required.
       if (isAirport(out.pickup) && !out.flight) fail('Pickups at the airport need the flight number, for example AS 331, so we can follow the landing.');
+      // Nationwide site: the time typed is the pickup city's local time, not the booker's.
+      if (company.house) {
+        const tz = placeTz(out.pickup) || company.timezone;
+        const bt = str(b.browserTz, 60);
+        if (bt && tz !== bt && !isNaN(new Date(out.pickupAt))) { const lp = localParts(out.pickupAt, bt); out.pickupAt = localToIso(lp.date, `${String(lp.hour).padStart(2, '0')}:${String(lp.minute).padStart(2, '0')}`, { timezone: tz }) || out.pickupAt; }
+        out.tz = tz;
+      }
       const when = new Date(out.pickupAt);
       if (isNaN(when)) fail('Choose a pickup date and time.');
       if (!allowPast && when.getTime() < now().getTime() - 5 * 60000) fail('Pickup time is in the past. Choose a later time.');
       out.pickupAt = when.toISOString();
       if (!(out.passengers >= 1 && out.passengers <= 60)) fail('Passengers must be between 1 and 60.');
-      const fleet = db.vehicles.filter((v) => v.companyId === company.id && v.status === 'active' && v.type === out.vehicleType);
+      const fleet = company.house ? houseTypes(company).filter((v) => v.type === out.vehicleType) : db.vehicles.filter((v) => v.companyId === company.id && v.status === 'active' && v.type === out.vehicleType);
       if (!fleet.length) fail(`${company.name} has no ${out.vehicleType} available. Choose another vehicle.`);
       const cap = Math.max(...fleet.map((v) => v.capacity));
       if (out.passengers > cap) fail(`${anA(out.vehicleType)} ${out.vehicleType} seats up to ${cap}. Choose a larger vehicle.`);
@@ -1665,7 +1686,8 @@
         const pickMs = new Date(t.pickupAt).getTime();
         const at = fmtLocal(t.pickupAt, company);
         const d = t.driverId && findUser(t.driverId);
-        if (t.status === 'confirmed' && t.needsDriver && pickMs > nowMs - 3600e3) out.push({ level: 'bad', area: 'dispatch', text: `${t.ref} at ${at} needs a driver: ${t.needsDriver.why.charAt(0).toLowerCase() + t.needsDriver.why.slice(1).replace(/\.$/, '')}`, tripId: t.id });
+        if (t.status === 'confirmed' && t.needsDriver && t.needsDriver.urgent && pickMs > nowMs - 3600e3) out.push({ level: 'bad', area: 'dispatch', text: `${t.needsDriver.why} for ${t.ref}, pickup ${fmtLocal(t.pickupAt, t.tz ? { timezone: t.tz } : company, true)} local time. Open the trip to send it to a company.`, tripId: t.id });
+        else if (t.status === 'confirmed' && t.needsDriver && pickMs > nowMs - 3600e3) out.push({ level: 'bad', area: 'dispatch', text: `${t.ref} at ${at} needs a driver: ${t.needsDriver.why.charAt(0).toLowerCase() + t.needsDriver.why.slice(1).replace(/\.$/, '')}`, tripId: t.id });
         else if (t.status === 'assigned' && t.offer && d) {
           const left = Math.max(0, Math.ceil((new Date(t.offer.expiresAt).getTime() - nowMs) / 60e3));
           out.push({ level: 'info', area: 'dispatch', text: `${t.ref}: waiting for ${d.name} to accept (${left} min left)`, tripId: t.id });
@@ -2047,7 +2069,15 @@
     }
     // What customers choose from: each type in the active fleet with seats,
     // suitcases and the actual models ("Lincoln Navigator or similar").
+    // The nationwide booking company has no cars of its own: it offers the
+    // usual types, and a member company in the pickup city drives the ride.
+    const HOUSE_TYPES = [['Sedan', 3, 'Cadillac, Lincoln or similar'], ['SUV', 6, 'Lincoln Navigator, Cadillac Escalade or similar'], ['Business Van', 10, 'Ford Transit or similar'], ['Sprinter Van', 14, 'Mercedes Sprinter or similar']];
+    function houseTypes(c) {
+      const bags = bagsCfg(c);
+      return HOUSE_TYPES.map(([type, capacity, models]) => ({ type, capacity, bags: bags[type], models, multiplier: c.rates.multipliers[type] || 1, photo: '' }));
+    }
     function vehicleTypesFor(c) {
+      if (c.house && !db.vehicles.some((v) => v.companyId === c.id && v.status === 'active')) return houseTypes(c);
       const out = {}, names = {};
       for (const v of db.vehicles) {
         if (v.companyId !== c.id || v.status !== 'active') continue;
@@ -2150,7 +2180,7 @@
     }
 
     // Public (no login)
-    def('public.info', 'public', false, () => ({ sample: !!db.sample, live: clone(live), payMode, pushKey: opts.pushKey || '', nativePush: opts.nativePush || null, mapsKey: opts.mapsKey || '' }));
+    def('public.info', 'public', false, () => ({ houseSlug: (db.companies.find((c) => c.house && c.status === 'active') || {}).slug || '', sample: !!db.sample, live: clone(live), payMode, pushKey: opts.pushKey || '', nativePush: opts.nativePush || null, mapsKey: opts.mapsKey || '' }));
     def('public.companies', 'public', false, () =>
       db.companies.filter((c) => c.status === 'active').map(pubCompany));
     def('public.company', 'public', false, (ctx, a) => {
@@ -2191,7 +2221,7 @@
       const own = suggestPlaces(c, str(a.q, 120), recent.slice(0, u && u.role === 'customer' ? 6 : 4));
       // With Google Places on, real addresses follow the caller's own recent ones.
       if (!providers.places || str(a.q, 120).length < 3) return own;
-      const live = await providers.places(str(a.q, 120), REGION_CENTER[regionOf(c)]);
+      const live = await providers.places(str(a.q, 120), c && c.house ? null : REGION_CENTER[regionOf(c)]);
       if (!live) return own;
       const seen = new Set();
       return own.filter((p) => p.kind === 'recent').concat(live).filter((p) => { const k = fold(p.address); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 8);
@@ -2294,7 +2324,7 @@
           const la = t.lateAlerts && t.lateAlerts.last;
           if (t.wake && t.wake.alerted && !t.wake.ok && ['assigned', 'accepted'].includes(t.status) && recent(t.wake.alerted, 2)) { const dw = findUser(t.driverId); add(`wake:${t.id}`, `No answer to wake-up call: ${t.ref}`, `${dw ? dw.name : 'The driver'} didn't answer the wake-up call. Pickup ${at(t)} from ${t.pickup}.`, '#dispatch', t.wake.alerted); }
           if (la && ['assigned', 'accepted'].includes(t.status) && recent(la.at, 2)) { const dd = findUser(t.driverId); add(`late:${t.id}:${la.min}`, `Driver not on the way: ${t.ref}`, `${dd ? dd.name : 'The driver'} hasn't tapped On the way. Pickup ${at(t)} from ${t.pickup}.`, '#dispatch', la.at); }
-          if (t.status === 'confirmed' && t.needsDriver && !t.farmout && recent(t.needsDriver.at)) add(`need:${t.id}:${t.needsDriver.at}`, `${t.ref} needs a driver`, `${t.needsDriver.why}. Pickup ${at(t)}.`, '#dispatch', t.needsDriver.at);
+          if (t.status === 'confirmed' && t.needsDriver && !t.farmout && recent(t.needsDriver.at)) add(`need:${t.id}:${t.needsDriver.at}`, t.needsDriver.urgent ? `URGENT: ${t.ref} needs a company` : `${t.ref} needs a driver`, `${t.needsDriver.why}. Pickup ${at(t)}.`, '#dispatch', t.needsDriver.at);
           const cx = lastOf(t, 'cancelled');
           if (t.noShowAsk && t.status === 'arrived') add(`noshowask:${t.id}:${t.noShowAsk.at}`, `No-show to confirm: ${t.ref}`, `${t.noShowAsk.by} waited ${t.noShowAsk.waitedMin} min for ${t.passengerName || 'the passenger'}. Confirm the no-show or say keep waiting.`, '#dispatch', t.noShowAsk.at);
           if (t.noShow && recent(t.noShow.at, 3) && t.noShow.by !== u.name) add(`noshow:${t.id}`, `No-show on ${t.ref}`, `${t.passengerName || 'Passenger'}. ${t.noShow.waitedMin ? `Driver waited ${t.noShow.waitedMin} min.` : ''}${t.noShow.fee ? ` Fee $${money(t.noShow.fee)}.` : ''}`.trim(), '#dispatch', t.noShow.at);
@@ -2567,6 +2597,8 @@
       payStep(t); if (r) payStep(r); if (lt) payStep(lt); more.forEach(payStep); reps.forEach(payStep);
       // Remember how they like to ride for next time (an agent's clients differ).
       if (!agent) ctx.user.prefs = { ...b.prefs, signName: b.signName || (ctx.user.prefs && ctx.user.prefs.signName) || '' };
+      // Nationwide site: send it to a company in the pickup city right away.
+      if (ctx.company.house) sweepAutoFarm(ctx.company);
       return { ...tripView(t), returnTrip: r ? tripView(r) : null, landingTrip: lt ? tripView(lt) : null, moreTrips: more.map(tripView), repeats: reps.filter((x) => !x.returnOf).length };
     });
     // Booking without an account: the guest types their name, mobile and email.
@@ -4004,7 +4036,7 @@
     // gets its own copy of the trip and dispatches it, and status, chauffeur and
     // vehicle flow back to the sender's trip, which keeps its customer and price.
     const FARM_LABELS = { offered: 'Waiting for answer', accepted: 'Accepted', declined: 'Declined', cancelled: 'Cancelled', returned: 'Handed back', expired: 'Expired', completed: 'Completed' };
-    const isMember = (c) => c && c.status === 'active' && c.network && c.network.joined;
+    const isMember = (c) => c && c.status === 'active' && !c.house && c.network && c.network.joined;
     function notWithPartner(t) {
       if (t.farmout) fail(`This trip is with ${t.farmout.toName}. Take it back from them first.`);
     }
@@ -4214,14 +4246,17 @@
       const place = t && placeOfAddr(t.pickup);
       const near = (x) => (place ? serves(x, place) : (c.network.cities || []).some((cy) => serves(x, { city: cy })));
       const ids = cfg.partners.length ? cfg.partners : db.companies.filter((x) => x.id !== c.id && isMember(x) && near(x)).map((x) => x.id);
-      return ids.map(findCompany).filter((x) => x && x.id !== c.id && isMember(x));
+      const list = ids.map(findCompany).filter((x) => x && x.id !== c.id && isMember(x));
+      // Nationwide bookings take turns between the companies in a city: fewest sent so far goes first.
+      if (c.house) { const sent = (x) => db.farmouts.filter((f) => f.fromCompanyId === c.id && f.toCompanyId === x.id).length; list.sort((x, y) => sent(x) - sent(y)); }
+      return list;
     }
     // Runs in the dispatch sweep. Sends trips nobody on staff can cover to the
     // next partner in order, moves on when a partner declines or doesn't answer
     // in time, and flags the trip for the office when every partner has passed.
     function sweepAutoFarm(c) {
       const cfg = acfg(c);
-      if (!cfg.on || !isMember(c)) return false;
+      if (!cfg.on || !(isMember(c) || (c.house && c.status === 'active'))) return false;
       const n = now(), nowMs = n.getTime();
       let changed = false;
       for (const f of db.farmouts) {
@@ -4239,7 +4274,7 @@
         const started = t.autoFarm && t.autoFarm.tried && t.autoFarm.tried.length;
         const noDriver = cfg.noDriver && t.needsDriver && !/office/i.test(t.needsDriver.why || '');
         const lastCall = cfg.lastCallHours > 0 && pickMs - nowMs <= cfg.lastCallHours * 3600e3;
-        if (!started && !noDriver && !lastCall) continue;
+        if (!started && !noDriver && !lastCall && !c.house) continue;
         t.autoFarm = t.autoFarm || { tried: [], at: n.toISOString() };
         const next = autoPartners(c, t).find((p) => !t.autoFarm.tried.includes(p.id) && partnerFits(p, t));
         if (!next) {
@@ -4253,6 +4288,7 @@
             continue;
           }
           t.needsDriver = { at: n.toISOString(), why: t.autoFarm.tried.length ? 'No partner took it' : `No partner runs a ${t.vehicleType} for ${t.passengers}` };
+          if (c.house) houseAlarm(c, t);
           log(t, 'auto_farm_none', 'Auto farm-out', t.needsDriver.why);
           changed = true;
           continue;
@@ -4264,6 +4300,24 @@
         changed = true;
       }
       return changed;
+    }
+    // Nationwide booking with no company to drive it: an urgent email to the
+    // LimoRelay dispatch office and the platform owner, plus the Board alert.
+    function houseAlarm(c, t) {
+      if (t.houseAlarm) return;
+      const place = placeOfAddr(t.pickup);
+      const city = place ? place.label : 'this city';
+      const covered = db.companies.some((x) => isMember(x) && place && serves(x, place));
+      t.needsDriver.why = covered ? `URGENT: no ${city} company took it` : `URGENT: no LimoRelay company in ${city}`;
+      t.needsDriver.urgent = true;
+      t.houseAlarm = now().toISOString();
+      const owner = db.users.find((u) => u.role === 'owner' && u.active !== false);
+      const to = [...new Set([officeEmail(c), owner && owner.email].filter(Boolean))];
+      const body = [`URGENT: ${t.ref} needs a company.`, '', covered ? `Every LimoRelay company in ${city} passed on this ride.` : `No LimoRelay company covers ${city} yet.`, '',
+        `Passenger: ${t.passengerName || '-'} (${t.passengerPhone || 'no phone'})`, `Pickup Date and Time: ${fmtLocal(t.pickupAt, t.tz ? { timezone: t.tz } : c, true)}`, `Pickup Address: ${t.pickup}`, ...(t.dropoff ? [`Destination: ${t.dropoff}`] : []),
+        `Vehicle: ${t.vehicleType}`, `Passengers: ${t.passengers}`, `Total: $${money(t.price.total)}`, '', 'Open the trip in the LimoRelay dispatch office to send it to a company or call one.'].join('\n');
+      for (const r of to) db.messages.unshift({ id: id('msg'), companyId: c.id, tripId: t.id, ref: t.ref, at: now().toISOString(), recipient: r, channel: 'email', kind: 'house_alarm', body });
+      log(t, 'house_alarm', 'Nationwide booking', t.needsDriver.why);
     }
     function ownFarm(ctx, fid, side) {
       const f = db.farmouts.find((x) => x.id === fid && (side === 'from' ? x.fromCompanyId : x.toCompanyId) === ctx.company.id);
@@ -5395,6 +5449,48 @@
       }
       return pubCompany(c);
     });
+    // ---- Nationwide booking site (booking.limorelay.com) ----------------------
+    // LimoRelay's own booking company: it has no cars. Each booking goes to a
+    // member company serving the pickup city (taking turns), which keeps the
+    // fare less LimoRelay's commission. If none takes it, LimoRelay's dispatch
+    // and the owner get an urgent alert.
+    const houseCo = () => db.companies.find((c) => c.house);
+    function nationalView() {
+      const c = houseCo();
+      if (!c) return { set: false, commission: 12.5, answerMin: 15 };
+      const admin = db.users.find((u) => u.companyId === c.id && u.role === 'admin');
+      const cfg = acfg(c), mine = db.trips.filter((t) => t.companyId === c.id);
+      const cities = [...new Set(db.companies.filter(isMember).flatMap((x) => x.network.cities || []))].sort();
+      return { set: true, id: c.id, slug: c.slug, name: c.name, phone: c.phone, email: c.email, status: c.status, adminName: admin ? admin.name : '', adminEmail: admin ? admin.email : '',
+        commission: round2(100 - cfg.ratePct), answerMin: cfg.answerMin, bookings: mine.filter((t) => t.status !== 'cancelled').length,
+        urgent: mine.filter((t) => t.needsDriver && t.needsDriver.urgent && t.status === 'confirmed').length, cities };
+    }
+    def('owner.national', ['owner'], false, () => nationalView());
+    def('owner.saveNational', ['owner'], true, async (ctx, a) => {
+      const pct = num(a.commission, 12.5);
+      if (!(pct >= 0 && pct <= 50)) fail('Set the commission between 0% and 50%.');
+      const answerMin = Math.round(num(a.answerMin, 15));
+      if (!(answerMin >= 5 && answerMin <= 240)) fail('Give companies 5 to 240 minutes to answer.');
+      let c = houseCo(), link = '';
+      if (!c) {
+        const adminEmail = str(a.adminEmail, 120).toLowerCase();
+        if (!str(a.adminName, 80)) fail('Enter the name of the person who runs LimoRelay dispatch.');
+        if (!emailOk(adminEmail)) fail('Enter the email for the LimoRelay dispatch login.');
+        if (loginTaken(adminEmail)) fail('That email already has a login. Use another email for LimoRelay dispatch.');
+        const slug = slugify(a.slug || 'nationwide');
+        if (db.companies.some((x) => x.slug === slug)) fail('That booking link name is taken. Choose another.');
+        c = makeCompany({ name: str(a.name, 80) || 'LimoRelay', slug, plan: 'standard', monthlyFee: 0, email: adminEmail, phone: str(a.phone, 30), tagline: 'Chauffeured cars in cities across the US', color: '#14161b', timezone: 'America/Los_Angeles', status: 'active' });
+        c.house = true; c.setup = { hidden: true }; c.refPrefix = 'LRN';
+        c.network.joined = true; c.network.cities = [];
+        c.dispatch = { ...DEFAULT_DISPATCH, autoAssign: false };
+        db.companies.push(c);
+        const u = { id: id('usr'), role: 'admin', companyId: c.id, name: str(a.adminName, 80), email: adminEmail, phone: c.phone, active: true, createdAt: now().toISOString() };
+        db.users.push(u);
+        link = sendWelcome(c, u);
+      }
+      c.network.auto = { ...acfg(c), on: true, noDriver: true, lastCallHours: 0, postToBoard: false, partners: [], ratePct: round2(100 - pct), answerMin };
+      return { ...nationalView(), emailOn: !!live.email, loginLink: link && !live.email ? link : '' };
+    });
     def('owner.textPlan', ['owner'], false, () => textPlan());
     def('owner.saveTextPlan', ['owner'], true, (ctx, a) => {
       const n = (k, lo, hi, label) => { const v = num(a[k], NaN); if (!(v >= lo && v <= hi)) fail(`${label} must be between ${lo} and ${hi}.`); return v; };
@@ -5427,7 +5523,7 @@
     function billCompanies(period, trialAt) {
       const made = [];
       for (const c of db.companies) {
-        if (c.status !== 'active') continue;
+        if (c.status !== 'active' || c.house) continue;
         if (db.invoices.some((i) => i.companyId === c.id && i.period === period)) continue;
         // Free trial: nothing is billed until it ends.
         if (inTrial(c, trialAt || `${period}-28`)) continue;
