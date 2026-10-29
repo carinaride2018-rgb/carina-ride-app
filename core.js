@@ -2984,6 +2984,17 @@
     function setupSteps(c) {
       const st = c.setup || {};
       const has = (list) => list.some((x) => x.companyId === c.id);
+      // LimoRelay's nationwide office has no cars or drivers: member companies drive.
+      if (c.house) {
+        const hs = [
+          { key: 'logo', label: 'Add your logo', done: !!c.logo },
+          { key: 'rates', label: 'Set your national prices', done: !!st.rates },
+          { key: 'payments', label: 'Turn on card payments', done: cardsOn(c) || payOpts(c).card === false },
+          { key: 'booking', label: 'Take a test booking', done: has(db.trips) },
+          { key: 'share', label: 'Share your booking site', done: !!st.shared },
+        ];
+        return { show: !!c.setup && !st.hidden, steps: hs, done: hs.filter((x) => x.done).length, house: true };
+      }
       const steps = [
         { key: 'cars', label: 'Add your cars', done: has(db.vehicles) },
         { key: 'rates', label: 'Set your prices', done: !!st.rates },
@@ -5480,7 +5491,7 @@
         const slug = slugify(a.slug || 'nationwide');
         if (db.companies.some((x) => x.slug === slug)) fail('That booking link name is taken. Choose another.');
         c = makeCompany({ name: str(a.name, 80) || 'LimoRelay', slug, plan: 'standard', monthlyFee: 0, email: adminEmail, phone: str(a.phone, 30), tagline: 'Chauffeured cars in cities across the US', color: '#14161b', timezone: 'America/Los_Angeles', status: 'active' });
-        c.house = true; c.setup = { hidden: true }; c.refPrefix = 'LRN';
+        c.house = true; c.setup = {}; c.refPrefix = 'LRN';
         c.network.joined = true; c.network.cities = [];
         c.dispatch = { ...DEFAULT_DISPATCH, autoAssign: false };
         db.companies.push(c);

@@ -1457,6 +1457,8 @@
     try { info = await api('public.company', { slug }); }
     catch (e) { const v = shell({}); v.innerHTML = `<div class="panel stack"><h2>Page unavailable</h2><p class="muted">${esc(e.message)}</p><a class="btn" href="#signin">Back</a></div>`; return; }
     const signedHere = session && session.user.role === 'customer' && session.user.companyId === info.company.id;
+    // The nationwide site reads ride times as each pickup city's local time.
+    const withTz = (ls) => { if (!info.company.house) return ls; let tz = ''; try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { /* kept as sent */ } return ls.map((l) => ({ ...l, browserTz: tz })); };
     const keep = session;
     if (!signedHere) session = { company: info.company, user: null };
     const v = shell({});
@@ -1465,7 +1467,7 @@
     const me = signedHere ? session.user : {};
     v.innerHTML = `
       <div class="brandhead">${info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : ''}<div class="stack" style="gap:6px"><h1>Book your event</h1><p>${esc(info.company.name)} · weddings, proms, corporate events and groups</p></div>
-        <div class="small" style="opacity:.9">${esc(info.company.phone || '')} · <a href="#book.${esc(slug)}" style="color:#fff">Book a single ride instead</a></div></div>
+        <div class="small" style="opacity:.9">${esc(info.company.phone || '')} · <a href="#book.${esc(slug)}">Book a single ride instead</a></div></div>
       <form id="rq" class="stack" novalidate style="max-width:860px">
         <section class="panel stack"><h2>Your event</h2>
           <div class="grid2"><label class="field"><span>Type of event</span><select name="eventType">${C.EVENT_TYPES.map((x) => `<option>${esc(x)}</option>`).join('')}</select></label>
@@ -1487,7 +1489,7 @@
     // Each ride is priced at the company's rates as it's filled in, with the total below.
     let priceTimer = null, priceN = 0;
     const reprice = () => { clearTimeout(priceTimer); priceTimer = setTimeout(async () => {
-      const n = ++priceN, ls = rides.get();
+      const n = ++priceN, ls = withTz(rides.get());
       let r; try { r = await api('public.eventPrice', { slug, lines: ls }); } catch (e) { return; }
       if (n !== priceN) return;
       const box = $('#rq-lines', v); if (!box) return;
@@ -1504,7 +1506,7 @@
       const f = formData(e.target);
       await busy($('button[type=submit]', e.target), async () => {
         try {
-          const r = await api('public.eventBook', { slug, eventType: f.eventType, eventName: f.eventName, notes: f.notes, contact: { name: f.name, phone: f.phone, email: f.email, org: f.org, smsOk: !!f.smsOk && !!String(f.phone || '').trim() }, lines: rides.get() });
+          const r = await api('public.eventBook', { slug, eventType: f.eventType, eventName: f.eventName, notes: f.notes, contact: { name: f.name, phone: f.phone, email: f.email, org: f.org, smsOk: !!f.smsOk && !!String(f.phone || '').trim() }, lines: withTz(rides.get()) });
           go('quote.' + r.token);
         } catch (err) { showErr($('#rq-err', v), err); }
       });
@@ -2071,8 +2073,9 @@
     v.innerHTML = `
       <div class="brandhead">${info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : ''}<div class="stack" style="gap:6px"><h1>${esc(info.company.name)}</h1><p>${esc(info.company.tagline || 'Book your ride')}</p></div>
         <div class="small" style="opacity:.9">${esc(info.company.phone || '')}${signedHere ? ` · Signed in as ${esc(session.user.name)} · <a href="#customer">My trips</a>` : ''}</div></div>
-      ${info.company.house ? `<p class="housenote">Book a chauffeured car in any US city. Enter the pickup time in that city's local time. A LimoRelay company in that city drives your ride.</p>` : `<a class="eventlink" href="#request.${esc(slug)}"><span>Planning a wedding, prom, corporate event or group trip?</span><b>Book your event</b></a>
-      <a class="eventlink" href="#agent.${esc(slug)}" id="agent-link"><span>Travel agent, assistant or concierge booking for clients? Earn commission on every ride.</span><b>Agent sign-up or login</b></a>`}
+      ${info.company.house ? `<p class="housenote">Book a chauffeured car in any US city. Enter the pickup time in that city's local time. A LimoRelay company in that city drives your ride.</p>` : ''}
+      <a class="eventlink" href="#request.${esc(slug)}"><span>Planning a wedding, prom, corporate event or group trip?</span><b>Book your event</b></a>
+      <a class="eventlink" href="#agent.${esc(slug)}" id="agent-link"><span>Travel agent, assistant or concierge booking for clients? Earn commission on every ride.</span><b>Agent sign-up or login</b></a>
       <div id="book-host"></div><div id="auth-host"></div>`;
     const pending = { booking: null };
     // A new company with no cars yet can't take online bookings.
@@ -3083,6 +3086,7 @@
     const SETUP_HINT = {
       cars: ['Name, type and seats of each car.', 'Add a car'],
       rates: ['Base fare, per mile and hourly for each car.', 'Set prices'],
+      logo: ['Shown on your booking site and in every email.', 'Add logo'],
       drivers: ['Each driver gets their own app login.', 'Add a driver'],
       payments: ['Connect Stripe so passengers pay by card, or take cash only.', 'Set up payments'],
       booking: ['Book a ride yourself to see how it works.', 'New booking'],
@@ -3093,13 +3097,14 @@
       let g;
       try { g = await api('dispatch.setup'); } catch (e) { return; }
       // Until the company has a driver there is nothing on the live map yet.
-      const mapEl = $('#bd-map'); if (mapEl) mapEl.hidden = g.show && !g.steps.find((x) => x.key === 'drivers').done;
+      const drv = g.steps.find((x) => x.key === 'drivers');
+      const mapEl = $('#bd-map'); if (mapEl) mapEl.hidden = g.house || (g.show && !drv.done);
       if (!g.show) { box.innerHTML = ''; return; }
       const all = g.done === g.steps.length;
-      const link = DEMO ? `#book.${session.company.slug}` : `${location.origin}${location.pathname}#book.${session.company.slug}`;
+      const link = DEMO ? `#book.${session.company.slug}` : g.house ? 'https://booking.limorelay.com' : `${location.origin}${location.pathname}#book.${session.company.slug}`;
       const sig = JSON.stringify(g); if (box.dataset.sig === sig) return; box.dataset.sig = sig;
       box.innerHTML = `<section class="panel setupguide"><div class="spread"><div class="stack" style="gap:2px"><h2>${all ? 'You’re all set' : 'Get set up'}</h2>
-          <p class="small muted" style="margin:0">${all ? 'Your booking page is ready for customers.' : `${g.done} of ${g.steps.length} done. Each step ticks itself off.`}</p></div>
+          <p class="small muted" style="margin:0">${all ? 'Your booking page is ready for customers.' : g.house ? `${g.done} of ${g.steps.length} done. Member companies drive the rides, so there are no cars or drivers to add.` : `${g.done} of ${g.steps.length} done. Each step ticks itself off.`}</p></div>
           <button class="linkbtn small" type="button" id="su-hide">Hide guide</button></div>
         <div class="su-bar" aria-hidden="true"><span style="width:${Math.round(g.done / g.steps.length * 100)}%"></span></div>
         <ol class="su-steps">${g.steps.map((x) => { const h = SETUP_HINT[x.key]; return `<li class="${x.done ? 'done' : ''}"><span class="su-tick" aria-hidden="true">${x.done ? '✓' : ''}</span>
@@ -3111,6 +3116,7 @@
         const k = b.dataset.su;
         if (k === 'cars') { tab = 'fleet'; store.set(tabKey, 'fleet'); draw(); vehicleModal(null, () => draw()); }
         else if (k === 'rates') jumpTo('settings', 'Rates by vehicle');
+        else if (k === 'logo') jumpTo('settings', 'Logo');
         else if (k === 'drivers') { let veh = []; try { veh = await api('dispatch.vehicles'); } catch (e) { /* optional */ } driverModal(null, veh, again); }
         else if (k === 'payments') jumpTo('settings', 'How customers pay');
         else if (k === 'booking') newBookingModal(() => { again(); redraw && redraw(); });
