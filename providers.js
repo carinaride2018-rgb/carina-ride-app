@@ -450,19 +450,19 @@ function emailHtml(m) {
   const blocks = []; let cur = [];
   for (const l of lines) { if (l.trim()) cur.push(l); else if (cur.length) { blocks.push(cur); cur = []; } }
   if (cur.length) blocks.push(cur);
-  const row = (l) => { const kv = l.match(/^([A-Z][A-Za-z ]{1,32}):\s+(.+)$/); return kv && !/^https?:/.test(kv[1]) ? `<tr><td style="padding:4px 12px 4px 0;color:#6b7280;vertical-align:top;white-space:nowrap">${hesc(kv[1])}</td><td style="padding:4px 0;color:#111827;font-weight:600">${linkify(kv[2])}</td></tr>` : null; };
+  const row = (l) => { const kv = l.match(/^([A-Z][A-Za-z ]{1,32}):\s+(.+)$/); return kv && !/^https?:/.test(kv[1]) ? `<tr><td style="width:38%;padding:4px 10px 4px 0;color:#000000;vertical-align:top">${hesc(kv[1])}</td><td style="padding:4px 0;color:#000000;font-weight:600;vertical-align:top;word-break:break-word;overflow-wrap:anywhere">${linkify(kv[2])}</td></tr>` : null; };
   const html = blocks.map((b) => {
     const rows = b.map(row);
-    if (rows.every(Boolean) && b.length > 1) return `<table role="presentation" style="width:100%;border-collapse:collapse;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;margin:0 0 16px"><tbody><tr><td style="padding:12px 16px"><table role="presentation" style="border-collapse:collapse;font-size:15px">${rows.join('')}</table></td></tr></tbody></table>`;
-    return `<p style="margin:0 0 16px;font-size:15px;line-height:1.5;color:#111827">${b.map(linkify).join('<br>')}</p>`;
+    if (rows.every(Boolean) && b.length > 1) return `<table role="presentation" style="width:100%;border-collapse:collapse;background:#ffffff;border:1px solid #000000;border-radius:8px;margin:0 0 16px"><tbody><tr><td style="padding:12px 14px"><table role="presentation" style="width:100%;table-layout:fixed;border-collapse:collapse;font-size:15px">${rows.join('')}</table></td></tr></tbody></table>`;
+    return `<p style="margin:0 0 16px;font-size:15px;line-height:1.5;color:#000000">${b.map(linkify).join('<br>')}</p>`;
   }).join('');
-  const head = co.logoUrl ? `<img src="${hesc(co.logoUrl)}" alt="${hesc(co.name)}" style="max-height:64px;max-width:220px;display:block;margin:0 auto">` : `<div style="font-size:22px;font-weight:700;color:#111827;text-align:center">${hesc(co.name || '')}</div>`;
-  const foot = [terms || co.termsUrl ? `<a href="${hesc(terms || co.termsUrl)}" style="color:#6b7280">Terms and Conditions</a>` : '', co.phone ? hesc(co.phone) : '', co.email ? hesc(co.email) : ''].filter(Boolean).join(' &middot; ');
-  return `<!doctype html><html><body style="margin:0;padding:0;background:#f3f4f6"><div style="padding:24px 12px;font-family:Arial,Helvetica,sans-serif">
+  const head = co.logoUrl ? `<img src="${hesc(co.logoUrl)}" alt="${hesc(co.name)}" style="max-height:64px;max-width:220px;display:block;margin:0 auto">` : `<div style="font-size:22px;font-weight:700;color:#000000;text-align:center">${hesc(co.name || '')}</div>`;
+  const foot = [terms || co.termsUrl ? `<a href="${hesc(terms || co.termsUrl)}" style="color:#000000">Terms and Conditions</a>` : '', co.phone ? hesc(co.phone) : '', co.email ? hesc(co.email) : ''].filter(Boolean).join(' &middot; ');
+  return `<!doctype html><html><head><meta name="color-scheme" content="light only"><meta name="supported-color-schemes" content="light"></head><body style="margin:0;padding:0;background:#ffffff"><div style="padding:16px 8px;font-family:Arial,Helvetica,sans-serif">
 <div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden">
-<div style="border-top:4px solid ${color};padding:20px 24px 12px">${head}</div>
-<div style="padding:12px 24px 8px">${html}</div>
-${foot ? `<div style="border-top:1px solid #e5e7eb;padding:14px 24px;font-size:12px;color:#6b7280;text-align:center">${foot}</div>` : ''}
+<div style="border-top:4px solid ${color};padding:20px 16px 12px">${head}</div>
+<div style="padding:12px 16px 8px;word-break:break-word;overflow-wrap:anywhere">${html}</div>
+${foot ? `<div style="border-top:1px solid #e5e7eb;padding:14px 16px;font-size:12px;color:#000000;text-align:center">${foot}</div>` : ''}
 </div></div></body></html>`;
 }
 const withTimeout = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(r, ms).unref())]);

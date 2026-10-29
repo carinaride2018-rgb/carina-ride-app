@@ -719,7 +719,7 @@
     const link = document.getElementById('manifest');
     if (link && co && co.slug) link.href = `manifest.webmanifest?c=${encodeURIComponent(co.slug)}${u && u.role !== 'customer' ? '&r=' + (u.role === 'driver' ? 'driver' : 'staff') : ''}`;
     const meta = document.querySelector('meta[name=theme-color]');
-    if (meta) meta.content = (co && co.color) || '#15171c';
+    if (meta) meta.content = '#ffffff';
   }
   const noteKey = () => session && session.user ? 'livery-notify-' + session.user.id : '';
   const notesOn = () => !!noteKey() && store.get(noteKey()) === '1';
