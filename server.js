@@ -391,6 +391,11 @@ async function testSms(token, args) {
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   if (url.pathname === '/healthz') return send(res, 200, { ok: true });
+  if (url.pathname.startsWith('/logo/')) {
+    const slug = url.pathname.slice(6).replace(/\.\w+$/, '');
+    core.logo(slug).then((l) => { if (!l) return send(res, 404, 'Not found', 'text/plain'); res.writeHead(200, { 'Content-Type': l.type, 'Cache-Control': 'public, max-age=86400' }); res.end(l.buf); }).catch(() => send(res, 500, 'Error', 'text/plain'));
+    return;
+  }
   if (url.pathname.startsWith('/pay/')) {
     const chunks = []; let size = 0;
     req.on('data', (c) => { size += c.length; if (size > 1e6) req.destroy(); else chunks.push(c); });

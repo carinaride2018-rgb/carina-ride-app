@@ -6284,10 +6284,22 @@
           if (new Date(m.at).getTime() < cutoff) { m.delivery = { status: 'logged' }; continue; }
           m.delivery = { status: 'sending' };
           const c = m.companyId ? findCompany(m.companyId) || {} : { name: 'LimoRelay', email: PLATFORM_EMAIL };
-          out.push({ id: m.id, channel: m.channel, recipient: m.recipient, body: m.body, ...(m.wakeKey ? { answerUrl: `${(opts.publicUrl || '').replace(/#.*$/, '')}twilio/wake?k=${m.wakeKey}` } : {}), kind: m.kind || '', ref: m.ref || '', replyTo: m.replyTo || '', company: { name: c.name || '', email: c.email || '', phone: c.phone || '' } });
+          const base = (opts.publicUrl || '').replace(/#.*$/, '');
+          // Passenger emails about a trip end with the company's terms (Dawit 2026-10-29).
+          const t = m.tripId && m.channel === 'email' && db.trips.find((x) => x.id === m.tripId);
+          const toPassenger = t && String(t.passengerEmail || '').toLowerCase() === String(m.recipient || '').toLowerCase();
+          const body = toPassenger && c.slug && !/#terms\./.test(m.body) ? `${m.body}\n\nTerms and Conditions: ${base}#terms.${c.slug}` : m.body;
+          out.push({ id: m.id, channel: m.channel, recipient: m.recipient, body, ...(m.wakeKey ? { answerUrl: `${(opts.publicUrl || '').replace(/#.*$/, '')}twilio/wake?k=${m.wakeKey}` } : {}), kind: m.kind || '', ref: m.ref || '', replyTo: m.replyTo || '', company: { name: c.name || '', email: c.email || '', phone: c.phone || '', color: c.color || '', logoUrl: c.logo && c.slug && base ? `${base}logo/${c.slug}.${(c.logo.match(/^data:image\/(\w+)/) || [])[1] || 'png'}?v=${fnv(c.logo).toString(36)}` : '', termsUrl: c.slug && base ? `${base}#terms.${c.slug}` : '' } });
         }
         if (changed) save(db);
         return out;
+      },
+      // A company's logo as a file, for emails (email apps don't show data: pictures).
+      async logo(slug) {
+        await ensure();
+        const c = db.companies.find((x) => x.slug === String(slug || ''));
+        const m = c && c.logo && c.logo.match(/^data:(image\/\w+);base64,(.+)$/);
+        return m ? { type: m[1], buf: Buffer.from(m[2], 'base64') } : null;
       },
       async delivered(results) {
         await ensure();
