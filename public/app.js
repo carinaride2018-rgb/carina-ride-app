@@ -2070,13 +2070,19 @@
     const v = shell({});
     session = keep;
     document.documentElement.style.setProperty('--brand', info.company.color);
+    const co = info.company;
     v.innerHTML = `
-      <div class="brandhead">${info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : ''}<div class="stack" style="gap:6px"><h1>${esc(info.company.name)}</h1><p>${esc(info.company.tagline || 'Book your ride')}</p></div>
-        <div class="small" style="opacity:.9">${esc(info.company.phone || '')}${signedHere ? ` · Signed in as ${esc(session.user.name)} · <a href="#customer">My trips</a>` : ''}</div></div>
-      ${info.company.house ? `<p class="housenote">Book a chauffeured car in any US city. Enter the pickup time in that city's local time. A LimoRelay company in that city drives your ride.</p>` : ''}
-      <a class="eventlink" href="#request.${esc(slug)}"><span>Planning a wedding, prom, corporate event or group trip?</span><b>Book your event</b></a>
-      <a class="eventlink" href="#agent.${esc(slug)}" id="agent-link"><span>Travel agent, assistant or concierge booking for clients? Earn commission on every ride.</span><b>Agent sign-up or login</b></a>
-      <div id="book-host"></div><div id="auth-host"></div>`;
+      <div class="brandhead bh-book">
+        <div class="bh-id">${co.logo ? `<div class="bh-logowrap">${coLogo(co, 'bh-logo')}</div>` : ''}<div class="stack" style="gap:6px"><h1>${esc(co.name)}</h1><p>${esc(co.tagline || 'Book your ride')}</p></div></div>
+        <div class="bh-side">${co.phone ? `<a class="bh-call" href="tel:${esc(co.phone.replace(/[^\d+]/g, ''))}">Call ${esc(co.phone)}</a>` : ''}${signedHere ? `<span class="small">Signed in as ${esc(session.user.name)} · <a href="#customer">My trips</a></span>` : ''}</div>
+        <ul class="bh-chips"><li>See your price first</li><li>Book in about a minute</li><li>Confirmation by email</li></ul></div>
+      ${co.house ? `<p class="housenote">Book a chauffeured car in any US city. Enter the pickup time in that city's local time. A LimoRelay company in that city drives your ride.</p>` : ''}
+      <div class="bk-layout"><div class="bk-main"><div id="book-host"></div><div id="auth-host"></div></div>
+        <aside class="bk-aside">
+          <a class="eventlink" href="#request.${esc(slug)}"><span>Planning a wedding, prom, corporate event or group trip?</span><b>Book your event</b></a>
+          <a class="eventlink" href="#agent.${esc(slug)}" id="agent-link"><span>Travel agent, assistant or concierge booking for clients? Earn commission on every ride.</span><b>Agent sign-up or login</b></a>
+          ${co.phone || co.email ? `<div class="bk-help"><b>Need help booking?</b><span class="small">${co.phone ? `Call <a href="tel:${esc(co.phone.replace(/[^\d+]/g, ''))}">${esc(co.phone)}</a>` : ''}${co.phone && co.email ? '<br>' : ''}${co.email ? `Email <a href="mailto:${esc(co.email)}">${esc(co.email)}</a>` : ''}</span></div>` : ''}
+        </aside></div>`;
     const pending = { booking: null };
     // A new company with no cars yet can't take online bookings.
     if (!info.vehicleTypes.length) {
