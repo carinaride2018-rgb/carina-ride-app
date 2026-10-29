@@ -1634,6 +1634,9 @@
           <div class="row"><div class="seg" role="group" aria-label="Type of booking">
             <button type="button" data-service="transfer" aria-pressed="${state.service !== 'hourly'}">Transfer</button>
             <button type="button" data-service="hourly" aria-pressed="${state.service === 'hourly'}">By the hour</button>
+          </div><div class="seg" role="group" aria-label="One way or round trip" data-hide="hourly">
+            <button type="button" data-trip="one" aria-pressed="${!state.retOn}">One way</button>
+            <button type="button" data-trip="round" aria-pressed="${!!state.retOn}">Round trip</button>
           </div><span class="small faint" id="bk-service-hint"></span></div>
           <div class="grid3">
             <label class="field"><span>Pickup date</span><input id="bk-date" name="date" type="date" value="${esc(state.date)}" required></label>
@@ -1649,6 +1652,12 @@
               <span class="hint" id="bk-flight-hint">For pickups at the airport, set the pickup time to when the flight lands. We track the flight and move the pickup if it's late.</span></label>
             <div></div>
           </div>
+          <div class="stack" data-hide="hourly" style="gap:10px"><input type="checkbox" id="bk-ret" name="retOn" hidden ${state.retOn ? 'checked' : ''}>
+            <div class="grid3" id="bk-retf" hidden>
+              <label class="field"><span>Return date</span><input id="bk-rdate" name="retDate" type="date" value="${esc(state.retDate)}"></label>
+              <label class="field"><span>Return pickup time</span><input id="bk-rtime" name="retTime" type="time" step="300" value="${esc(state.retTime)}"></label>
+              <label class="field" id="bk-rflightf"><span>Return flight <span class="faint">(airport pickup)</span></span><input id="bk-rflight" name="retFlight" class="mono" placeholder="AS 330" value="${esc(state.retFlight)}" autocomplete="off"></label>
+            </div><p class="small faint" id="bk-ret-hint" hidden></p></div>
           <div class="stack morerides" data-hide="hourly" style="gap:10px"><div id="bk-more" class="stack" style="gap:10px"></div>
             <div><button class="linkbtn" type="button" id="bk-addride">+ Add another ride</button> <span class="small faint">Same passenger and car, for example hotel to pier, then pier to the airport.</span></div></div>
           ${twoStep ? `<div id="bk-err1"></div><button class="btn brand big" type="button" id="bk-next">Get my quote</button>` : ''}
@@ -1694,12 +1703,6 @@
               <label class="switch" style="align-self:end;min-height:40px;grid-column:span 2"><input type="checkbox" id="bk-meet" name="meetGreet" ${state.meetGreet ? 'checked' : ''}><span>Meet &amp; greet: chauffeur waits inside with a name sign (${money(ad.meetGreet)})</span></label>
             </div>
             <label class="field" id="bk-signf" hidden><span>Name on the greeting sign</span><input id="bk-sign" name="signName" maxlength="60" value="${esc(state.signName)}" placeholder="Leave blank to use the passenger name"></label></div>
-          <fieldset class="fs" data-hide="hourly"><legend><label class="switch"><input type="checkbox" id="bk-ret" name="retOn" ${state.retOn ? 'checked' : ''}><span>Book the return trip too</span></label></legend>
-            <div class="grid3" id="bk-retf" hidden>
-              <label class="field"><span>Return date</span><input id="bk-rdate" name="retDate" type="date" value="${esc(state.retDate)}"></label>
-              <label class="field"><span>Return pickup time</span><input id="bk-rtime" name="retTime" type="time" step="300" value="${esc(state.retTime)}"></label>
-              <label class="field" id="bk-rflightf"><span>Return flight <span class="faint">(airport pickup)</span></span><input id="bk-rflight" name="retFlight" class="mono" placeholder="AS 330" value="${esc(state.retFlight)}" autocomplete="off"></label>
-            </div><p class="small faint" id="bk-ret-hint" hidden></p></fieldset>
           <fieldset class="fs repfs"><legend><label class="switch"><input type="checkbox" id="bk-rep" name="repOn" ${state.repOn ? 'checked' : ''}><span>Repeat this ride</span></label></legend>
             <div class="stack" id="bk-repf" style="gap:10px" hidden>
               <div class="field"><span>Every</span><div class="repdays">${C.DAYS.map((k) => `<label class="switch"><input type="checkbox" data-rday="${k}"><span>${k[0].toUpperCase() + k.slice(1, 3)}</span></label>`).join('')}</div></div>
@@ -1870,6 +1873,11 @@
     }
     const setService = (s) => { state.service = s; $$('[data-service]', form).forEach((b) => b.setAttribute('aria-pressed', b.dataset.service === s)); sync(); requote(); };
     $$('[data-service]', form).forEach((b) => { b.onclick = () => setService(b.dataset.service); });
+    $$('[data-trip]', form).forEach((b) => { b.onclick = () => {
+      const on = b.dataset.trip === 'round'; $('#bk-ret', form).checked = on;
+      $$('[data-trip]', form).forEach((x) => x.setAttribute('aria-pressed', x === b));
+      sync(); requote(); if (on && !$('#bk-rtime', form).value) $('#bk-rdate', form).focus();
+    }; });
     $$('[data-vehicle]', form).forEach((b) => { b.onclick = () => { state.vehicleType = b.dataset.vehicle; $$('[data-vehicle]', form).forEach((x) => x.setAttribute('aria-pressed', x === b)); requote(); }; });
     let qt = null, qn = 0;
     const booking = () => {
@@ -1990,11 +1998,16 @@
     // The PO number is asked in step 2, so a required one can't block the quote.
     const quoteOnly = () => { const b = booking(); if (b.accountId && !b.poNumber) b.poNumber = 'quote'; return b; };
     async function priceVehicles() {
-      const b = quoteOnly(), key = JSON.stringify([b.service, b.pickup, b.dropoff, b.stopList, b.stopWaits, b.pickupAt, b.hours, b.passengers]);
+      const b = quoteOnly(), key = JSON.stringify([b.service, b.pickup, b.dropoff, b.stopList, b.stopWaits, b.pickupAt, b.hours, b.passengers, b.returnAt]);
       if (key === vpKey) return; vpKey = key;
       await Promise.all(vt.map(async (v) => {
         const el = $(`[data-vprice="${CSS.escape(v.type)}"]`, form); if (!el) return;
-        try { const q = await opts.quoteFn({ ...b, vehicleType: v.type, childSeats: 0, meetGreet: false, promoCode: '', returnAt: undefined, landing: undefined }); if (vpKey === key) el.textContent = money(q.total); } catch (e) { if (vpKey === key) el.textContent = ''; }
+        try {
+          const one = { ...b, vehicleType: v.type, childSeats: 0, meetGreet: false, promoCode: '', returnAt: undefined, landing: undefined };
+          const ret = b.returnAt && b.returnAt !== 'missing' ? opts.quoteFn(returnOf({ ...one, returnAt: b.returnAt, returnFlight: b.returnFlight })) : null;
+          const q = await opts.quoteFn(one), r = ret ? await ret : null;
+          if (vpKey === key) el.textContent = r ? `${money(q.total + r.total)} round trip` : money(q.total);
+        } catch (e) { if (vpKey === key) el.textContent = ''; }
       }));
     }
     function showStep(n) {
@@ -2008,7 +2021,7 @@
       sync();
       if (n === 2) {
         const b = booking(), stops = (b.stopList || []).length;
-        $('#bk-sumtext', host).innerHTML = `<b>${esc(fmtDT(b.pickupAt))}</b>${b.service === 'hourly' ? ` · ${esc(b.hours)} hours` : ''}<br><span class="small">${esc(b.pickup)}${stops ? ` · ${stops} stop${stops > 1 ? 's' : ''}` : ''}${b.dropoff ? ` to ${esc(b.dropoff)}` : ''}</span>${(b.moreRides || []).length ? `<br><span class="small">+ ${b.moreRides.length} more ride${b.moreRides.length > 1 ? 's' : ''}</span>` : ''}`;
+        $('#bk-sumtext', host).innerHTML = `<b>${esc(fmtDT(b.pickupAt))}</b>${b.service === 'hourly' ? ` · ${esc(b.hours)} hours` : ''}<br><span class="small">${esc(b.pickup)}${stops ? ` · ${stops} stop${stops > 1 ? 's' : ''}` : ''}${b.dropoff ? ` to ${esc(b.dropoff)}` : ''}</span>${b.returnAt && b.returnAt !== 'missing' ? `<br><span class="small">Round trip: return ${esc(fmtDT(b.returnAt))}</span>` : ''}${(b.moreRides || []).length ? `<br><span class="small">+ ${b.moreRides.length} more ride${b.moreRides.length > 1 ? 's' : ''}</span>` : ''}`;
         priceVehicles();
       }
       host.style.scrollMarginTop = '90px'; host.scrollIntoView({ block: 'start', behavior: 'smooth' });
@@ -2019,7 +2032,9 @@
         const miss = !state.date || !state.time ? 'Choose the pickup date and time.' : !state.pickup.trim() ? 'Enter the pickup address.' : state.service !== 'hourly' && !state.dropoff.trim() ? 'Enter the drop-off address.' : C.isAirport(state.pickup) && !String(state.flight || '').trim() ? 'Pickups at the airport need the flight number, for example AS 331, so we can follow the landing.' : '';
         const mi = state.service === 'hourly' ? -1 : moreList.findIndex((m) => !m.date || !m.time || !m.pickup.trim() || !m.dropoff.trim());
         const miss2 = mi >= 0 ? `Ride ${mi + 2}: add the date, time, pickup and drop-off, or remove it.` : '';
-        try { if (miss || miss2) throw new Error(miss || miss2); await opts.quoteFn(quoteOnly()); showStep(2); } catch (x) { showErr(err, x); }
+        const rw = state.retOn && state.service !== 'hourly' ? (state.retDate && state.retTime ? new Date(`${state.retDate}T${state.retTime}`) : null) : undefined;
+        const miss3 = rw === null ? 'Round trip: add the return date and time.' : rw && rw <= new Date(`${state.date}T${state.time}`) ? 'Round trip: the return must be after the first pickup.' : '';
+        try { if (miss || miss2 || miss3) throw new Error(miss || miss2 || miss3); await opts.quoteFn(quoteOnly()); showStep(2); } catch (x) { showErr(err, x); }
       });
       $('#bk-back', host).onclick = () => showStep(1);
     }
