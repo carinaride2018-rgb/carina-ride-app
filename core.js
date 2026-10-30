@@ -785,7 +785,8 @@
     const payOpts = (c) => ({ card: true, cash: false, ...((c && c.payOptions) || {}) });
     const cardsOn = (c) => payOpts(c).card !== false && (payMode === 'demo' || (payMode === 'stripe' && !!(c.stripe && c.stripe.ready)));
     const cashOn = (c) => !!payOpts(c).cash;
-    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), cash: cashOn(c), cardChoice: payOpts(c).card !== false, payMode, logo: c.logo || '', ...(c.house ? { house: true } : {}) });
+    const FONT_STYLES = ['standard', 'classic', 'modern'];
+    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), cash: cashOn(c), cardChoice: payOpts(c).card !== false, payMode, logo: c.logo || '', fontStyle: c.fontStyle || 'standard', ...(c.house ? { house: true } : {}) });
 
     async function hashPw(pw, salt) { return hash(String(pw), salt); }
     async function setPassword(u, pw) { u.salt = randomId(8); u.passHash = await hashPw(pw, u.salt); }
@@ -5024,6 +5025,8 @@
       if (!name) fail('Enter the company name.');
       const color = /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color : c.color;
       Object.assign(c, { name, tagline: str(a.tagline, 120), color, phone: str(a.phone, 30), email: str(a.email, 120) });
+      // Fonts on the public booking pages, to match the company's own website.
+      if (FONT_STYLES.includes(a.fontStyle)) c.fontStyle = a.fontStyle;
       if ('terms' in a) c.terms = str(a.terms, 6000);
       if (a.payOptions) {
         const po = { card: a.payOptions.card !== false, cash: !!a.payOptions.cash };

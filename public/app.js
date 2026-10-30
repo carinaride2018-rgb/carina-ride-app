@@ -295,6 +295,7 @@
     const co = session && session.company;
     const brand = co ? co.color : null;
     document.documentElement.style.setProperty('--brand', brand || '#3d4f7c');
+    delete app.dataset.font;
     setAppIdentity(co, session && session.user);
     const u = session && session.user;
     const roleName = u ? ({ customer: 'Customer', driver: 'Driver', admin: 'Company admin', dispatcher: 'Dispatcher', owner: 'Platform owner' }[u.role]) : '';
@@ -1463,7 +1464,7 @@
     if (!signedHere) session = { company: info.company, user: null };
     const v = shell({});
     session = keep;
-    document.documentElement.style.setProperty('--brand', info.company.color);
+    document.documentElement.style.setProperty('--brand', info.company.color); bookFonts(info.company);
     const me = signedHere ? session.user : {};
     v.innerHTML = `
       <div class="brandhead">${info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : ''}<div class="stack" style="gap:6px"><h1>Book your event</h1><p>${esc(info.company.name)} · weddings, proms, corporate events and groups</p></div>
@@ -1521,7 +1522,7 @@
     const keep = session; session = { company: q.company, user: null };
     const v = shell({ narrow: true });
     session = keep;
-    document.documentElement.style.setProperty('--brand', q.company.color);
+    document.documentElement.style.setProperty('--brand', q.company.color); bookFonts(q.company);
     const draw = () => {
       const what = [q.eventType, q.eventName].filter(Boolean).join(': ');
       const open = q.status === 'sent';
@@ -2057,6 +2058,18 @@
     return { state };
   }
 
+  // Public booking pages can use the company's own website fonts (Rates & brand).
+  const FONT_CSS = {
+    classic: 'https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap',
+    modern: 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap',
+  };
+  function bookFonts(co) {
+    const f = co && FONT_CSS[co.fontStyle] ? co.fontStyle : '';
+    if (!f) return;
+    if (!document.getElementById(`font-${f}`)) { const l = document.createElement('link'); l.id = `font-${f}`; l.rel = 'stylesheet'; l.href = FONT_CSS[f]; document.head.appendChild(l); }
+    app.dataset.font = f;
+  }
+
   // ---- Public booking page --------------------------------------------------
   async function viewBook(slug) {
     current = null;
@@ -2069,7 +2082,7 @@
     if (!signedHere) session = { company: info.company, user: null };
     const v = shell({});
     session = keep;
-    document.documentElement.style.setProperty('--brand', info.company.color);
+    document.documentElement.style.setProperty('--brand', info.company.color); bookFonts(info.company);
     const co = info.company;
     v.innerHTML = `
       <div class="brandhead bh-book">
@@ -5178,6 +5191,7 @@
           <div class="panel stack"><h2>Brand</h2>
             <div class="grid2"><label class="field"><span>Company name</span><input id="rs-name" name="name" value="${esc(s.company.name)}" ${ro}></label>
               <label class="field"><span>Brand color</span><input id="rs-color" name="color" type="color" value="${esc(s.company.color)}" ${ro} style="padding:4px;height:40px"></label></div>
+            <label class="field"><span>Booking page fonts</span><select id="rs-font" name="fontStyle" ${ro}>${[['standard', 'Standard (LimoRelay)'], ['classic', 'Classic: elegant serif headings (Cormorant Garamond + Inter)'], ['modern', 'Modern: clean sans-serif (Inter)']].map(([v, l]) => `<option value="${v}"${(s.company.fontStyle || 'standard') === v ? ' selected' : ''}>${l}</option>`).join('')}</select><span class="hint">Pick the one closest to your own website.</span></label>
             <div class="field"><span>Logo</span><div class="row" id="rs-logo">${s.company.logo ? coLogo(s.company, 'logo-prev') : '<span class="small muted">No logo yet. Your initials are shown instead.</span>'}
               ${isAdmin ? `<label class="btn sm"><input type="file" id="rs-logo-file" accept="image/png,image/jpeg,image/webp" hidden>${s.company.logo ? 'Change logo' : 'Upload logo'}</label>${s.company.logo ? '<button class="btn sm" type="button" id="rs-logo-rm">Remove</button>' : ''}` : ''}</div>
               <span class="hint">Shown at the top of your dashboard, booking page and travel agent page. A PNG with a transparent background looks best.</span></div>
@@ -5269,7 +5283,7 @@
         const policy = { editHours: f.pol_editHours, cancelHours: f.pol_cancelHours, cancelFeePct: f.pol_cancelFeePct, waitAirport: f.pol_waitAirport, waitOther: f.pol_waitOther, noShowFeePct: f.pol_noShowFeePct, chargeWhen: f.pol_chargeWhen, chargeHours: f.pol_chargeHours };
         await busy($('button[type=submit]', e.target), async () => {
           try {
-            const res = await api('dispatch.saveSettings', { name: f.name, color: f.color, tagline: f.tagline, phone: f.phone, email: f.email, rates, policy, terms: f.terms, payOptions: { card: !!f.payCard, cash: !!f.payCash } });
+            const res = await api('dispatch.saveSettings', { name: f.name, color: f.color, fontStyle: f.fontStyle, tagline: f.tagline, phone: f.phone, email: f.email, rates, policy, terms: f.terms, payOptions: { card: !!f.payCard, cash: !!f.payCash } });
             setSession({ ...session, company: { ...session.company, ...res.company } });
             toast('Saved.'); draw();
           } catch (err) { showErr($('#rs-err', v), err); }

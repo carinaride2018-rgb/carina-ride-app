@@ -958,3 +958,13 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 @media (max-width: 900px) { .bk-layout:has(.booking:not(.step1)) .bk-aside { grid-template-columns: 1fr; } }
 .brandhead:not(.bh-book) { justify-content: flex-start; column-gap: 22px; }
 .brandhead:not(.bh-book) > .small { margin-left: auto; color: #c9cbd0; }
+
+/* Booking page fonts chosen under Rates & brand (#app[data-font]). */
+#app[data-font="classic"], #app[data-font="modern"] { font-family: "Inter", "Helvetica Neue", Arial, sans-serif; }
+#app[data-font] input, #app[data-font] select, #app[data-font] textarea, #app[data-font] button { font-family: inherit; }
+#app[data-font] .wordmark { font-stretch: 100%; letter-spacing: 0; }
+#app[data-font="classic"] h1, #app[data-font="classic"] h2, #app[data-font="classic"] .bkstep-head b, #app[data-font="classic"] .wordmark > div { font-family: "Cormorant Garamond", Georgia, serif; font-weight: 600; letter-spacing: .005em; }
+#app[data-font="classic"] .brandhead h1 { font-size: clamp(30px, 4vw, 44px); font-weight: 600; }
+#app[data-font="classic"] h2 { font-size: 1.55em; }
+#app[data-font="classic"] .wordmark > div { font-size: 19px; }
+#app[data-font="modern"] h1, #app[data-font="modern"] h2 { font-family: "Inter", sans-serif; font-weight: 800; letter-spacing: -.02em; }
