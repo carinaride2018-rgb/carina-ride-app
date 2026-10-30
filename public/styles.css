@@ -908,3 +908,6 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 .bh-phone a { color: var(--ink); text-decoration: none; }
 @media (max-width: 600px) { .brandhead.slim .bh-logo { height: 140px; } .bh-phone { font-size: 18px; } }
 .brandhead.slim .bh-logowrap { flex-basis: auto; }
+.brandhead.slim { max-width: 680px; padding: 6px 16px; margin-bottom: 14px; }
+.brandhead.slim .bh-logo { height: 180px; padding: 4px 6px; }
+@media (max-width: 600px) { .brandhead.slim .bh-logo { height: 130px; } }
