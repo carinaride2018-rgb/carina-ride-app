@@ -124,8 +124,8 @@ function parseBody(m) {
   const blocks = []; let cur = [];
   for (const l of lines) { if (l.trim()) cur.push(l); else if (cur.length) { blocks.push(cur); cur = []; } }
   if (cur.length) blocks.push(cur);
-  const kv = (l) => { const x = l.match(/^([A-Z][A-Za-z ]{1,32}):\s+(.+)$/); return x && !/^https?:/.test(x[1]) ? [x[1], x[2]] : null; };
-  return blocks.map((b) => { const rows = b.map(kv); return rows.every(Boolean) && b.length > 1 ? { rows } : { text: b.join('\n') }; });
+  const kv = (l) => { const x = l.match(/^([A-Z][^:]{0,40}):\s+(.+)$/); return x && !/https?$/i.test(x[1]) ? [x[1], x[2]] : null; };
+  return blocks.map((b) => { const rows = b.map(kv); return rows.every(Boolean) && (b.length > 1 || /^Total\b/.test(b[0])) ? { rows } : { text: b.join('\n') }; });
 }
 
 function bookingPdf(m, title) {

@@ -218,6 +218,21 @@
 
   const AIRPORT_RE = /airport|terminal|\b(jfk|lga|ewr|lax|sfo|ord|mdw|atl|dca|iad|bwi|dfw|iah|sea|bfi|pae|mia|bos|den|phx|las|msp|dtw|clt|phl)\b/i;
   // Cruise and ferry terminals are not airports.
+  // A pickup or drop-off must be a real place: a street address, an airport,
+  // or a named place with its city ("Space Needle, Seattle"). Just a city,
+  // state or ZIP ("Seattle", "Seattle, WA, USA") is not enough for a chauffeur.
+  const STATE_NAMES = 'alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|virginia|washington|west virginia|wisconsin|wyoming|district of columbia'.split('|');
+  function exactAddress(addr) {
+    const a = str(addr).trim();
+    if (!a) return false;
+    if (isAirport(a) && (/airport|terminal/i.test(a) || /\b[A-Z]{3}\b/.test(a))) return true;
+    // Drop the state, country and ZIP; what's left must have a street number or two parts (place, city).
+    const raw = a.toLowerCase().split(',').map((x) => x.trim().replace(/\s+\d{5}(-\d{4})?$/, '').trim()).filter(Boolean);
+    const code = raw.some((x) => /^[a-z]{2}$/.test(x) && !['us'].includes(x));
+    const parts = raw.filter((x) => !/^(usa|us|united states( of america)?|[a-z]{2}|\d{5}(-\d{4})?)$/.test(x) && (code || !STATE_NAMES.includes(x)));
+    if (parts.some((x) => /\d/.test(x))) return true;
+    return parts.length >= 2;
+  }
   const isAirport = (addr) => AIRPORT_RE.test(str(addr)) && !/cruise|ferry|pier \d/i.test(str(addr));
   const airportCode = (addr) => { const m = str(addr).match(/\b(JFK|LGA|EWR|LAX|SFO|ORD|MDW|ATL|DCA|IAD|BWI|DFW|IAH|SEA|BFI|PAE|MIA|BOS|DEN|PHX|LAS|MSP|DTW|CLT|PHL)\b/i); return m ? m[1].toUpperCase() : ''; };
 
@@ -812,7 +827,7 @@
           o ? (o.partnerName ? `Offered to ${o.partnerName} on the network.` : `Out of town in ${o.city}: arrange a local company.`) : 'Assign a chauffeur for it too.');
       }
       lines.push('', `Open the dispatch board to assign a chauffeur.`);
-      return lines.join('\n');
+      return withStops(t, lines.join('\n'));
     }
     function masterOf(c) {
       const admins = db.users.filter((u) => c && u.companyId === c.id && u.role === 'admin' && u.active !== false);
@@ -884,15 +899,15 @@
       const c = findCompany(t.companyId);
       const more = (t.groupIds || []).map((x) => db.trips.find((y) => y.id === x)).filter((x) => x && x.status !== 'cancelled');
       if (!more.length) return '';
-      return more.map((m, i) => ['', `Ride ${i + 2}`, `Trip confirmation: ${m.ref}`, `Pickup Date and Time: ${fmtLocal(m.pickupAt, c, true)}`, `Pickup Address: ${m.pickup}`, `Destination: ${m.dropoff}`,
-        ...(m.flight ? [`Flight Information: ${m.flight}`] : []), `Total: $${money(m.price.total)}`].join('\n')).join('\n') + `\n\nAll ${more.length + 1} rides: $${money([t, ...more].reduce((s2, x) => s2 + x.price.total, 0))}\n`;
+      return more.map((m, i) => ['', `Ride ${i + 2}: ${m.ref}`, `Pickup Date and Time: ${fmtLocal(m.pickupAt, c, true)}`, `Pickup Address: ${m.pickup}`, `Destination: ${m.dropoff}`,
+        ...(m.flight ? [`Flight Information: ${m.flight}`] : []), `Total: $${money(m.price.total)}`].join('\n')).join('\n') + `\n\nTotal for all ${more.length + 1} rides: $${money([t, ...more].reduce((s2, x) => s2 + x.price.total, 0))}\n`;
     }
     function landingOnly(t) {
       const c = findCompany(t.companyId), lt = t.landingId && db.trips.find((x) => x.id === t.landingId);
       if (!lt || lt.status === 'cancelled') return '';
       const tz = lt.outOfTown ? { timezone: lt.outOfTown.tz } : c;
-      return ['', 'Pickup when you land', `Trip confirmation: ${lt.ref}`, `Pickup Date and Time: ${fmtLocal(lt.pickupAt, tz, true)}${lt.outOfTown ? ` (${lt.outOfTown.city} time)` : ''}`,
-        `Pickup Address: ${lt.pickup}`, `Destination: ${lt.dropoff}`, `Flight: ${lt.flight}`, `Total: $${money(lt.price.total)}`, 'We follow your flight and move the pickup if you land late.', ''].join('\n');
+      return ['', `Pickup when you land: ${lt.ref}`, `Pickup Date and Time: ${fmtLocal(lt.pickupAt, tz, true)}${lt.outOfTown ? ` (${lt.outOfTown.city} time)` : ''}`,
+        `Pickup Address: ${lt.pickup}`, `Destination: ${lt.dropoff}`, `Flight: ${lt.flight}`, `Total: $${money(lt.price.total)}`, '', 'We follow your flight and move the pickup if you land late.', ''].join('\n');
     }
     // Bottom of the booking confirmation email: how to pay, then the terms.
     function confirmFooter(t) {
@@ -956,7 +971,15 @@
       const c = findCompany(t.companyId);
       const own = c.templates && c.templates[key];
       const vars = msgVars(t, extra);
-      return (own || MSG_TEMPLATES[key].text).replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k] : m)).replace(/ {2,}/g, ' ').replace(/ +\n/g, '\n').trim();
+      return withStops(t, (own || MSG_TEMPLATES[key].text).replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k] : m)).replace(/ {2,}/g, ' ').replace(/ +\n/g, '\n').trim());
+    }
+    // Stops on the way go right under the pickup line, so they sit in the details box.
+    function withStops(t, text) {
+      const list = (t.stopList || []).filter(Boolean);
+      if (!list.length || /^Stop 1:/m.test(text)) return text;
+      const waits = t.stopWaits || [];
+      const lines = list.map((x, i) => `Stop ${i + 1}: ${x}${waits[i] ? ` (wait ${waits[i]} min)` : ''}`).join('\n');
+      return text.replace(/^(Pickup Address: .*)$/m, `$1\n${lines}`);
     }
     function reviewMsgs(t) {
       const out = [];
@@ -1238,7 +1261,7 @@
       if (t.flight) lines.push(`Flight: ${t.flight}`);
       lines.push(`Vehicle: ${v.vehicle_choice}`, `Passengers: ${v.passenger_count}`, `Bags: ${v.bag_count}`, `Total: ${v.total}`);
       if (!t.driverId && t.status === 'confirmed') lines.push('', 'The ride needs a chauffeur. Open the dispatch board to assign one.');
-      return lines.join('\n');
+      return withStops(t, lines.join('\n'));
     }
 
     // Free waiting at pickup. It starts when the driver arrives, or at the
@@ -1428,6 +1451,8 @@
       } else { out.poNumber = ''; out.costCenter = ''; }
       if (!out.pickup) fail('Enter a pickup address.');
       if (out.service !== 'hourly' && !out.dropoff) fail('Enter a drop-off address.');
+      if (!exactAddress(out.pickup)) fail(`Pickup address: enter the full street address or a place name with its city (like a hotel or airport), not just "${out.pickup}".`);
+      if (out.dropoff && !exactAddress(out.dropoff)) fail(`Drop-off address: enter the full street address or a place name with its city (like a hotel or airport), not just "${out.dropoff}".`);
       if (out.service !== 'hourly') out.service = isAirport(out.pickup) || isAirport(out.dropoff) ? 'airport' : 'transfer';
       if (str(b.flight)) {
         const f = normFlight(b.flight);
@@ -2998,6 +3023,7 @@
       const steps = [
         { key: 'cars', label: 'Add your cars', done: has(db.vehicles) },
         { key: 'rates', label: 'Set your prices', done: !!st.rates },
+        { key: 'logo', label: 'Add your logo', done: !!c.logo },
         { key: 'drivers', label: 'Add a driver', done: db.users.some((u) => u.companyId === c.id && u.role === 'driver') },
         { key: 'payments', label: 'Turn on card payments', done: cardsOn(c) || payOpts(c).card === false },
         { key: 'booking', label: 'Take a test booking', done: has(db.trips) },
@@ -6469,5 +6495,5 @@
     };
   }
 
-  return { createCore, MSG_TEMPLATES, INCIDENT_KINDS, setProviders, routeVia, TEMPS, MUSIC, MAX_STOPS, STOP_WAITS, DEFAULT_POLICY, quote, estimateRoute, suggestPlaces, isAirport, flightStatus, normFlight, ApiError, VEHICLE_TYPES, SERVICES, EVENT_TYPES, STATUS_LABELS, DRIVER_FLOW, PLANS, PLATFORM_EMAIL, DEFAULT_AUTOFARM, DEFAULT_DISPATCH, DEFAULT_RATES, DEFAULT_PRICING, VEHICLE_STATUS, MAINT_KINDS, PAY_TYPES, DAYS, AIRLINES };
+  return { createCore, exactAddress, MSG_TEMPLATES, INCIDENT_KINDS, setProviders, routeVia, TEMPS, MUSIC, MAX_STOPS, STOP_WAITS, DEFAULT_POLICY, quote, estimateRoute, suggestPlaces, isAirport, flightStatus, normFlight, ApiError, VEHICLE_TYPES, SERVICES, EVENT_TYPES, STATUS_LABELS, DRIVER_FLOW, PLANS, PLATFORM_EMAIL, DEFAULT_AUTOFARM, DEFAULT_DISPATCH, DEFAULT_RATES, DEFAULT_PRICING, VEHICLE_STATUS, MAINT_KINDS, PAY_TYPES, DAYS, AIRLINES };
 });

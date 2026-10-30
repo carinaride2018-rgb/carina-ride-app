@@ -461,11 +461,11 @@ function emailHtml(m, opt) {
   const blocks = []; let cur = [];
   for (const l of lines) { if (l.trim()) cur.push(l); else if (cur.length) { blocks.push(cur); cur = []; } }
   if (cur.length) blocks.push(cur);
-  const kv = (l) => { const x = l.match(/^([A-Z][A-Za-z ]{1,32}):\s+(.+)$/); return x && !/^https?:/.test(x[1]) ? x : null; };
+  const kv = (l) => { const x = l.match(/^([A-Z][^:]{0,40}):\s+(.+)$/); return x && !/https?$/i.test(x[1]) ? x : null; };
   const row = (x, i) => `<tr><td style="padding:11px 14px;background:${i % 2 ? '#ffffff' : '#f7f7f8'};border-bottom:1px solid #ececee;width:36%;vertical-align:top;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#6b6f76;font-weight:700">${hesc(x[1])}</td><td style="padding:10px 14px;background:${i % 2 ? '#ffffff' : '#f7f7f8'};border-bottom:1px solid #ececee;vertical-align:top;font-size:15px;line-height:1.4;color:#111111;font-weight:700;word-break:break-word;overflow-wrap:anywhere">${linkify(x[2])}</td></tr>`;
   const html = blocks.map((b) => {
     const kvs = b.map(kv);
-    if (kvs.every(Boolean) && b.length > 1) return `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;table-layout:fixed;border-collapse:separate;border:1px solid #e3e3e6;border-radius:10px;overflow:hidden;margin:0 0 18px">${kvs.map(row).join('')}</table>`;
+    if (kvs.every(Boolean) && (b.length > 1 || /^Total\b/.test(b[0]))) return `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;table-layout:fixed;border-collapse:separate;border:1px solid #e3e3e6;border-radius:10px;overflow:hidden;margin:0 0 18px">${kvs.map(row).join('')}</table>`;
     return `<p style="margin:0 0 16px;font-size:15px;line-height:1.55;color:#222222">${b.map(linkify).join('<br>')}</p>`;
   }).join('');
   const heading = HEADINGS[m.kind] || '';

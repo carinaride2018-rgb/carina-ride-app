@@ -81,6 +81,19 @@
       img.src = url;
     });
   }
+  // Pickup and drop-off must be a street address or a named place, not just a city.
+  const ADDR_MSG = 'Enter the full street address or a place name with its city (like a hotel or airport), not just the city.';
+  function checkAddr(input, required) {
+    const fld = input && input.closest('.field'); if (!fld) return true;
+    const v = input.value.trim();
+    const good = (!v && !required) || (!!v && C.exactAddress(v));
+    fld.classList.toggle('bad', !good);
+    let m = $('.ferr', fld);
+    if (!good && v) { if (!m) { m = document.createElement('span'); m.className = 'ferr small'; fld.appendChild(m); } m.textContent = ADDR_MSG; } else if (m) m.remove();
+    return good;
+  }
+  // 2063199196 shows as (206) 319-9196; anything else stays as typed.
+  const fmtPhone = (p) => { const d = String(p || '').replace(/\D/g, '').replace(/^1(?=\d{10}$)/, ''); return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : String(p || ''); };
   const coLogo = (co, cls) => co && co.logo ? `<img class="${cls}" src="${esc(co.logo)}" alt="${esc(co.name)} logo">` : '';
   // Photo picker block used by the driver app and the office.
   const photoField = (name, photo, id) => `<div class="photofield">${face(name, photo, 'lg')}<div class="stack" style="gap:6px"><span class="small muted">Passengers see this photo with the car and plate once the trip is theirs.</span><div class="row"><label class="btn sm"><input type="file" id="${id}" accept="image/jpeg,image/png,image/webp" hidden>${photo ? 'Change photo' : 'Add photo'}</label>${photo ? `<button class="btn sm" type="button" id="${id}-rm">Remove</button>` : ''}</div></div></div>`;
@@ -1531,6 +1544,7 @@
         : `<div class="grid2"><label class="field"><span>Card number</span><input name="number" class="mono" inputmode="numeric" autocomplete="cc-number" value="4242 4242 4242 4242"></label><label class="field"><span>Expiry (MM/YY)</span><input name="exp" class="mono" autocomplete="cc-exp" value="12/30"></label></div>
           <p class="small muted">${cardHow}${q.company.payMode === 'demo' ? ' Demo: no real card is charged.' : ''}</p>`;
       v.innerHTML = `<div class="stack">
+        ${q.company.logo ? `<div class="done-logo">${coLogo(q.company, 'done-logo-img')}</div>` : ''}
         <div class="spread"><div><h1 style="font-size:24px">${q.status === 'accepted' ? 'You’re booked' : q.direct ? 'Check your rides and book' : 'Your quote'}</h1><p class="muted small">${esc(q.company.name)} · ${esc(q.number)}${what ? ' · ' + esc(what) : ''}</p></div>${q.direct && q.status === 'sent' ? '' : qPill(q)}</div>
         ${q.status === 'new' ? `<div class="panel muted">We're pricing your request now. You'll get a text or email with the price.</div>` : `
         <div class="panel stack">
@@ -1998,6 +2012,12 @@
     getLive().then((i) => { const n = $('#bk-mapnote', host); if (n && i.live && i.live.maps) n.remove(); });
     form.addEventListener('input', () => { sync(); requote(); });
     form.addEventListener('change', () => { sync(); requote(); });
+    // Red message as soon as a pickup or drop-off is just a city; it clears once fixed.
+    for (const [id, req] of [['#bk-pickup', true], ['#bk-dropoff', false]]) {
+      const el = $(id, form); if (!el) continue;
+      el.addEventListener('change', () => { if (el.value.trim()) checkAddr(el, req); });
+      el.addEventListener('input', () => { if (el.closest('.field').classList.contains('bad')) checkAddr(el, req); });
+    }
     form.addEventListener('submit', (e) => e.preventDefault());
     $('#bk-submit', host).onclick = (e) => busy(e.currentTarget, async () => {
       sync(); $('#bk-err', host).innerHTML = '';
@@ -2042,7 +2062,8 @@
     if (twoStep) {
       $('#bk-next', host).onclick = (e) => busy(e.currentTarget, async () => {
         sync(); const err = $('#bk-err1', host); err.innerHTML = '';
-        const miss = !state.date || !state.time ? 'Choose the pickup date and time.' : !state.pickup.trim() ? 'Enter the pickup address.' : state.service !== 'hourly' && !state.dropoff.trim() ? 'Enter the drop-off address.' : C.isAirport(state.pickup) && !String(state.flight || '').trim() ? 'Pickups at the airport need the flight number, for example AS 331, so we can follow the landing.' : '';
+        const addrOk = [checkAddr($('#bk-pickup', host), true), checkAddr($('#bk-dropoff', host), state.service !== 'hourly')].every(Boolean);
+        const miss = !state.date || !state.time ? 'Choose the pickup date and time.' : !state.pickup.trim() ? 'Enter the pickup address.' : state.service !== 'hourly' && !state.dropoff.trim() ? 'Enter the drop-off address.' : !addrOk ? 'Check the addresses marked in red: we need the exact pickup and drop-off, not just the city.' : C.isAirport(state.pickup) && !String(state.flight || '').trim() ? 'Pickups at the airport need the flight number, for example AS 331, so we can follow the landing.' : '';
         const mi = state.service === 'hourly' ? -1 : moreList.findIndex((m) => !m.date || !m.time || !m.pickup.trim() || !m.dropoff.trim());
         const miss2 = mi >= 0 ? `Ride ${mi + 2}: add the date, time, pickup and drop-off, or remove it.` : '';
         const rw = state.retOn && state.service !== 'hourly' ? (state.retDate && state.retTime ? new Date(`${state.retDate}T${state.retTime}`) : null) : undefined;
@@ -2071,11 +2092,11 @@
     session = keep;
     document.documentElement.style.setProperty('--brand', info.company.color);
     v.innerHTML = `
-      <div class="brandhead">${info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : ''}<div class="stack" style="gap:6px"><h1>${esc(info.company.name)}</h1><p>${esc(info.company.tagline || 'Book your ride')}</p></div>
-        <div class="small" style="opacity:.9">${esc(info.company.phone || '')}${signedHere ? ` · Signed in as ${esc(session.user.name)} · <a href="#customer">My trips</a>` : ''}</div></div>
+      <div class="brandhead slim">${info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : '<div></div>'}
+        <div class="bh-phone">${info.company.phone ? `<a href="tel:${esc(info.company.phone)}">${esc(fmtPhone(info.company.phone))}</a>` : ''}${signedHere ? ` · Signed in as ${esc(session.user.name)} · <a href="#customer">My trips</a>` : ''}</div></div>
       ${info.company.house ? `<p class="housenote">Book a chauffeured car in any US city. Enter the pickup time in that city's local time. A LimoRelay company in that city drives your ride.</p>` : ''}
-      <a class="eventlink" href="#request.${esc(slug)}"><span>Planning a wedding, prom, corporate event or group trip?</span><b>Book your event</b></a>
-      <a class="eventlink" href="#agent.${esc(slug)}" id="agent-link"><span>Travel agent, assistant or concierge booking for clients? Earn commission on every ride.</span><b>Agent sign-up or login</b></a>
+      <div class="morelinks"><a class="eventlink" href="#request.${esc(slug)}"><b>Book your event</b><span class="small">Weddings, proms, corporate events and groups</span></a>
+      <a class="eventlink" href="#agent.${esc(slug)}" id="agent-link"><b>Agent sign-up or login</b><span class="small">Travel agents earn commission on every ride</span></a></div>
       <div id="book-host"></div><div id="auth-host"></div>`;
     const pending = { booking: null };
     // A new company with no cars yet can't take online bookings.
@@ -2159,9 +2180,10 @@
       $('#book-host', v).hidden = true;
       const host = $('#auth-host', v);
       host.innerHTML = `<div class="panel stack" style="margin-top:20px;max-width:560px" id="guest-done">
+        ${info.company.logo ? `<div class="done-logo">${coLogo(info.company, 'done-logo-img')}</div>` : ''}
         <h2>Thank you, your ride${(t.moreTrips || []).length ? 's are' : ' is'} booked</h2>
         <p>Reference number <b class="mono">${esc(t.ref)}</b>${t.returnTrip ? `, return ride <b class="mono">${esc(t.returnTrip.ref)}</b>` : ''}${t.landingTrip ? `, ride when you land <b class="mono">${esc(t.landingTrip.ref)}</b>` : ''}</p>
-        <dl class="kv"><dt>Pickup</dt><dd>${esc(fmtDT(t.pickupAt))}<div class="small faint">${esc(t.pickup || '')}</div></dd>${t.dropoff ? `<dt>Drop-off</dt><dd class="small">${esc(t.dropoff)}</dd>` : ''}${t.price ? `<dt>Total</dt><dd class="num">${money(t.price.total)}</dd>` : ''}</dl>
+        <dl class="kv"><dt>Pickup</dt><dd>${esc(fmtDT(t.pickupAt))}<div class="small faint">${esc(t.pickup || '')}</div></dd>${(t.stopList || []).filter(Boolean).map((x, i) => `<dt>Stop ${i + 1}</dt><dd class="small">${esc(x)}</dd>`).join('')}${t.dropoff ? `<dt>Drop-off</dt><dd class="small">${esc(t.dropoff)}</dd>` : ''}${t.price ? `<dt>Total</dt><dd class="num">${money(t.price.total)}</dd>` : ''}</dl>
         ${(t.moreTrips || []).map((x, i) => `<dl class="kv"><dt>Ride ${i + 2}</dt><dd><b class="mono">${esc(x.ref)}</b> · ${esc(fmtDT(x.pickupAt))}<div class="small faint">${esc(x.pickup)} to ${esc(x.dropoff)}</div></dd><dt>Total</dt><dd class="num">${money(x.price.total)}</dd></dl>`).join('')}
         <p class="small muted">We emailed your confirmation to <b>${esc(t.email)}</b>.${t.accountEmail ? ' We also sent a link to set up your account, so you can see and change your rides any time.' : ' Sign in with that email to see your rides.'}</p>
         <div class="row"><a class="btn" href="#book.${esc(slug)}" id="guest-again">Book another ride</a>${info.company.phone ? `<a class="btn" href="tel:${esc(info.company.phone)}">Call ${esc(info.company.name)}</a>` : ''}</div></div>`;
@@ -3086,7 +3108,7 @@
     const SETUP_HINT = {
       cars: ['Name, type and seats of each car.', 'Add a car'],
       rates: ['Base fare, per mile and hourly for each car.', 'Set prices'],
-      logo: ['Shown on your booking site and in every email.', 'Add logo'],
+      logo: ['Shown on your booking page, the booking confirmation and every email.', 'Add logo'],
       drivers: ['Each driver gets their own app login.', 'Add a driver'],
       payments: ['Connect Stripe so passengers pay by card, or take cash only.', 'Set up payments'],
       booking: ['Book a ride yourself to see how it works.', 'New booking'],
