@@ -212,7 +212,7 @@
   }
   // Which outside services are real on this server (texts, email, cards...).
   let liveInfo = null;
-  const getLive = async () => { if (!liveInfo) { try { liveInfo = await api('public.info'); } catch (e) { liveInfo = { live: {}, payMode: 'demo' }; } } return liveInfo; };
+  const getLive = async () => { if (!liveInfo) { try { liveInfo = await api('public.info', { host: location.hostname }); } catch (e) { liveInfo = { live: {}, payMode: 'demo' }; } } return liveInfo; };
 
   let gmaps = null; // the Google script, loaded once
   const loadGoogle = (key) => gmaps || (gmaps = new Promise((ok, no) => { const sc = document.createElement('script'); sc.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&v=weekly`; sc.async = true; sc.onload = () => ok(); sc.onerror = () => { gmaps = null; no(new Error('Google Maps did not load')); }; document.head.appendChild(sc); }));
@@ -689,6 +689,11 @@
     closeModal();
     const route = location.hash.slice(1) || '';
     // booking.limorelay.com opens straight on the nationwide booking page.
+    // A company's own booking address (for example book.carinaride.com) opens its booking page.
+    if (route === '' && !/(^|\.)limorelay\.com$|^localhost$|^127\./i.test(location.hostname) && !/^booking\./i.test(location.hostname)) {
+      getLive().then((i) => { if (i.domainSlug) { history.replaceState(null, '', '#book.' + i.domainSlug); viewBook(i.domainSlug); } else render2(); });
+      return;
+    }
     if (route === '' && /^booking\./i.test(location.hostname)) {
       getLive().then((i) => { if (i.houseSlug) { history.replaceState(null, '', '#book.' + i.houseSlug); viewBook(i.houseSlug); } else if (!session) viewSignin(); else render2(); });
       return;
@@ -5282,7 +5287,7 @@
       try { s = await api('dispatch.settings'); } catch (e) { return showErr(v, e); }
       const ro = isAdmin ? '' : 'disabled';
       const r = s.rates;
-      const link = DEMO ? `#book.${s.company.slug}` : `${location.origin}${location.pathname}#book.${s.company.slug}`;
+      const link = DEMO ? `#book.${s.company.slug}` : s.company.domain ? `https://${s.company.domain}` : `${location.origin}${location.pathname}#book.${s.company.slug}`;
       const num = (k, label, step, hint) => `<label class="field"><span>${label}</span><input id="rs-${k}" name="${k}" type="number" min="0" step="${step || 0.01}" value="${r[k]}" ${ro}>${hint ? `<span class="hint">${hint}</span>` : ''}</label>`;
       v.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Rates &amp; brand</h1><p class="muted">${isAdmin ? 'Base rates for a sedan. Night, weekend, busy-time and holiday adjustments are in Pricing.' : 'Only the company admin can change these.'}</p></div></div>
         <form id="rs" class="stack" novalidate style="max-width:860px">
@@ -5297,6 +5302,8 @@
               <label class="field"><span>Email</span><input id="rs-email" name="email" value="${esc(s.company.email)}" ${ro}></label></div>
             <div class="field"><span>Your booking page</span><div class="row"><input class="input mono grow" id="rs-link" readonly value="${esc(link)}"><button class="btn" type="button" id="rs-copy">Copy</button><a class="btn" href="#book.${esc(s.company.slug)}">Open</a></div>
               <span class="hint">Link to this from your website, or embed it as a booking widget.</span></div>
+            <label class="field"><span>Your own booking address <span class="faint">(optional)</span></span><input id="rs-domain" name="domain" class="mono" placeholder="book.yourcompany.com" value="${esc(s.company.domain || '')}" ${ro}>
+              <span class="hint">Customers see your name in the address bar. After you save, add a CNAME record for this name where you bought the domain, pointing to <span class="mono">livery-9xtm.onrender.com</span>, and ask LimoRelay to turn it on.</span></label>
           </div>
           <div class="panel stack"><h2>Rates</h2>
             <div class="grid3">${num('minHours', 'Minimum hours (by the hour)', 1)}
@@ -5380,7 +5387,7 @@
         const policy = { editHours: f.pol_editHours, cancelHours: f.pol_cancelHours, cancelFeePct: f.pol_cancelFeePct, waitAirport: f.pol_waitAirport, waitOther: f.pol_waitOther, noShowFeePct: f.pol_noShowFeePct, chargeWhen: f.pol_chargeWhen, chargeHours: f.pol_chargeHours };
         await busy($('button[type=submit]', e.target), async () => {
           try {
-            const res = await api('dispatch.saveSettings', { name: f.name, color: f.color, tagline: f.tagline, phone: f.phone, email: f.email, rates, policy, terms: f.terms, payOptions: { card: !!f.payCard, cash: !!f.payCash } });
+            const res = await api('dispatch.saveSettings', { name: f.name, color: f.color, tagline: f.tagline, domain: f.domain, phone: f.phone, email: f.email, rates, policy, terms: f.terms, payOptions: { card: !!f.payCard, cash: !!f.payCash } });
             setSession({ ...session, company: { ...session.company, ...res.company } });
             toast('Saved.'); draw();
           } catch (err) { showErr($('#rs-err', v), err); }

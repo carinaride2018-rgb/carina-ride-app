@@ -813,7 +813,7 @@
     const payOpts = (c) => ({ card: true, cash: false, ...((c && c.payOptions) || {}) });
     const cardsOn = (c) => payOpts(c).card !== false && (payMode === 'demo' || (payMode === 'stripe' && !!(c.stripe && c.stripe.ready)));
     const cashOn = (c) => !!payOpts(c).cash;
-    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), cash: cashOn(c), cardChoice: payOpts(c).card !== false, payMode, logo: c.logo || '', ...(c.house ? { house: true } : {}) });
+    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), cash: cashOn(c), cardChoice: payOpts(c).card !== false, payMode, logo: c.logo || '', domain: c.domain || '', ...(c.house ? { house: true } : {}) });
 
     async function hashPw(pw, salt) { return hash(String(pw), salt); }
     async function setPassword(u, pw) { u.salt = randomId(8); u.passHash = await hashPw(pw, u.salt); }
@@ -2228,7 +2228,7 @@
     }
 
     // Public (no login)
-    def('public.info', 'public', false, () => ({ houseSlug: (db.companies.find((c) => c.house && c.status === 'active') || {}).slug || '', sample: !!db.sample, live: clone(live), payMode, pushKey: opts.pushKey || '', nativePush: opts.nativePush || null, mapsKey: opts.mapsKey || '' }));
+    def('public.info', 'public', false, (ctx, a) => ({ domainSlug: slugForHost(a && a.host), houseSlug: (db.companies.find((c) => c.house && c.status === 'active') || {}).slug || '', sample: !!db.sample, live: clone(live), payMode, pushKey: opts.pushKey || '', nativePush: opts.nativePush || null, mapsKey: opts.mapsKey || '' }));
     def('public.companies', 'public', false, () =>
       db.companies.filter((c) => c.status === 'active').map(pubCompany));
     def('public.company', 'public', false, (ctx, a) => {
@@ -5093,8 +5093,24 @@
       if (logo) ctx.company.logo = logo; else delete ctx.company.logo;
       return { company: pubCompany(ctx.company) };
     });
+    // A company's own booking address (book.carinaride.com): the app opens
+    // that company's booking page when it is reached on that host.
+    function cleanHost(h) { return str(h, 120).toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/:\d+$/, ''); }
+    function slugForHost(h) {
+      const host = cleanHost(h || '');
+      if (!host) return '';
+      const c = db.companies.find((x) => x.domain && x.status === 'active' && (x.domain === host || 'www.' + x.domain === host));
+      return c ? c.slug : '';
+    }
     def('dispatch.saveSettings', ['admin'], true, (ctx, a) => {
       const c = ctx.company;
+      if ('domain' in a) {
+        const d = cleanHost(a.domain);
+        if (d && !/^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(d)) fail('Enter a web address like book.yourcompany.com.');
+        if (d && /(^|\.)limorelay\.com$/.test(d)) fail('Use your own domain, for example book.yourcompany.com.');
+        if (d && db.companies.some((x) => x !== c && x.domain === d)) fail('Another company already uses that address.');
+        c.domain = d;
+      }
       const name = str(a.name, 80);
       if (!name) fail('Enter the company name.');
       const color = /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color : c.color;
