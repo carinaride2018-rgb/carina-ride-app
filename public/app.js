@@ -1812,9 +1812,8 @@
       const crf = $('#bk-creditf', form); if (crf) crf.hidden = !!acc;
       const pol = $('#bk-po-label', form); if (pol) pol.innerHTML = acc && acc.requirePo ? 'PO number <span class="faint">(required)</span>' : 'PO number <span class="faint">(optional)</span>';
       const airport = C.isAirport(state.pickup) || C.isAirport(state.dropoff);
-      // Step 1 asks the flight only for an airport pickup (it times the ride);
-      // a flight out (drop-off at the airport) is asked in step 2.
-      if (twoStep) $('#bk-flightf', form).hidden = step === 1 ? !C.isAirport(state.pickup) : !airport && !state.flight;
+      // Only an arrival flight is asked: the box shows for an airport pickup, never for a drop-off.
+      if (twoStep) $('#bk-flightf', form).hidden = !C.isAirport(state.pickup);
       stopList = $$('[data-stop]', form).map((i) => i.value);
       stopWaits = $$('[data-swait]', form).map((i) => Number(i.value));
       $('#bk-addstop', form).hidden = stopList.length >= C.MAX_STOPS;
