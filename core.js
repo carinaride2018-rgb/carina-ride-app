@@ -827,7 +827,7 @@
       const lines = [`New booking ${t.ref}${t.agent ? ` by travel agent ${t.agent.name}${t.agent.agency ? ` (${t.agent.agency})` : ''}` : ''}.`, '',
         `Passenger: ${v.passenger_name}`, `Cellphone: ${v.cellphone || '-'}`, `Email: ${t.passengerEmail || '-'}`, ...(t.business ? [`Business trip: ${t.business.company}${t.business.po ? ` (PO ${t.business.po})` : ''}`] : []), `Pickup Date and Time: ${v.pickup_time}`,
         `Pickup Address: ${t.pickup}`, `Destination: ${v.destination}`];
-      if (t.flight) lines.push(`Flight: ${t.flight}`);
+      if (t.flight) lines.push(`Flight: ${t.flight}${t.flightFrom ? ` from ${t.flightFrom}` : ''}`);
       lines.push(`Vehicle: ${v.vehicle_choice}`, `Passengers: ${v.passenger_count}`, `Bags: ${v.bag_count}`, `Total: ${v.total}`);
       const mbk = moreBlock(t); if (mbk) lines.push(mbk.replace(/\n+$/, ''));
       const lt = t.landingId && db.trips.find((x) => x.id === t.landingId);
@@ -1268,7 +1268,7 @@
       const lines = [`Booking ${t.ref} was changed online by ${t.agent ? `travel agent ${t.agent.name}` : 'the customer'}.`, ''];
       for (const [label, b, a] of was) lines.push(`${label}: ${b || '-'} → ${a || '-'}`);
       lines.push('', `Passenger: ${v.passenger_name}`, `Cellphone: ${v.cellphone || '-'}`, `Pickup Date and Time: ${v.pickup_time}`, `Pickup Address: ${t.pickup}`, `Destination: ${v.destination}`);
-      if (t.flight) lines.push(`Flight: ${t.flight}`);
+      if (t.flight) lines.push(`Flight: ${t.flight}${t.flightFrom ? ` from ${t.flightFrom}` : ''}`);
       lines.push(`Vehicle: ${v.vehicle_choice}`, `Passengers: ${v.passenger_count}`, `Bags: ${v.bag_count}`, `Total: ${v.total}`);
       if (!t.driverId && t.status === 'confirmed') lines.push('', 'The ride needs a chauffeur. Open the dispatch board to assign one.');
       return withStops(t, lines.join('\n'));
@@ -1468,6 +1468,9 @@
         const f = normFlight(b.flight);
         if (!f) fail('Enter the flight as airline code and number, for example AA 1342.');
         out.flight = f;
+        // Where the flight comes from: optional, shown to the office and the chauffeur.
+        const from = str(b.flightFrom, 60);
+        if (from) out.flightFrom = from;
       }
       // Airport pickups are timed to the landing, so the flight is required.
       if (isAirport(out.pickup) && !out.flight) fail('Pickups at the airport need the flight number, for example AS 331, so we can follow the landing.');
