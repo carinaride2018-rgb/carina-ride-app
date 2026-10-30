@@ -1676,8 +1676,8 @@
           <label class="field"><span id="bk-drop-label">Drop-off address</span><input id="bk-dropoff" name="dropoff" autocomplete="off" placeholder="Where are you going?" value="${esc(state.dropoff)}"></label>
           <fieldset class="fs flightbox" id="bk-flightf"><legend><span aria-hidden="true">&#9992;</span> Flight information</legend>
             <div class="grid2">
-              <label class="field"><span>Flight number <span class="faint">(required for airport pickups)</span></span><input id="bk-flight" name="flight" class="mono" placeholder="AA 1342" value="${esc(state.flight)}" autocomplete="off"></label>
-              <label class="field"><span>Arriving from <span class="faint">(optional)</span></span><input id="bk-ffrom" name="flightFrom" placeholder="City, for example Denver" value="${esc(state.flightFrom || '')}" autocomplete="off"></label>
+              <label class="field"><span id="bk-flight-label">Flight number <span class="faint">(required for airport pickups)</span></span><input id="bk-flight" name="flight" class="mono" placeholder="AA 1342" value="${esc(state.flight)}" autocomplete="off"></label>
+              <label class="field" id="bk-ffromf"><span>Arriving from <span class="faint">(optional)</span></span><input id="bk-ffrom" name="flightFrom" placeholder="City, for example Denver" value="${esc(state.flightFrom || '')}" autocomplete="off"></label>
             </div>
             <p class="hint" id="bk-flight-hint" style="margin:0">For pickups at the airport, set the pickup time to when the flight lands. We track the flight and move the pickup if it's late.</p>
           </fieldset>
@@ -1814,7 +1814,15 @@
       const airport = C.isAirport(state.pickup) || C.isAirport(state.dropoff);
       // Step 1 asks the flight only for an airport pickup (it times the ride);
       // a flight out (drop-off at the airport) is asked in step 2.
-      if (twoStep) $('#bk-flightf', form).hidden = step === 1 ? !C.isAirport(state.pickup) : !airport && !state.flight;
+      if (twoStep) {
+        // Step 2 with a drop-off at the airport asks for the flight out, and
+        // only if no return ride is booked (its flight was asked in step 1).
+        const out = step === 2 && !C.isAirport(state.pickup);
+        $('#bk-flightf', form).hidden = step === 1 ? !C.isAirport(state.pickup) : out ? (!C.isAirport(state.dropoff) || !!state.retOn) && !state.flight : !airport && !state.flight;
+        $('#bk-flight-label', form).innerHTML = out ? 'Departing flight <span class="faint">(optional)</span>' : 'Flight number <span class="faint">(required for airport pickups)</span>';
+        $('#bk-ffromf', form).hidden = out;
+        $('#bk-flight-hint', form).textContent = out ? 'Your flight out helps us plan the drop-off time.' : "For pickups at the airport, set the pickup time to when the flight lands. We track the flight and move the pickup if it's late.";
+      }
       stopList = $$('[data-stop]', form).map((i) => i.value);
       stopWaits = $$('[data-swait]', form).map((i) => Number(i.value));
       $('#bk-addstop', form).hidden = stopList.length >= C.MAX_STOPS;
