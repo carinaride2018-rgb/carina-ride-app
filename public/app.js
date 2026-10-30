@@ -4503,7 +4503,8 @@
       $('#vh-add', v).onclick = () => vehicleModal(null, () => drawFleet(v));
       $$('tr[data-id]', v).forEach((r) => { r.onclick = () => vehicleModal(r.dataset.id, () => drawFleet(v)); });
     }
-    async function vehicleModal(id, done) {
+    // note: a confirmation shown at the top of the form after a save.
+    async function vehicleModal(id, done, note) {
       let data = { vehicle: { type: 'Sedan', capacity: 3, status: 'active' }, log: [], upcoming: [] };
       if (id) { try { data = await api('dispatch.vehicle', { id }); } catch (e) { return toast(e.message, true); } }
       const p = data.vehicle;
@@ -4512,6 +4513,7 @@
         body: `${id ? `<div class="tiles">
             <div class="tile"><span class="label">This month</span><b>${p.tripsMonth} trips</b><span class="small faint">${money0(p.revenueMonth)} billed</span></div></div>` : ''}
           <form id="vf" class="stack" novalidate>
+            ${note ? `<div class="note ok" id="vf-saved" role="status"><b>✓ ${esc(note)}</b></div>` : ''}
             <div class="vphoto">${carPic(p.type, p.photo)}<div class="stack" style="gap:6px"><span class="small muted">${id ? `Customers see this picture with the ${esc(p.type)} on your booking page. A side or three-quarter view works best; it's cropped wide.` : 'Save the vehicle first, then add its photo. Until then customers see this drawing.'}</span>
               ${id ? `<div class="row"><label class="btn sm"><input type="file" id="vf-photo" accept="image/*" hidden>${p.photo ? 'Change photo' : 'Add photo'}</label>${p.photo ? '<button class="btn sm" type="button" id="vf-photo-rm">Remove photo</button>' : ''}</div>` : ''}</div></div>
             <div class="grid3"><label class="field" style="grid-column:span 2"><span>Name</span><input id="vf-name" name="name" placeholder="Lincoln Navigator" value="${esc(p.name)}"></label>
@@ -4530,14 +4532,24 @@
           </form>
             ${id && data.upcoming.length ? `<div class="stack"><h3>Booked trips</h3><div class="tablewrap"><table><tbody>${data.upcoming.map((t) => `<tr><td class="mono small">${esc(fmtDT(t.pickupAt))}</td><td class="mono small">${esc(t.ref)}</td><td class="small">${esc(t.passengerName)}</td><td class="small">${t.driver ? esc(t.driver.name) : ''}</td><td>${pill(t)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}`,
       });
-      const reopen = () => { m._onClose = null; closeModal(); vehicleModal(id, done); };
-      const setPhoto = async (photo) => { try { await api('dispatch.setVehiclePhoto', { id, photo }); toast(photo ? 'Photo saved.' : 'Photo removed.'); reopen(); } catch (err) { toast(err.message, true); } };
+      const reopen = (msg) => { m._onClose = null; closeModal(); vehicleModal(id, done, msg); };
+      const setPhoto = async (photo) => { try { await api('dispatch.setVehiclePhoto', { id, photo }); const msg = photo ? 'Photo saved. Customers see it on your booking page.' : 'Photo removed.'; toast(msg); reopen(msg); } catch (err) { toast(err.message, true); } };
       const vfp = $('#vf-photo', m); if (vfp) vfp.onchange = async () => { try { await setPhoto(await photoFrom(vfp.files[0], 480, 270)); } catch (err) { toast(err.message, true); } };
       const vfr = $('#vf-photo-rm', m); if (vfr) vfr.onclick = () => setPhoto('');
       $('#vf', m).onsubmit = async (e) => {
         e.preventDefault();
         await busy($('button[type=submit]', e.target), async () => {
-          try { await api('dispatch.saveVehicle', { ...formData(e.target), id }); toast('Vehicle saved.'); if (id) reopen(); else closeModal(); } catch (err) { showErr($('#vf-err', m), err); }
+          try {
+            const f = formData(e.target);
+            await api('dispatch.saveVehicle', { ...f, id });
+            // Say exactly what changed, so the office knows the update went through.
+            const name = f.name || p.name || 'Vehicle', st = C.VEHICLE_STATUS[f.status] || '';
+            const msg = !id ? `${name} added. Status: ${st}.`
+              : f.status !== p.status ? `${name} updated. Status changed from ${C.VEHICLE_STATUS[p.status]} to ${st}.`
+              : `${name} updated. Status: ${st}.`;
+            toast(msg, false, 5000);
+            if (id) reopen(msg); else closeModal();
+          } catch (err) { showErr($('#vf-err', m), err); }
         });
       };
     }
