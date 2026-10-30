@@ -2134,7 +2134,7 @@
     v.innerHTML = `
       <div class="brandhead slim">${info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : '<div></div>'}
         <div class="bh-phone">${info.company.phone ? `<a href="tel:${esc(info.company.phone)}">${esc(fmtPhone(info.company.phone))}</a>` : ''}${signedHere ? ` · Signed in as ${esc(session.user.name)} · <a href="#customer">My trips</a>` : ''}</div>
-        ${signedHere ? '' : `<div class="bh-auth"><a class="btn sm" href="#login.${esc(slug)}">Log in</a><a class="btn sm brand" href="#signup.${esc(slug)}">Sign up</a></div>`}</div>
+        ${signedHere ? '' : `<div class="bh-auth"><a class="btn" href="#login.${esc(slug)}">Log in</a><a class="btn brand" href="#signup.${esc(slug)}">Sign up</a></div>`}</div>
       ${info.company.house ? `<p class="housenote">Book a chauffeured car in any US city. Enter the pickup time in that city's local time. A LimoRelay company in that city drives your ride.</p>` : ''}
       <div class="morelinks"><a class="eventlink" href="#request.${esc(slug)}"><b>Book your event</b><span class="small">Weddings, proms, corporate events and groups</span></a>
       <a class="eventlink" href="#agent.${esc(slug)}" id="agent-link"><b>Agent sign-up or login</b><span class="small">Travel agents earn commission on every ride</span></a></div>
