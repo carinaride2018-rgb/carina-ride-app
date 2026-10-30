@@ -897,3 +897,14 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 .qline.qsum b { font-size: 18px; }
 .housenote { margin: 0 0 16px; font-size: 15px; }
 .done-logo { display: flex; justify-content: center; } .done-logo-img { display: block; height: 72px; width: auto; max-width: 100%; object-fit: contain; }
+.brandhead.slim { align-items: center; padding: 14px 20px; }
+.brandhead.slim:not(:has(img)):not(:has(a)) { display: none; }
+.morelinks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; max-width: 680px; margin: 0 0 16px; }
+.morelinks .eventlink { margin: 0; padding: 8px 12px; flex-direction: column; align-items: flex-start; justify-content: center; gap: 0; }
+.morelinks .eventlink b { font-size: 14px; }
+.morelinks .eventlink span { color: var(--ink-2); }
+.brandhead.slim .bh-logo { height: 120px; }
+.bh-phone { font-size: 20px; font-weight: 650; }
+.bh-phone a { color: var(--ink); text-decoration: none; }
+@media (max-width: 600px) { .brandhead.slim .bh-logo { height: 96px; } .bh-phone { font-size: 18px; } }
+.brandhead.slim .bh-logowrap { flex-basis: auto; }

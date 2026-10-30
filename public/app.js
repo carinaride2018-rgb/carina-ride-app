@@ -92,6 +92,8 @@
     if (!good && v) { if (!m) { m = document.createElement('span'); m.className = 'ferr small'; fld.appendChild(m); } m.textContent = ADDR_MSG; } else if (m) m.remove();
     return good;
   }
+  // 2063199196 shows as (206) 319-9196; anything else stays as typed.
+  const fmtPhone = (p) => { const d = String(p || '').replace(/\D/g, '').replace(/^1(?=\d{10}$)/, ''); return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : String(p || ''); };
   const coLogo = (co, cls) => co && co.logo ? `<img class="${cls}" src="${esc(co.logo)}" alt="${esc(co.name)} logo">` : '';
   // Photo picker block used by the driver app and the office.
   const photoField = (name, photo, id) => `<div class="photofield">${face(name, photo, 'lg')}<div class="stack" style="gap:6px"><span class="small muted">Passengers see this photo with the car and plate once the trip is theirs.</span><div class="row"><label class="btn sm"><input type="file" id="${id}" accept="image/jpeg,image/png,image/webp" hidden>${photo ? 'Change photo' : 'Add photo'}</label>${photo ? `<button class="btn sm" type="button" id="${id}-rm">Remove</button>` : ''}</div></div></div>`;
@@ -2090,11 +2092,11 @@
     session = keep;
     document.documentElement.style.setProperty('--brand', info.company.color);
     v.innerHTML = `
-      <div class="brandhead">${info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : ''}<div class="stack" style="gap:6px"><h1>${esc(info.company.name)}</h1><p>${esc(info.company.tagline || 'Book your ride')}</p></div>
-        <div class="small" style="opacity:.9">${esc(info.company.phone || '')}${signedHere ? ` · Signed in as ${esc(session.user.name)} · <a href="#customer">My trips</a>` : ''}</div></div>
+      <div class="brandhead slim">${info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : '<div></div>'}
+        <div class="bh-phone">${info.company.phone ? `<a href="tel:${esc(info.company.phone)}">${esc(fmtPhone(info.company.phone))}</a>` : ''}${signedHere ? ` · Signed in as ${esc(session.user.name)} · <a href="#customer">My trips</a>` : ''}</div></div>
       ${info.company.house ? `<p class="housenote">Book a chauffeured car in any US city. Enter the pickup time in that city's local time. A LimoRelay company in that city drives your ride.</p>` : ''}
-      <a class="eventlink" href="#request.${esc(slug)}"><span>Planning a wedding, prom, corporate event or group trip?</span><b>Book your event</b></a>
-      <a class="eventlink" href="#agent.${esc(slug)}" id="agent-link"><span>Travel agent, assistant or concierge booking for clients? Earn commission on every ride.</span><b>Agent sign-up or login</b></a>
+      <div class="morelinks"><a class="eventlink" href="#request.${esc(slug)}"><b>Book your event</b><span class="small">Weddings, proms, corporate events and groups</span></a>
+      <a class="eventlink" href="#agent.${esc(slug)}" id="agent-link"><b>Agent sign-up or login</b><span class="small">Travel agents earn commission on every ride</span></a></div>
       <div id="book-host"></div><div id="auth-host"></div>`;
     const pending = { booking: null };
     // A new company with no cars yet can't take online bookings.
