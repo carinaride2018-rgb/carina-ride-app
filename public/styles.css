@@ -915,3 +915,10 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 .brandhead.slim { max-width: 680px; padding: 6px 16px; margin-bottom: 14px; }
 .brandhead.slim .bh-logo { height: 180px; padding: 4px 6px; }
 @media (max-width: 600px) { .brandhead.slim .bh-logo { height: 130px; } }
+
+/* Previous / Next under step 2 of the booking form. */
+.bk-stepnav { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding-top: 6px; border-top: 1px solid var(--line); margin-top: 4px; }
+.bk-stepnav .btn { min-height: 44px; }
+@keyframes bkflash { 0%, 40% { box-shadow: 0 0 0 3px var(--brand); } 100% { box-shadow: 0 0 0 3px transparent; } }
+.bk-flash { animation: bkflash 1.4s ease-out; }
+@media (max-width: 640px) { .bk-stepnav .btn { flex: 1; justify-content: center; } }

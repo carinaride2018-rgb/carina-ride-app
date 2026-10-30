@@ -1752,6 +1752,7 @@
           </div>
           <label class="field"><span>Notes for the chauffeur</span><textarea id="bk-notes" name="notes" placeholder="Accessibility needs, a special occasion, anything else">${esc(state.notes)}</textarea></label>
           <div id="bk-err"></div>
+          ${twoStep ? `<div class="bk-stepnav"><button class="btn" type="button" id="bk-prev">&larr; Previous</button><button class="btn brand" type="button" id="bk-tonext">Next: review and pay &rarr;</button></div>` : ''}
           </div>
         </form>
         <aside class="panel stack quote" id="bk-aside" aria-live="polite"${twoStep ? ' hidden' : ''}>
@@ -2092,6 +2093,17 @@
         try { if (miss || miss2 || miss3) throw new Error(miss || miss2 || miss3); await opts.quoteFn(quoteOnly()); showStep(2); } catch (x) { showErr(err, x); }
       });
       $('#bk-back', host).onclick = () => showStep(1);
+      // Step 2 navigation: back to the trip details, or on to the price and payment box.
+      $('#bk-prev', host).onclick = () => showStep(1);
+      $('#bk-tonext', host).onclick = () => {
+        sync(); const err = $('#bk-err', host); err.innerHTML = '';
+        const ge = $('#bk-gemail', host);
+        const miss = !String(state.passengerName || '').trim() ? 'Enter the passenger name.' : !String(state.passengerPhone || '').trim() ? 'Enter the passenger mobile number.' : ge && !ge.value.trim() ? 'Enter your email so we can send your confirmation.' : '';
+        if (miss) { showErr(err, new Error(miss)); return; }
+        const aside = $('#bk-aside', host);
+        aside.style.scrollMarginTop = '90px'; aside.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        aside.classList.remove('bk-flash'); void aside.offsetWidth; aside.classList.add('bk-flash');
+      };
     }
     const to = $('#bk-terms-open', host);
     if (to) to.onclick = (e) => { e.preventDefault(); termsModal(opts.info.terms, (opts.info.company && opts.info.company.name) || ''); };
