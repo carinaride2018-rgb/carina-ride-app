@@ -896,3 +896,4 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 .qline.qsum { border-top: 2px solid var(--ink, currentColor); border-bottom: 0; padding-top: 10px; margin-top: 6px; }
 .qline.qsum b { font-size: 18px; }
 .housenote { margin: 0 0 16px; font-size: 15px; }
+.done-logo { display: flex; justify-content: center; } .done-logo-img { display: block; height: 72px; width: auto; max-width: 100%; object-fit: contain; }

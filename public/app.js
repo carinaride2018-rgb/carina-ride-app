@@ -1531,6 +1531,7 @@
         : `<div class="grid2"><label class="field"><span>Card number</span><input name="number" class="mono" inputmode="numeric" autocomplete="cc-number" value="4242 4242 4242 4242"></label><label class="field"><span>Expiry (MM/YY)</span><input name="exp" class="mono" autocomplete="cc-exp" value="12/30"></label></div>
           <p class="small muted">${cardHow}${q.company.payMode === 'demo' ? ' Demo: no real card is charged.' : ''}</p>`;
       v.innerHTML = `<div class="stack">
+        ${q.company.logo ? `<div class="done-logo">${coLogo(q.company, 'done-logo-img')}</div>` : ''}
         <div class="spread"><div><h1 style="font-size:24px">${q.status === 'accepted' ? 'You’re booked' : q.direct ? 'Check your rides and book' : 'Your quote'}</h1><p class="muted small">${esc(q.company.name)} · ${esc(q.number)}${what ? ' · ' + esc(what) : ''}</p></div>${q.direct && q.status === 'sent' ? '' : qPill(q)}</div>
         ${q.status === 'new' ? `<div class="panel muted">We're pricing your request now. You'll get a text or email with the price.</div>` : `
         <div class="panel stack">
@@ -2159,6 +2160,7 @@
       $('#book-host', v).hidden = true;
       const host = $('#auth-host', v);
       host.innerHTML = `<div class="panel stack" style="margin-top:20px;max-width:560px" id="guest-done">
+        ${info.company.logo ? `<div class="done-logo">${coLogo(info.company, 'done-logo-img')}</div>` : ''}
         <h2>Thank you, your ride${(t.moreTrips || []).length ? 's are' : ' is'} booked</h2>
         <p>Reference number <b class="mono">${esc(t.ref)}</b>${t.returnTrip ? `, return ride <b class="mono">${esc(t.returnTrip.ref)}</b>` : ''}${t.landingTrip ? `, ride when you land <b class="mono">${esc(t.landingTrip.ref)}</b>` : ''}</p>
         <dl class="kv"><dt>Pickup</dt><dd>${esc(fmtDT(t.pickupAt))}<div class="small faint">${esc(t.pickup || '')}</div></dd>${t.dropoff ? `<dt>Drop-off</dt><dd class="small">${esc(t.dropoff)}</dd>` : ''}${t.price ? `<dt>Total</dt><dd class="num">${money(t.price.total)}</dd>` : ''}</dl>
@@ -3086,7 +3088,7 @@
     const SETUP_HINT = {
       cars: ['Name, type and seats of each car.', 'Add a car'],
       rates: ['Base fare, per mile and hourly for each car.', 'Set prices'],
-      logo: ['Shown on your booking site and in every email.', 'Add logo'],
+      logo: ['Shown on your booking page, the booking confirmation and every email.', 'Add logo'],
       drivers: ['Each driver gets their own app login.', 'Add a driver'],
       payments: ['Connect Stripe so passengers pay by card, or take cash only.', 'Set up payments'],
       booking: ['Book a ride yourself to see how it works.', 'New booking'],

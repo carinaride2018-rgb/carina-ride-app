@@ -2998,6 +2998,7 @@
       const steps = [
         { key: 'cars', label: 'Add your cars', done: has(db.vehicles) },
         { key: 'rates', label: 'Set your prices', done: !!st.rates },
+        { key: 'logo', label: 'Add your logo', done: !!c.logo },
         { key: 'drivers', label: 'Add a driver', done: db.users.some((u) => u.companyId === c.id && u.role === 'driver') },
         { key: 'payments', label: 'Turn on card payments', done: cardsOn(c) || payOpts(c).card === false },
         { key: 'booking', label: 'Take a test booking', done: has(db.trips) },
