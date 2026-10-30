@@ -903,8 +903,8 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 .morelinks .eventlink { margin: 0; padding: 8px 12px; flex-direction: column; align-items: flex-start; justify-content: center; gap: 0; }
 .morelinks .eventlink b { font-size: 14px; }
 .morelinks .eventlink span { color: var(--ink-2); }
-.brandhead.slim .bh-logo { height: 120px; }
+.brandhead.slim .bh-logo { height: 200px; }
 .bh-phone { font-size: 20px; font-weight: 650; }
 .bh-phone a { color: var(--ink); text-decoration: none; }
-@media (max-width: 600px) { .brandhead.slim .bh-logo { height: 96px; } .bh-phone { font-size: 18px; } }
+@media (max-width: 600px) { .brandhead.slim .bh-logo { height: 140px; } .bh-phone { font-size: 18px; } }
 .brandhead.slim .bh-logowrap { flex-basis: auto; }
