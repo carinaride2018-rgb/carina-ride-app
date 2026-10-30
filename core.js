@@ -106,6 +106,16 @@
   const RATE_BY = ['base', 'perMile', 'hourly', 'minFare'];
   const rateBy = (r, key, type) => { const own = num(r[key + 'By'] && r[key + 'By'][type], 0); return own > 0 ? own : round2(num(r[key], 0) * num(r.multipliers && r.multipliers[type], 1)); };
   const hourlyRate = (r, type) => rateBy(r, 'hourly', type);
+  // Vehicle types from fewest seats to most: by the biggest car the company has
+  // of each type, or a usual size for types it has no car of.
+  const USUAL_SEATS = { 'Sedan': 3, 'SUV': 6, 'Business Van': 10, 'Sprinter Van': 14, 'Party Bus': 30 };
+  function typesBySize(vehicles) {
+    const cap = {};
+    for (const v of vehicles || []) if (v.status !== 'retired') cap[v.type] = Math.max(cap[v.type] || 0, v.capacity || 0);
+    const seats = (t) => cap[t] || USUAL_SEATS[t];
+    return VEHICLE_TYPES.slice().sort((a, b) => seats(a) - seats(b) || VEHICLE_TYPES.indexOf(a) - VEHICLE_TYPES.indexOf(b));
+  }
+  const bySeats = (a, b) => (a.capacity || 0) - (b.capacity || 0) || VEHICLE_TYPES.indexOf(a.type) - VEHICLE_TYPES.indexOf(b.type) || String(a.name || '').localeCompare(String(b.name || ''));
   const DEFAULT_BAGS = { 'Sedan': 2, 'SUV': 5, 'Business Van': 8, 'Sprinter Van': 12, 'Party Bus': 4 };
   // Cancellation and free waiting, shown to customers when they book.
   // Travel agents and other bookers who book rides for their clients earn a
@@ -2113,7 +2123,7 @@
       // The picture on the booking card: the first active car of the type with
       // a photo. Without one the page draws a picture of the type.
       const vp = db.vehiclePhotos || {}, photoOf = (t) => { const v = db.vehicles.find((x) => x.companyId === c.id && x.status === 'active' && x.type === t && vp[x.id]); return v ? vp[v.id] : ''; };
-      return VEHICLE_TYPES.filter((t) => out[t]).map((t) => ({ type: t, capacity: out[t], bags: bags[t], models: names[t].slice(0, 2).join(' or ') + ' or similar', multiplier: c.rates.multipliers[t] || 1, photo: photoOf(t) }));
+      return VEHICLE_TYPES.filter((t) => out[t]).map((t) => ({ type: t, capacity: out[t], bags: bags[t], models: names[t].slice(0, 2).join(' or ') + ' or similar', multiplier: c.rates.multipliers[t] || 1, photo: photoOf(t) })).sort(bySeats);
     }
     function quoteFor(company, raw, customer) {
       const b = { ...raw, vehicleType: VEHICLE_TYPES.includes(raw.vehicleType) ? raw.vehicleType : 'Sedan' };
@@ -4497,7 +4507,7 @@
       return {
         ...memberCard(c, ctx.company), logo: c.logo || '', cities: (c.network.cities || []).slice(), airports: (c.network.airports || []).map((k) => ({ code: k, name: AIRPORTS[k] ? AIRPORTS[k][0] : k })),
         memberSince: c.createdAt || null, tripsDone: tripsDone(c),
-        fleet: db.vehicles.filter((v) => v.companyId === c.id && v.status === 'active').map((v) => ({ id: v.id, name: v.name, type: v.type, capacity: v.capacity, year: v.year || null, color: v.color || '', photo: vp[v.id] || '' })),
+        fleet: db.vehicles.filter((v) => v.companyId === c.id && v.status === 'active').sort(bySeats).map((v) => ({ id: v.id, name: v.name, type: v.type, capacity: v.capacity, year: v.year || null, color: v.color || '', photo: vp[v.id] || '' })),
       };
     });
     // The pickup place for a trip, and who on the network serves it with a fitting car.
@@ -4968,7 +4978,7 @@
         }),
       };
     });
-    def('dispatch.vehicles', STAFF, false, (ctx) => db.vehicles.filter((v) => v.companyId === ctx.company.id).map((v) => ({ ...clone(v), ...vehicleStats(v) })));
+    def('dispatch.vehicles', STAFF, false, (ctx) => db.vehicles.filter((v) => v.companyId === ctx.company.id).sort(bySeats).map((v) => ({ ...clone(v), ...vehicleStats(v) })));
     def('dispatch.vehicle', STAFF, false, (ctx, a) => {
       const v = ownVehicle(ctx, a.id);
       return { vehicle: { ...clone(v), ...vehicleStats(v), photo: (db.vehiclePhotos || {})[v.id] || '' }, log: db.maintenance.filter((x) => x.vehicleId === v.id).sort((x, y) => y.date.localeCompare(x.date)).map(clone),
@@ -5037,7 +5047,7 @@
       }
       return pubUser(who);
     });
-    def('dispatch.settings', STAFF, false, (ctx) => ({ company: { ...pubCompany(ctx.company), refPrefix: ctx.company.refPrefix, plan: ctx.company.plan, planInfo: planInfo(ctx.company), terms: ctx.company.terms || '', policy: pcfg(ctx.company), bags: bagsCfg(ctx.company), stripe: ctx.company.stripe ? { ready: !!ctx.company.stripe.ready, since: ctx.company.stripe.connectedAt || null } : null }, rates: clone(ctx.company.rates), addons: clone(ctx.company.pricing.addons), vehicleTypes: VEHICLE_TYPES }));
+    def('dispatch.settings', STAFF, false, (ctx) => ({ typeOrder: typesBySize(db.vehicles.filter((v) => v.companyId === ctx.company.id)), company: { ...pubCompany(ctx.company), refPrefix: ctx.company.refPrefix, plan: ctx.company.plan, planInfo: planInfo(ctx.company), terms: ctx.company.terms || '', policy: pcfg(ctx.company), bags: bagsCfg(ctx.company), stripe: ctx.company.stripe ? { ready: !!ctx.company.stripe.ready, since: ctx.company.stripe.connectedAt || null } : null }, rates: clone(ctx.company.rates), addons: clone(ctx.company.pricing.addons), vehicleTypes: VEHICLE_TYPES }));
     // The company's logo (a small picture, shown in the header and on its booking pages).
     def('dispatch.setLogo', ['admin'], true, (ctx, a) => {
       const logo = cleanPhoto(a.logo);
@@ -6495,5 +6505,5 @@
     };
   }
 
-  return { createCore, exactAddress, MSG_TEMPLATES, INCIDENT_KINDS, setProviders, routeVia, TEMPS, MUSIC, MAX_STOPS, STOP_WAITS, DEFAULT_POLICY, quote, estimateRoute, suggestPlaces, isAirport, flightStatus, normFlight, ApiError, VEHICLE_TYPES, SERVICES, EVENT_TYPES, STATUS_LABELS, DRIVER_FLOW, PLANS, PLATFORM_EMAIL, DEFAULT_AUTOFARM, DEFAULT_DISPATCH, DEFAULT_RATES, DEFAULT_PRICING, VEHICLE_STATUS, MAINT_KINDS, PAY_TYPES, DAYS, AIRLINES };
+  return { createCore, exactAddress, typesBySize, MSG_TEMPLATES, INCIDENT_KINDS, setProviders, routeVia, TEMPS, MUSIC, MAX_STOPS, STOP_WAITS, DEFAULT_POLICY, quote, estimateRoute, suggestPlaces, isAirport, flightStatus, normFlight, ApiError, VEHICLE_TYPES, SERVICES, EVENT_TYPES, STATUS_LABELS, DRIVER_FLOW, PLANS, PLATFORM_EMAIL, DEFAULT_AUTOFARM, DEFAULT_DISPATCH, DEFAULT_RATES, DEFAULT_PRICING, VEHICLE_STATUS, MAINT_KINDS, PAY_TYPES, DAYS, AIRLINES };
 });

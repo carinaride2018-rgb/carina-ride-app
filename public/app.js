@@ -3365,7 +3365,7 @@
     async function bookingInfo() {
       const [s, vehicles, accounts] = await Promise.all([api('dispatch.settings'), api('dispatch.vehicles'), api('dispatch.accounts')]);
       const caps = {}; vehicles.filter((x) => x.status === 'active').forEach((x) => { caps[x.type] = Math.max(caps[x.type] || 0, x.capacity); });
-      return { rates: s.rates, addons: s.addons, vehicleTypes: C.VEHICLE_TYPES.filter((t) => caps[t]).map((t) => ({ type: t, capacity: caps[t] })), accounts: accounts.filter((a) => a.active) };
+      return { rates: s.rates, addons: s.addons, vehicleTypes: C.typesBySize(vehicles).filter((t) => caps[t]).map((t) => ({ type: t, capacity: caps[t] })), accounts: accounts.filter((a) => a.active) };
     }
     async function newBookingModal(done) {
       let info;
@@ -3469,7 +3469,7 @@
             <label class="field"><span>Pickup</span><input id="te-pickup" name="pickup" autocomplete="off" value="${esc(t.pickup)}" ${lock}></label>
             <label class="field"><span>Drop-off</span><input id="te-dropoff" name="dropoff" autocomplete="off" value="${esc(t.dropoff)}" ${lock}></label>
             <div class="grid3">
-              <label class="field"><span>Vehicle type</span><select id="te-vtype" name="vehicleType" ${lock}>${C.VEHICLE_TYPES.map((x) => `<option ${t.vehicleType === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
+              <label class="field"><span>Vehicle type</span><select id="te-vtype" name="vehicleType" ${lock}>${C.typesBySize(vehicles).map((x) => `<option ${t.vehicleType === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
               <label class="field"><span>Passengers</span><input id="te-pax" name="passengers" type="number" min="1" value="${t.passengers}" ${lock}></label>
               <label class="field"><span>Hours (by the hour)</span><input id="te-hours" name="hours" type="number" min="1" value="${t.hours}" ${lock}></label>
             </div>
@@ -5208,14 +5208,14 @@
               ${num('gratuityPct', 'Gratuity (%)', 0.5)}${num('taxPct', 'Tax (%)', 0.1)}${num('waitPerMin', 'Wait time per minute ($)')}</div>
             <h3 style="margin-top:6px">Rates by vehicle</h3><p class="small muted">Each vehicle has its own base fare, per mile and minimum fare for a ride from A to B (airport rides included), and its own hourly rate for a ride booked by the hour. A ride never costs less than that vehicle's minimum fare.</p>
             <div class="tablewrap"><table class="ratetable"><thead><tr><th>Vehicle</th><th>Base fare ($)</th><th>Per mile ($)</th><th>Minimum fare ($)</th><th>Hourly ($ per hour)</th></tr></thead><tbody>
-              ${C.VEHICLE_TYPES.map((t) => `<tr><td><b>${t}</b></td>${['base', 'perMile', 'minFare', 'hourly'].map((k) => { const own = r[k + 'By'] && r[k + 'By'][t]; const v0 = own > 0 ? own : Math.round(r[k] * (r.multipliers[t] || 1) * 100) / 100; return `<td><input class="input" data-rate="${k}" data-type="${t}" aria-label="${t} ${k}" type="number" min="0" step="${k === 'perMile' ? 0.05 : 1}" value="${v0}" ${ro}></td>`; }).join('')}</tr>`).join('')}
+              ${(s.typeOrder || C.VEHICLE_TYPES).map((t) => `<tr><td><b>${t}</b></td>${['base', 'perMile', 'minFare', 'hourly'].map((k) => { const own = r[k + 'By'] && r[k + 'By'][t]; const v0 = own > 0 ? own : Math.round(r[k] * (r.multipliers[t] || 1) * 100) / 100; return `<td><input class="input" data-rate="${k}" data-type="${t}" aria-label="${t} ${k}" type="number" min="0" step="${k === 'perMile' ? 0.05 : 1}" value="${v0}" ${ro}></td>`; }).join('')}</tr>`).join('')}
             </tbody></table></div>
             ${isAdmin ? `<div class="row" id="rs-hadj" style="gap:8px;align-items:flex-end;flex-wrap:wrap">
               <label class="field" style="margin:0"><span>Change</span><select id="rs-hadj-k"><option value="all">All rates</option><option value="base">Base fares</option><option value="perMile">Per mile rates</option><option value="minFare">Minimum fares</option><option value="hourly">Hourly rates</option></select></label>
               <label class="field" style="margin:0"><span>for every vehicle by</span><div class="row" style="gap:6px;flex-wrap:nowrap"><input id="rs-hadj-n" type="number" step="1" value="10" style="width:90px"><select id="rs-hadj-u"><option value="pct">%</option><option value="usd">$</option></select></div></label>
               <button class="btn" type="button" id="rs-hadj-up">Raise</button><button class="btn" type="button" id="rs-hadj-down">Lower</button><span class="small muted">Then press Save rates and brand.</span></div>` : ''}
             <h3 style="margin-top:6px">Suitcases per vehicle</h3><p class="small muted">Customers see this when they choose a vehicle, and can't book more suitcases than fit.</p>
-            <div class="grid3">${C.VEHICLE_TYPES.map((t) => `<label class="field"><span>${t}</span><input data-bags="${t}" type="number" min="0" max="40" step="1" value="${s.company.bags[t]}" ${ro}></label>`).join('')}</div>
+            <div class="grid3">${(s.typeOrder || C.VEHICLE_TYPES).map((t) => `<label class="field"><span>${t}</span><input data-bags="${t}" type="number" min="0" max="40" step="1" value="${s.company.bags[t]}" ${ro}></label>`).join('')}</div>
           </div>
           <div class="panel stack"><h2>Cancellation, waiting and no-shows</h2><p class="small muted">Shown to customers when they book and on their trips.</p>
             <div class="grid2">
