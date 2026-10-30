@@ -929,4 +929,5 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 .flightbox { background: color-mix(in srgb, var(--brand) 4%, var(--surface)); border-color: color-mix(in srgb, var(--brand) 30%, var(--line)); }
 .flightbox legend span { color: var(--brand); }
 
-.bh-auth { display: flex; gap: 8px; margin-left: auto; }
+.bh-auth { display: flex; gap: 10px; margin-left: auto; }
+.bh-auth .btn { padding: 10px 20px; font-size: 15px; min-height: 44px; }
