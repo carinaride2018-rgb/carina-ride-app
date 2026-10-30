@@ -928,3 +928,5 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 /* Flight information box for airport pickups (booking form). */
 .flightbox { background: color-mix(in srgb, var(--brand) 4%, var(--surface)); border-color: color-mix(in srgb, var(--brand) 30%, var(--line)); }
 .flightbox legend span { color: var(--brand); }
+
+.bh-auth { display: flex; gap: 8px; margin-left: auto; }

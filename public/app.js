@@ -706,6 +706,8 @@
     if (route.startsWith('request.')) return viewRequest(route.slice(8));
     if (route.startsWith('quote.')) return viewQuote(route.slice(6));
     if (route.startsWith('agent.')) return viewAgentSignup(route.slice(6));
+    if (route.startsWith('login.')) return viewCustomerAuth(route.slice(6), 'signin');
+    if (route.startsWith('signup.')) return viewCustomerAuth(route.slice(7), 'signup');
     if (route.startsWith('setpw.')) return viewSetPassword(route.slice(6));
     if (!session) return viewSignin();
     if (!seenInit) { watchFeed(); syncPush(); }
@@ -2131,7 +2133,8 @@
     document.documentElement.style.setProperty('--brand', info.company.color);
     v.innerHTML = `
       <div class="brandhead slim">${info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : '<div></div>'}
-        <div class="bh-phone">${info.company.phone ? `<a href="tel:${esc(info.company.phone)}">${esc(fmtPhone(info.company.phone))}</a>` : ''}${signedHere ? ` · Signed in as ${esc(session.user.name)} · <a href="#customer">My trips</a>` : ''}</div></div>
+        <div class="bh-phone">${info.company.phone ? `<a href="tel:${esc(info.company.phone)}">${esc(fmtPhone(info.company.phone))}</a>` : ''}${signedHere ? ` · Signed in as ${esc(session.user.name)} · <a href="#customer">My trips</a>` : ''}</div>
+        ${signedHere ? '' : `<div class="bh-auth"><a class="btn sm" href="#login.${esc(slug)}">Log in</a><a class="btn sm brand" href="#signup.${esc(slug)}">Sign up</a></div>`}</div>
       ${info.company.house ? `<p class="housenote">Book a chauffeured car in any US city. Enter the pickup time in that city's local time. A LimoRelay company in that city drives your ride.</p>` : ''}
       <div class="morelinks"><a class="eventlink" href="#request.${esc(slug)}"><b>Book your event</b><span class="small">Weddings, proms, corporate events and groups</span></a>
       <a class="eventlink" href="#agent.${esc(slug)}" id="agent-link"><b>Agent sign-up or login</b><span class="small">Travel agents earn commission on every ride</span></a></div>
@@ -2306,6 +2309,45 @@
         catch (err) { showErr($('#ag-err', v), err); }
       });
     };
+  }
+
+  // A customer's own Log in / Sign up page for one company (#login.<slug>, #signup.<slug>).
+  async function viewCustomerAuth(slug, start) {
+    current = null;
+    let info;
+    try { info = await api('public.company', { slug }); }
+    catch (e) { const v = shell({}); v.innerHTML = `<div class="panel stack"><h2>Page unavailable</h2><p class="muted">${esc(e.message)}</p><a class="btn" href="#signin">Back</a></div>`; return; }
+    if (session && session.user && session.user.role === 'customer' && session.user.companyId === info.company.id) return go('customer');
+    const keep = session;
+    session = { company: info.company, user: null };
+    const v = shell({});
+    session = keep;
+    document.documentElement.style.setProperty('--brand', info.company.color);
+    let mode = start;
+    const draw = () => {
+      const up = mode === 'signup';
+      v.innerHTML = `<div style="margin-bottom:12px"><a class="btn" href="#book.${esc(slug)}">&larr; Back to booking page</a></div>
+        <div class="brandhead">${info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : ''}<div class="stack" style="gap:6px"><h1>${up ? 'Create your account' : 'Log in'}</h1><p>${up ? `Book faster, see your trips and get your receipts from ${esc(info.company.name)}.` : `Welcome back to ${esc(info.company.name)}.`}</p></div></div>
+        <div class="panel stack" style="max-width:520px">
+          <form id="ca-form" class="stack" novalidate>
+            ${up ? `<div class="grid2"><label class="field"><span>Full name</span><input id="ca-name" name="name" autocomplete="name"></label><label class="field"><span>Mobile</span><input id="ca-phone" name="phone" type="tel" autocomplete="tel"></label></div>` : ''}
+            <label class="field"><span>Email</span><input id="ca-email" name="email" type="email" autocomplete="username"></label>
+            <label class="field"><span>Password</span><input id="ca-pass" name="password" type="password" autocomplete="${up ? 'new-password' : 'current-password'}">${up ? '<span class="hint">At least 8 characters</span>' : ''}</label>
+            <div id="ca-err"></div>
+            <div class="row"><button class="btn brand" type="submit" id="ca-go">${up ? 'Create account' : 'Log in'}</button>
+              <a class="linkbtn" href="#${up ? 'login' : 'signup'}.${esc(slug)}">${up ? 'I already have an account' : 'Create an account'}</a>
+              ${up ? '' : '<a class="linkbtn" href="#signin">Forgot password?</a>'}</div>
+          </form></div>`;
+      $('#ca-form', v).onsubmit = async (e) => {
+        e.preventDefault();
+        const f = formData(e.target);
+        await busy($('#ca-go', v), async () => {
+          try { const res = await api(up ? 'auth.signup' : 'auth.login', { ...f, slug }); setSession(res); toast(`Welcome, ${res.user.name.split(' ')[0]}.`); go(HOME[res.user.role] || 'customer'); }
+          catch (err) { showErr($('#ca-err', v), err); }
+        });
+      };
+    };
+    draw();
   }
 
   // ---- Customer -------------------------------------------------------------
