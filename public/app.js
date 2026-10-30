@@ -1690,7 +1690,7 @@
               <label class="field" id="bk-rflightf"><span>Return flight <span class="faint">(airport pickup)</span></span><input id="bk-rflight" name="retFlight" class="mono" placeholder="AS 330" value="${esc(state.retFlight)}" autocomplete="off"></label>
             </div><p class="small faint" id="bk-ret-hint" hidden></p></div>
           <div class="stack morerides" data-hide="hourly" style="gap:10px"><div id="bk-more" class="stack" style="gap:10px"></div>
-            <div><button class="linkbtn" type="button" id="bk-addride">+ Add another ride</button> <span class="small faint">Same passenger and car, for example hotel to pier, then pier to the airport.</span></div></div>
+            <div><button class="linkbtn" type="button" id="bk-addride">+ Add another ride</button> <span class="small faint">Same confirmation, multiple bookings.</span></div></div>
           ${twoStep ? `<div id="bk-err1"></div><button class="btn brand big" type="button" id="bk-next">Get my quote</button>` : ''}
           </div>
           ${twoStep ? `<div class="bkstep-sum" id="bk-sum" hidden><div class="stack" style="gap:2px"><span class="label">Your ride</span><span id="bk-sumtext"></span></div><button class="btn sm" type="button" id="bk-back">Change</button></div>
