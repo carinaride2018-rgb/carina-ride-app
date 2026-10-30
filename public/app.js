@@ -1672,11 +1672,13 @@
           <div class="stack stops" data-hide="hourly" style="gap:8px"><div id="bk-stops"></div>
             <div><button class="linkbtn" type="button" id="bk-addstop">+ Add a stop on the way <span class="faint">(priced by the extra miles and the wait${opts.info.rates && opts.info.rates.waitPerMin ? `, ${money(opts.info.rates.waitPerMin)}/min` : ''})</span></button></div></div>
           <label class="field"><span id="bk-drop-label">Drop-off address</span><input id="bk-dropoff" name="dropoff" autocomplete="off" placeholder="Where are you going?" value="${esc(state.dropoff)}"></label>
-          <div class="grid2" id="bk-flightf">
-            <label class="field"><span>Flight number <span class="faint">(required for airport pickups)</span></span><input id="bk-flight" name="flight" class="mono" placeholder="AA 1342" value="${esc(state.flight)}" autocomplete="off">
-              <span class="hint" id="bk-flight-hint">For pickups at the airport, set the pickup time to when the flight lands. We track the flight and move the pickup if it's late.</span></label>
-            <div></div>
-          </div>
+          <fieldset class="fs flightbox" id="bk-flightf"><legend><span aria-hidden="true">&#9992;</span> Flight information</legend>
+            <div class="grid2">
+              <label class="field"><span>Flight number <span class="faint">(required for airport pickups)</span></span><input id="bk-flight" name="flight" class="mono" placeholder="AA 1342" value="${esc(state.flight)}" autocomplete="off"></label>
+              <label class="field"><span>Arriving from <span class="faint">(optional)</span></span><input id="bk-ffrom" name="flightFrom" placeholder="City, for example Denver" value="${esc(state.flightFrom || '')}" autocomplete="off"></label>
+            </div>
+            <p class="hint" id="bk-flight-hint" style="margin:0">For pickups at the airport, set the pickup time to when the flight lands. We track the flight and move the pickup if it's late.</p>
+          </fieldset>
           <div class="stack" data-hide="hourly" style="gap:10px"><input type="checkbox" id="bk-ret" name="retOn" hidden ${state.retOn ? 'checked' : ''}>
             <div class="grid3" id="bk-retf" hidden>
               <label class="field"><span>Return date</span><input id="bk-rdate" name="retDate" type="date" value="${esc(state.retDate)}"></label>
@@ -1752,6 +1754,7 @@
           </div>
           <label class="field"><span>Notes for the chauffeur</span><textarea id="bk-notes" name="notes" placeholder="Accessibility needs, a special occasion, anything else">${esc(state.notes)}</textarea></label>
           <div id="bk-err"></div>
+          ${twoStep ? `<div class="bk-stepnav"><button class="btn" type="button" id="bk-prev">&larr; Previous</button><button class="btn brand" type="button" id="bk-tonext">Next: review and pay &rarr;</button></div>` : ''}
           </div>
         </form>
         <aside class="panel stack quote" id="bk-aside" aria-live="polite"${twoStep ? ' hidden' : ''}>
@@ -2092,6 +2095,17 @@
         try { if (miss || miss2 || miss3) throw new Error(miss || miss2 || miss3); await opts.quoteFn(quoteOnly()); showStep(2); } catch (x) { showErr(err, x); }
       });
       $('#bk-back', host).onclick = () => showStep(1);
+      // Step 2 navigation: back to the trip details, or on to the price and payment box.
+      $('#bk-prev', host).onclick = () => showStep(1);
+      $('#bk-tonext', host).onclick = () => {
+        sync(); const err = $('#bk-err', host); err.innerHTML = '';
+        const ge = $('#bk-gemail', host);
+        const miss = !String(state.passengerName || '').trim() ? 'Enter the passenger name.' : !String(state.passengerPhone || '').trim() ? 'Enter the passenger mobile number.' : ge && !ge.value.trim() ? 'Enter your email so we can send your confirmation.' : '';
+        if (miss) { showErr(err, new Error(miss)); return; }
+        const aside = $('#bk-aside', host);
+        aside.style.scrollMarginTop = '90px'; aside.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        aside.classList.remove('bk-flash'); void aside.offsetWidth; aside.classList.add('bk-flash');
+      };
     }
     const to = $('#bk-terms-open', host);
     if (to) to.onclick = (e) => { e.preventDefault(); termsModal(opts.info.terms, (opts.info.company && opts.info.company.name) || ''); };
