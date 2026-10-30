@@ -2052,12 +2052,56 @@
       el.addEventListener('change', () => { if (el.value.trim()) checkAddr(el, req); });
       el.addEventListener('input', () => { if (el.closest('.field').classList.contains('bad')) checkAddr(el, req); });
     }
+    // Mark the fields an error is about. Each stays red until the customer
+    // fills it in; the message goes away once every marked field is fixed.
+    const fieldsFor = (msg) => {
+      const m = String(msg || '').toLowerCase(), out = [];
+      const add = (...ids) => ids.forEach((i) => { const el = $(i, host); if (el && !el.closest('[hidden]') && !out.includes(el)) out.push(el); });
+      const ret = /^(return trip|round trip)/.test(m);
+      if (ret) { add('#bk-rdate', '#bk-rtime'); if (/flight/.test(m)) add('#bk-rflight'); }
+      else {
+        if (/date and time|pickup date|pickup time|hours ahead|in the past|too soon/.test(m)) add('#bk-date', '#bk-time');
+        if (/pickup address|exact pickup|addresses marked/.test(m)) add('#bk-pickup');
+        if (/drop-off address|addresses marked/.test(m)) add('#bk-dropoff');
+        if (/flight number/.test(m)) add('#bk-flight');
+      }
+      if (/passenger name|enter your name/.test(m)) add('#bk-name');
+      if (/mobile|phone number/.test(m)) add('#bk-phone');
+      if (/for invoices/.test(m)) add('#bk-gbmail'); else if (/email/.test(m)) add('#bk-gemail', '#bk-email');
+      if (/company name/.test(m)) add('#bk-gbco');
+      if (/promo/.test(m)) add('#bk-promo');
+      if (/add a card|card number|card/.test(m) && !/company/.test(m)) add('#bk-cardno', '#bk-cardexp');
+      if (/terms/.test(m)) add('#bk-terms');
+      if (/po number/.test(m)) add('#bk-po');
+      const r = /^ride (\d+):/.exec(m);
+      if (r) $$(`[data-mr="${Number(r[1]) - 2}"]`, host).forEach((el) => { if (el.dataset.k !== 'flight' && !el.value.trim()) out.push(el); });
+      return out;
+    };
+    const filled = (el) => (el.type === 'checkbox' ? el.checked : !!String(el.value || '').trim());
+    const flagErr = (errEl, e) => {
+      showErr(errEl, e);
+      const els = fieldsFor(e && e.message ? e.message : e);
+      if (!els.length) { errEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); return; }
+      for (const el of els) {
+        const f = el.closest('.field') || el.closest('.check') || el.parentElement;
+        f.classList.add('must-fix');
+        const check = () => {
+          if (!filled(el)) return;
+          f.classList.remove('must-fix');
+          el.removeEventListener('input', check); el.removeEventListener('change', check);
+          if (!$$('.must-fix', host).length) errEl.innerHTML = '';
+        };
+        el.removeEventListener('input', check); el.addEventListener('input', check); el.addEventListener('change', check);
+      }
+      els[0].scrollIntoView({ block: 'center', behavior: 'smooth' });
+      setTimeout(() => { try { els[0].focus({ preventScroll: true }); } catch (x) { /* ignore */ } }, 350);
+    };
     form.addEventListener('submit', (e) => e.preventDefault());
     $('#bk-submit', host).onclick = (e) => busy(e.currentTarget, async () => {
       sync(); $('#bk-err', host).innerHTML = '';
       const b = booking(), tc = $('#bk-terms', host);
       if (tc) b.agreeTerms = tc.checked;
-      try { await opts.onSubmit(b); } catch (err) { showErr($('#bk-err', host), err); $('#bk-err', host).scrollIntoView({ block: 'nearest' }); }
+      try { await opts.onSubmit(b); } catch (err) { flagErr($('#bk-err', host), err); }
     });
     const si = $('#bk-signin', host); if (si && opts.onSignin) si.onclick = () => opts.onSignin(booking());
     // Two steps: check the quote first, then open the rest of the form.
@@ -2095,14 +2139,14 @@
     }
     if (twoStep) {
       $('#bk-next', host).onclick = (e) => busy(e.currentTarget, async () => {
-        sync(); const err = $('#bk-err1', host); err.innerHTML = '';
+        sync(); const err = $('#bk-err1', host); err.innerHTML = ''; $$('.must-fix', host).forEach((f) => f.classList.remove('must-fix'));
         const addrOk = [checkAddr($('#bk-pickup', host), true), checkAddr($('#bk-dropoff', host), state.service !== 'hourly')].every(Boolean);
         const miss = !state.date || !state.time ? 'Choose the pickup date and time.' : !state.pickup.trim() ? 'Enter the pickup address.' : state.service !== 'hourly' && !state.dropoff.trim() ? 'Enter the drop-off address.' : !addrOk ? 'Check the addresses marked in red: we need the exact pickup and drop-off, not just the city.' : C.isAirport(state.pickup) && !String(state.flight || '').trim() ? 'Pickups at the airport need the flight number, for example AS 331, so we can follow the landing.' : '';
         const mi = state.service === 'hourly' ? -1 : moreList.findIndex((m) => !m.date || !m.time || !m.pickup.trim() || !m.dropoff.trim());
         const miss2 = mi >= 0 ? `Ride ${mi + 2}: add the date, time, pickup and drop-off, or remove it.` : '';
         const rw = state.retOn && state.service !== 'hourly' ? (state.retDate && state.retTime ? new Date(`${state.retDate}T${state.retTime}`) : null) : undefined;
         const miss3 = rw === null ? 'Round trip: add the return date and time.' : rw && rw <= new Date(`${state.date}T${state.time}`) ? 'Round trip: the return must be after the first pickup.' : '';
-        try { if (miss || miss2 || miss3) throw new Error(miss || miss2 || miss3); await opts.quoteFn(quoteOnly()); showStep(2); } catch (x) { showErr(err, x); }
+        try { if (miss || miss2 || miss3) throw new Error(miss || miss2 || miss3); await opts.quoteFn(quoteOnly()); showStep(2); } catch (x) { flagErr(err, x); }
       });
       $('#bk-back', host).onclick = () => showStep(1);
       // Step 2 navigation: back to the trip details, or on to the price and payment box.
@@ -2111,7 +2155,7 @@
         sync(); const err = $('#bk-err', host); err.innerHTML = '';
         const ge = $('#bk-gemail', host);
         const miss = !String(state.passengerName || '').trim() ? 'Enter the passenger name.' : !String(state.passengerPhone || '').trim() ? 'Enter the passenger mobile number.' : ge && !ge.value.trim() ? 'Enter your email so we can send your confirmation.' : '';
-        if (miss) { showErr(err, new Error(miss)); return; }
+        if (miss) { flagErr(err, new Error(miss)); return; }
         const aside = $('#bk-aside', host);
         aside.style.scrollMarginTop = '90px'; aside.scrollIntoView({ block: 'start', behavior: 'smooth' });
         aside.classList.remove('bk-flash'); void aside.offsetWidth; aside.classList.add('bk-flash');
