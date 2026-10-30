@@ -14,6 +14,7 @@
  * and flight answers are fetched ahead of time and kept in small caches.
  */
 'use strict';
+const { bookingPdf } = require('./pdf.js');
 const crypto = require('crypto');
 const fs = require('fs');
 
@@ -112,10 +113,17 @@ function createProviders(rawEnv, opts) {
     return { status: (r && r.status) || '', code: (r && r.error_code) || null, message: (r && r.error_message) || '' };
   }
   async function sendEmail(to, m) {
+    // Booking emails carry a printable PDF of the same details. If the PDF
+    // can't be made, the email still goes out without it.
+    let pdf = null;
+    if (PDF_KINDS[m.kind] && m.ref) {
+      try { pdf = { filename: `${String(m.ref).replace(/[^\w-]/g, '')}.pdf`, content: bookingPdf(m, PDF_KINDS[m.kind]).toString('base64') }; }
+      catch (e) { log(`PDF for ${m.ref} failed: ${e.message}`); }
+    }
     const name = String(m.company.name || 'Bookings').replace(/["<>]/g, '');
     const r = await request('POST', `${url('RESEND', 'https://api.resend.com')}/emails`, {
       headers: { Authorization: `Bearer ${env.RESEND_API_KEY}` },
-      body: { from: `${name} <${fromAddress()}>`, to: [to], subject: subjectOf(m), text: m.body, html: emailHtml(m), ...(isEmail(m.replyTo) ? { reply_to: m.replyTo } : isEmail(m.company.email) ? { reply_to: m.company.email } : {}) },
+      body: { from: `${name} <${fromAddress()}>`, to: [to], subject: subjectOf(m), text: m.body, html: emailHtml(m, { pdf: !!pdf }), ...(pdf ? { attachments: [pdf] } : {}), ...(isEmail(m.replyTo) ? { reply_to: m.replyTo } : isEmail(m.company.email) ? { reply_to: m.company.email } : {}) },
     });
     return r && r.id;
   }
@@ -439,7 +447,10 @@ const escapeRe = (s) => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // terms and phone at the bottom. The plain text goes along for old mail apps.
 const hesc = (x) => String(x == null ? '' : x).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 const linkify = (x) => hesc(x).replace(/https?:\/\/[^\s<]+/g, (u) => `<a href="${u}" style="color:#1a56db;word-break:break-all">${u}</a>`);
-function emailHtml(m) {
+// Booking emails get a printable PDF; the value is the PDF's heading.
+const PDF_KINDS = { confirm: 'Booking confirmation', office_new: 'New booking', changed: 'Booking changed', office_changed: 'Booking changed', receipt: 'Receipt' };
+const HEADINGS = { ...PDF_KINDS, chauffeur: 'Your chauffeur', en_route: 'On the way', approach: '10 minutes away', arrived: 'Chauffeur arrived', reminder: 'Ride reminder', reminder24: 'Ride reminder', quote: 'Your quote', invoice: 'Invoice' };
+function emailHtml(m, opt) {
   const co = m.company || {};
   const color = /^#[0-9a-f]{6}$/i.test(co.color || '') ? co.color : '#222222';
   let lines = String(m.body || '').replace(/\r/g, '').split('\n');
@@ -450,20 +461,29 @@ function emailHtml(m) {
   const blocks = []; let cur = [];
   for (const l of lines) { if (l.trim()) cur.push(l); else if (cur.length) { blocks.push(cur); cur = []; } }
   if (cur.length) blocks.push(cur);
-  const row = (l) => { const kv = l.match(/^([A-Z][^:]{0,40}):\s+(.+)$/); return kv && !/https?$/i.test(kv[1]) ? `<tr><td style="width:38%;padding:4px 10px 4px 0;color:#000000;vertical-align:top">${hesc(kv[1])}</td><td style="padding:4px 0;color:#000000;font-weight:600;vertical-align:top;word-break:break-word;overflow-wrap:anywhere">${linkify(kv[2])}</td></tr>` : null; };
+  const kv = (l) => { const x = l.match(/^([A-Z][^:]{0,40}):\s+(.+)$/); return x && !/https?$/i.test(x[1]) ? x : null; };
+  const row = (x, i) => `<tr><td style="padding:11px 14px;background:${i % 2 ? '#ffffff' : '#f7f7f8'};border-bottom:1px solid #ececee;width:36%;vertical-align:top;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#6b6f76;font-weight:700">${hesc(x[1])}</td><td style="padding:10px 14px;background:${i % 2 ? '#ffffff' : '#f7f7f8'};border-bottom:1px solid #ececee;vertical-align:top;font-size:15px;line-height:1.4;color:#111111;font-weight:700;word-break:break-word;overflow-wrap:anywhere">${linkify(x[2])}</td></tr>`;
   const html = blocks.map((b) => {
-    const rows = b.map(row);
-    if (rows.every(Boolean) && (b.length > 1 || /^Total\b/.test(b[0]))) return `<table role="presentation" style="width:100%;border-collapse:collapse;background:#ffffff;border:1px solid #000000;border-radius:8px;margin:0 0 16px"><tbody><tr><td style="padding:12px 14px"><table role="presentation" style="width:100%;table-layout:fixed;border-collapse:collapse;font-size:15px">${rows.join('')}</table></td></tr></tbody></table>`;
-    return `<p style="margin:0 0 16px;font-size:15px;line-height:1.5;color:#000000">${b.map(linkify).join('<br>')}</p>`;
+    const kvs = b.map(kv);
+    if (kvs.every(Boolean) && (b.length > 1 || /^Total\b/.test(b[0]))) return `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;table-layout:fixed;border-collapse:separate;border:1px solid #e3e3e6;border-radius:10px;overflow:hidden;margin:0 0 18px">${kvs.map(row).join('')}</table>`;
+    return `<p style="margin:0 0 16px;font-size:15px;line-height:1.55;color:#222222">${b.map(linkify).join('<br>')}</p>`;
   }).join('');
-  const head = co.logoUrl ? `<img src="${hesc(co.logoUrl)}" alt="${hesc(co.name)}" style="max-height:64px;max-width:220px;display:block;margin:0 auto">` : `<div style="font-size:22px;font-weight:700;color:#000000;text-align:center">${hesc(co.name || '')}</div>`;
-  const foot = [terms || co.termsUrl ? `<a href="${hesc(terms || co.termsUrl)}" style="color:#000000">Terms and Conditions</a>` : '', co.phone ? hesc(co.phone) : '', co.email ? hesc(co.email) : ''].filter(Boolean).join(' &middot; ');
-  return `<!doctype html><html><head><meta name="color-scheme" content="light only"><meta name="supported-color-schemes" content="light"></head><body style="margin:0;padding:0;background:#ffffff"><div style="padding:16px 8px;font-family:Arial,Helvetica,sans-serif">
-<div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden">
-<div style="border-top:4px solid ${color};padding:20px 16px 12px">${head}</div>
-<div style="padding:12px 16px 8px;word-break:break-word;overflow-wrap:anywhere">${html}</div>
-${foot ? `<div style="border-top:1px solid #e5e7eb;padding:14px 16px;font-size:12px;color:#000000;text-align:center">${foot}</div>` : ''}
-</div></div></body></html>`;
+  const heading = HEADINGS[m.kind] || '';
+  const logo = co.logoUrl ? `<img src="${hesc(co.logoUrl)}" alt="${hesc(co.name)}" width="180" style="width:180px;max-width:70%;height:auto;display:block;margin:0 auto;border:0">` : `<div style="font-size:24px;font-weight:800;color:#111111;text-align:center;letter-spacing:-.01em">${hesc(co.name || '')}</div>`;
+  const title = heading ? `<tr><td style="padding:0 24px 18px;text-align:center"><div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;font-weight:700;color:${color}">${hesc(heading)}</div>${m.ref ? `<div style="font-size:26px;font-weight:800;color:#111111;margin-top:4px;letter-spacing:.01em">${hesc(m.ref)}</div>` : ''}</td></tr>` : '';
+  const pdfNote = opt && opt.pdf ? `<tr><td style="padding:0 24px 18px"><div style="border:1px dashed #cfd0d4;border-radius:10px;padding:12px 14px;font-size:13px;color:#333333;background:#fafafa">&#128196; A printable PDF of this booking is attached.</div></td></tr>` : '';
+  const contact = [co.phone ? `<a href="tel:${hesc(String(co.phone).replace(/[^\d+]/g, ''))}" style="color:#111111;text-decoration:none;font-weight:700">${hesc(co.phone)}</a>` : '', co.email ? `<a href="mailto:${hesc(co.email)}" style="color:#111111;text-decoration:none">${hesc(co.email)}</a>` : ''].filter(Boolean).join(' &nbsp;&middot;&nbsp; ');
+  const termsLink = terms || co.termsUrl ? `<div style="margin-top:8px"><a href="${hesc(terms || co.termsUrl)}" style="color:#6b6f76">Terms and Conditions</a></div>` : '';
+  return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light only"><meta name="supported-color-schemes" content="light"></head><body style="margin:0;padding:0;background:#f1f1f3">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f1f3"><tr><td style="padding:24px 10px;font-family:Arial,Helvetica,sans-serif">
+<table role="presentation" align="center" cellpadding="0" cellspacing="0" style="width:100%;max-width:580px;margin:0 auto;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e3e3e6">
+<tr><td style="height:5px;background:${color};font-size:0;line-height:0">&nbsp;</td></tr>
+<tr><td style="padding:26px 24px 18px">${logo}</td></tr>
+${title}
+<tr><td style="padding:0 24px 6px;word-break:break-word;overflow-wrap:anywhere">${html}</td></tr>
+${pdfNote}
+<tr><td style="background:#f7f7f8;border-top:1px solid #ececee;padding:18px 24px;text-align:center;font-size:13px;line-height:1.6;color:#333333">${co.name ? `<div style="font-weight:700;color:#111111">${hesc(co.name)}</div>` : ''}${contact ? `<div>${contact}</div>` : ''}${termsLink}</td></tr>
+</table></td></tr></table></body></html>`;
 }
 const withTimeout = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(r, ms).unref())]);
 

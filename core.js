@@ -6432,7 +6432,7 @@
           const t = m.tripId && m.channel === 'email' && db.trips.find((x) => x.id === m.tripId);
           const toPassenger = t && String(t.passengerEmail || '').toLowerCase() === String(m.recipient || '').toLowerCase();
           const body = toPassenger && c.slug && !/#terms\./.test(m.body) ? `${m.body}\n\nTerms and Conditions: ${base}#terms.${c.slug}` : m.body;
-          out.push({ id: m.id, channel: m.channel, recipient: m.recipient, body, ...(m.wakeKey ? { answerUrl: `${(opts.publicUrl || '').replace(/#.*$/, '')}twilio/wake?k=${m.wakeKey}` } : {}), kind: m.kind || '', ref: m.ref || '', replyTo: m.replyTo || '', company: { name: c.name || '', email: c.email || '', phone: c.phone || '', color: c.color || '', logoUrl: c.logo && c.slug && base ? `${base}logo/${c.slug}.${(c.logo.match(/^data:image\/(\w+)/) || [])[1] || 'png'}?v=${fnv(c.logo).toString(36)}` : '', termsUrl: c.slug && base ? `${base}#terms.${c.slug}` : '' } });
+          out.push({ id: m.id, channel: m.channel, recipient: m.recipient, body, ...(m.wakeKey ? { answerUrl: `${(opts.publicUrl || '').replace(/#.*$/, '')}twilio/wake?k=${m.wakeKey}` } : {}), kind: m.kind || '', ref: m.ref || '', replyTo: m.replyTo || '', company: { name: c.name || '', email: c.email || '', phone: c.phone || '', color: c.color || '', logoData: m.channel === 'email' ? c.logo || '' : '', logoUrl: c.logo && c.slug && base ? `${base}logo/${c.slug}.${(c.logo.match(/^data:image\/(\w+)/) || [])[1] || 'png'}?v=${fnv(c.logo).toString(36)}` : '', termsUrl: c.slug && base ? `${base}#terms.${c.slug}` : '' } });
         }
         if (changed) save(db);
         return out;

@@ -183,6 +183,8 @@ in the browser with no server (data stays in that browser).
 - `server.js`: plain Node HTTP server. `POST /api/<method>` with a bearer token.
   Passwords are hashed with scrypt. Data is saved to one JSON file.
 - `public/`: the web app (plain JavaScript, no build step).
+- `pdf.js`: makes the printable PDF attached to booking emails (confirmation,
+  new booking, changes, receipt), with the company's logo. No outside packages.
 
 ## Real services: built in, switched on by keys
 
