@@ -51,6 +51,7 @@
   const DEFAULT_PRICING = {
     nightPct: 15, nightStart: 22, nightEnd: 5,
     weekendPct: 0,
+    bizPct: 0, // discount for business rides: a guest who books as a business traveller, or a company account
     busyPct: 20, busyThreshold: 75, // add busyPct when this % of a vehicle type is already booked around that time
     // Stops are priced by the extra miles they add plus the wait booked at each
     // one (stopWait minutes by default, at the waiting rate). extraStop is an
@@ -614,7 +615,7 @@
     // Discounts
     const pre = round2(fare + surcharges + addons);
     let discounts = 0;
-    if (ctx.discountPct) { const a = round2(pre * ctx.discountPct / 100); discounts += a; lines.push({ label: `Account discount ${ctx.discountPct}%`, amount: -a, kind: 'discount' }); }
+    if (ctx.discountPct) { const a = round2(pre * ctx.discountPct / 100); discounts += a; lines.push({ label: `${ctx.discountLabel || 'Account discount'} ${ctx.discountPct}%`, amount: -a, kind: 'discount' }); }
     if (ctx.promo) {
       const base = pre - discounts;
       const a = round2(Math.min(base, ctx.promo.type === 'amount' ? ctx.promo.value : base * ctx.promo.value / 100));
@@ -715,6 +716,8 @@
     // Collections added without a schema bump. Old free-text "company account"
     // names on customers become real corporate accounts.
     function normalize(d) {
+      // Business discount, added later: Carina Ride starts at 6%, others at 0.
+      for (const c of d.companies || []) if (c.pricing && c.pricing.bizPct == null) c.pricing.bizPct = c.slug === 'carina-ride' ? 6 : 0;
       d.accounts = d.accounts || [];
       d.leads = d.leads || [];
       d.pwTokens = d.pwTokens || [];
@@ -1430,7 +1433,9 @@
       if (h && new Date(pickupAt).getTime() < now().getTime() + h * 3600e3 - 60e3) fail(`Online bookings need at least ${h} hour${h === 1 ? '' : 's'}' notice. For a sooner pickup, call ${company.name}${company.phone ? ` at ${company.phone}` : ''}.`);
     }
     function cleanBooking(company, b, { allowPast } = {}) {
+      const gb = b.guestBiz && str(b.guestBiz.company) ? { company: str(b.guestBiz.company, 80), po: str(b.guestBiz.po, 60) } : null;
       const out = {
+        ...(gb ? { business: gb } : {}),
         service: SERVICES[b.service] ? b.service : 'transfer',
         pickup: str(b.pickup, 200),
         dropoff: str(b.dropoff, 200),
@@ -1544,7 +1549,9 @@
     }
 
     function priceCtx(company, b, customer, promoCode, excludeId) {
-      const ctx = { busy: isBusy(company, b, excludeId), discountPct: discountFor(company, customer, b.accountId) };
+      const biz = !!(b.business || (b.guestBiz && str(b.guestBiz.company)));
+      const ctx = { busy: isBusy(company, b, excludeId), discountPct: discountFor(company, customer, b.accountId, biz) };
+      if (ctx.discountPct && ctx.discountPct === bizPctOf(company) && (biz || findAccount(company, b.accountId))) ctx.discountLabel = 'Business discount';
       const bal = creditOf(customer);
       if (bal > 0 && !b.accountId && b.useCredit && b.useCredit !== 'false' && !customer.agent) ctx.creditMax = bal;
       const pr = findPromo(company, promoCode);
@@ -1555,10 +1562,13 @@
 
     // The better of the customer's own discount and the billed account's. An
     // account that saves credit instead gives no discount on the ride itself.
-    function discountFor(company, customer, accountId) {
+    // Business rides (a guest booking as a business traveller, or a ride billed
+    // to a company account) also get the company's business discount.
+    function discountFor(company, customer, accountId, biz) {
       const acc = findAccount(company, accountId);
-      return Math.max(customer && customer.discountPct ? customer.discountPct : 0, acc && acc.discountPct && acc.reward !== 'credit' ? acc.discountPct : 0);
+      return Math.max(customer && customer.discountPct ? customer.discountPct : 0, acc && acc.discountPct && acc.reward !== 'credit' ? acc.discountPct : 0, biz || acc ? bizPctOf(company) : 0);
     }
+    function bizPctOf(company) { return (company.pricing && company.pricing.bizPct) || 0; }
 
     // ---- Business ride credit ---------------------------------------------------
     // A company account can save its discount as credit instead: each completed
@@ -2223,7 +2233,7 @@
       db.companies.filter((c) => c.status === 'active').map(pubCompany));
     def('public.company', 'public', false, (ctx, a) => {
       const c = companyBySlug(a.slug);
-      return { company: pubCompany(c), rates: clone(c.rates), addons: clone(c.pricing.addons), vehicleTypes: vehicleTypesFor(c), services: SERVICES, minNoticeHours: dcfg(c).minNoticeHours, policy: pcfg(c), terms: c.terms || '' };
+      return { company: pubCompany(c), rates: clone(c.rates), addons: clone(c.pricing.addons), bizPct: bizPctOf(c), vehicleTypes: vehicleTypesFor(c), services: SERVICES, minNoticeHours: dcfg(c).minNoticeHours, policy: pcfg(c), terms: c.terms || '' };
     });
     def('public.quote', 'public', false, (ctx, a) => {
       const c = companyBySlug(a.slug);
@@ -2665,7 +2675,7 @@
       const bizMail = gb ? (str(gb.billingEmail, 120).toLowerCase() || email) : '';
       if (gb && !emailOk(bizMail)) fail('Enter a valid email for invoices, or leave it blank.');
       const booking = { ...(a.booking || {}), passengerName: str((a.booking || {}).passengerName) || name, passengerPhone: str((a.booking || {}).passengerPhone) || str(a.phone, 30), accountId: '' };
-      delete booking.guestBiz;
+      // guestBiz stays on the booking: cleanBooking turns it into trip.business, so the business discount applies.
       const bookedFrom = now().toISOString();
       let res;
       try { res = M['customer.book'].fn({ ...ctx, user: u, company: c }, { ...a, booking }); }
@@ -3208,7 +3218,7 @@
       if (t.farmIn) { const f = db.farmouts.find((x) => x.id === t.farmIn.id); if (f) { t.priceOverride = f.rate; t.adjustment = null; } }
       if (t.pickupAt !== before && t.status === 'confirmed') { t.needsDriver = null; t.passedBy = []; }
       if ((t.accountId || null) !== beforeAcct) {
-        t.priceCtx = { ...(t.priceCtx || {}), discountPct: discountFor(ctx.company, t.customerId && findUser(t.customerId), t.accountId) };
+        t.priceCtx = { ...(t.priceCtx || {}), discountPct: discountFor(ctx.company, t.customerId && findUser(t.customerId), t.accountId, !!t.business) };
         if (t.payment.status !== 'paid') t.payment = { status: 'unpaid', method: t.accountId ? 'account' : cardsOn(ctx.company) ? 'card_on_file' : null, paidAt: null, ...(t.payment.charges ? { charges: t.payment.charges } : {}) };
         if (t.payment.method === 'card_on_file' && !t.cardToken) t.cardToken = randomId(6);
       }
@@ -5137,6 +5147,7 @@
       if ('nightStart' in a) p.nightStart = hr(a.nightStart, 'late night start hour');
       if ('nightEnd' in a) p.nightEnd = hr(a.nightEnd, 'late night end hour');
       if ('weekendPct' in a) p.weekendPct = pct(a.weekendPct, 'weekend surcharge');
+      if ('bizPct' in a) p.bizPct = pct(a.bizPct, 'business discount', 50);
       if ('busyPct' in a) p.busyPct = pct(a.busyPct, 'busy-time surcharge');
       if ('busyThreshold' in a) p.busyThreshold = pct(a.busyThreshold, 'busy-time trigger', 100);
       if (a.addons) for (const k of ['childSeat', 'meetGreet', 'extraStop', 'stopWait']) if (k in a.addons) p.addons[k] = k === 'stopWait' ? Math.round(pct(a.addons[k], 'wait booked at each stop', 240)) : pct(a.addons[k], 'add-on price', 1000);

@@ -898,6 +898,8 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 .housenote { margin: 0 0 16px; font-size: 15px; }
 
 #bk-gbizf .modesw { margin-top: 2px; }
+.gbiz-offer { margin: 0; font-size: 15px; } .gbiz-offer b { color: var(--brand); }
+.gbiz-video { display: block; width: 100%; max-width: 560px; border-radius: 10px; background: #000; aspect-ratio: 16 / 9; }
 .gbiz { margin-top: 12px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: color-mix(in srgb, var(--brand) 5%, var(--surface)); }
 #bk-gbizf .modesw-knob { background: var(--brand); }
 .done-logo { display: flex; justify-content: center; } .done-logo-img { display: block; height: 72px; width: auto; max-width: 100%; object-fit: contain; }

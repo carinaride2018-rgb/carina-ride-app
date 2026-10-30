@@ -8,6 +8,8 @@
   'use strict';
 
   const PLATFORM = 'LimoRelay';
+  // Welcome videos for business travellers, shown in the Business box of a company's booking page.
+  const BIZ_VIDEOS = { 'carina-ride': 'media/business/carina-ride' };
   // The demo build inlines the logo files; the live site loads them from icons/.
   const LOGO = window.LIMO_LOGOS || { light: 'icons/logo-light.svg', dark: 'icons/logo-dark.svg' };
   const DEMO = !!window.LIMO_DEMO;
@@ -1713,6 +1715,8 @@
           ${opts.guest ? `<label class="field"><span>Your email</span><input id="bk-gemail" type="email" autocomplete="email" value="${esc(state.guestEmail || '')}"><span class="hint">Your confirmation goes here. No account needed. <button class="linkbtn" type="button" id="bk-signin">Have an account? Sign in</button></span></label>` : ''}
           ${opts.guest && !biz ? `<div class="field" id="bk-gbizf"><span>This ride is</span><div class="modesw" role="radiogroup" aria-label="Personal or business ride"><button type="button" role="radio" data-gbiz="personal" aria-checked="${state.gbiz !== 'business'}">Personal</button><button type="button" role="radio" data-gbiz="business" aria-checked="${state.gbiz === 'business'}">Business<span class="modesw-co">Travelling for work</span></button><span class="modesw-knob" aria-hidden="true"></span></div>
             <div id="bk-gbiz" class="stack gbiz" style="gap:10px"${state.gbiz === 'business' ? '' : ' hidden'}>
+              ${opts.info.bizPct ? `<p class="gbiz-offer"><b>${esc(String(opts.info.bizPct))}% off</b> every ride for business travelers.</p>` : ''}
+              ${BIZ_VIDEOS[opts.info.company && opts.info.company.slug] ? `<video class="gbiz-video" controls playsinline muted preload="none" poster="${BIZ_VIDEOS[opts.info.company.slug]}.jpg"><source src="${BIZ_VIDEOS[opts.info.company.slug]}.mp4" type="video/mp4"></video>` : ''}
               <div class="grid2"><label class="field"><span>Company name</span><input id="bk-gbco" autocomplete="organization" value="${esc(state.gbizCo || '')}"></label>
                 <label class="field"><span>Email for invoices <span class="faint">(optional)</span></span><input id="bk-gbmail" type="email" placeholder="Same as your email" value="${esc(state.gbizMail || '')}"></label></div>
               <label class="field"><span>PO number or cost center <span class="faint">(optional)</span></span><input id="bk-gbpo" value="${esc(state.gbizPo || '')}"></label>
@@ -5084,6 +5088,8 @@
               <div class="row"><span class="small">+</span>${numIn('pr-night', 'nightPct', p.nightPct, 1, 'style="width:80px"')}<span class="small">% from</span>${numIn('pr-ns', 'nightStart', p.nightStart, 1, 'style="width:70px" max="23"')}<span class="small">:00 to</span>${numIn('pr-ne', 'nightEnd', p.nightEnd, 1, 'style="width:70px" max="23"')}<span class="small">:00</span></div></div>
             <div class="rule"><div><b>Weekend</b><p class="small muted">Added for Saturday and Sunday pickups.</p></div>
               <div class="row"><span class="small">+</span>${numIn('pr-wk', 'weekendPct', p.weekendPct, 1, 'style="width:80px"')}<span class="small">%</span></div></div>
+            <div class="rule"><div><b>Business discount</b><p class="small muted">Taken off rides for business travellers: guests who book as Business, and rides billed to a company account. 0 turns it off.</p></div>
+              <div class="row"><span class="small">−</span>${numIn('pr-biz', 'bizPct', p.bizPct || 0, 0.5, 'style="width:80px" max="50"')}<span class="small">%</span></div></div>
             <div class="rule"><div><b>Busy times</b><p class="small muted">Added when most of that vehicle type is already booked within two hours of the pickup.</p></div>
               <div class="row"><span class="small">+</span>${numIn('pr-busy', 'busyPct', p.busyPct, 1, 'style="width:80px"')}<span class="small">% when</span>${numIn('pr-bt', 'busyThreshold', p.busyThreshold, 5, 'style="width:80px" max="100"')}<span class="small">% of vehicles are booked</span></div></div>
           </div>
@@ -5126,7 +5132,7 @@
           const f = formData(e.target);
           await busy($('button[type=submit]', e.target), async () => {
             try {
-              await api('dispatch.savePricing', { nightPct: f.nightPct, nightStart: f.nightStart, nightEnd: f.nightEnd, weekendPct: f.weekendPct, busyPct: f.busyPct, busyThreshold: f.busyThreshold, addons: { childSeat: f.childSeat, meetGreet: f.meetGreet, extraStop: f.extraStop, stopWait: f.stopWait }, peakDates: peaks, promos });
+              await api('dispatch.savePricing', { nightPct: f.nightPct, nightStart: f.nightStart, nightEnd: f.nightEnd, weekendPct: f.weekendPct, bizPct: f.bizPct, busyPct: f.busyPct, busyThreshold: f.busyThreshold, addons: { childSeat: f.childSeat, meetGreet: f.meetGreet, extraStop: f.extraStop, stopWait: f.stopWait }, peakDates: peaks, promos });
               toast('Pricing saved.'); drawPricing(v);
             } catch (err) { showErr($('#pr-err', v), err); }
           });
