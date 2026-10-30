@@ -218,6 +218,21 @@
 
   const AIRPORT_RE = /airport|terminal|\b(jfk|lga|ewr|lax|sfo|ord|mdw|atl|dca|iad|bwi|dfw|iah|sea|bfi|pae|mia|bos|den|phx|las|msp|dtw|clt|phl)\b/i;
   // Cruise and ferry terminals are not airports.
+  // A pickup or drop-off must be a real place: a street address, an airport,
+  // or a named place with its city ("Space Needle, Seattle"). Just a city,
+  // state or ZIP ("Seattle", "Seattle, WA, USA") is not enough for a chauffeur.
+  const STATE_NAMES = 'alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|virginia|washington|west virginia|wisconsin|wyoming|district of columbia'.split('|');
+  function exactAddress(addr) {
+    const a = str(addr).trim();
+    if (!a) return false;
+    if (isAirport(a) && (/airport|terminal/i.test(a) || /\b[A-Z]{3}\b/.test(a))) return true;
+    // Drop the state, country and ZIP; what's left must have a street number or two parts (place, city).
+    const raw = a.toLowerCase().split(',').map((x) => x.trim().replace(/\s+\d{5}(-\d{4})?$/, '').trim()).filter(Boolean);
+    const code = raw.some((x) => /^[a-z]{2}$/.test(x) && !['us'].includes(x));
+    const parts = raw.filter((x) => !/^(usa|us|united states( of america)?|[a-z]{2}|\d{5}(-\d{4})?)$/.test(x) && (code || !STATE_NAMES.includes(x)));
+    if (parts.some((x) => /\d/.test(x))) return true;
+    return parts.length >= 2;
+  }
   const isAirport = (addr) => AIRPORT_RE.test(str(addr)) && !/cruise|ferry|pier \d/i.test(str(addr));
   const airportCode = (addr) => { const m = str(addr).match(/\b(JFK|LGA|EWR|LAX|SFO|ORD|MDW|ATL|DCA|IAD|BWI|DFW|IAH|SEA|BFI|PAE|MIA|BOS|DEN|PHX|LAS|MSP|DTW|CLT|PHL)\b/i); return m ? m[1].toUpperCase() : ''; };
 
@@ -1428,6 +1443,8 @@
       } else { out.poNumber = ''; out.costCenter = ''; }
       if (!out.pickup) fail('Enter a pickup address.');
       if (out.service !== 'hourly' && !out.dropoff) fail('Enter a drop-off address.');
+      if (!exactAddress(out.pickup)) fail(`Pickup address: enter the full street address or a place name with its city (like a hotel or airport), not just "${out.pickup}".`);
+      if (out.dropoff && !exactAddress(out.dropoff)) fail(`Drop-off address: enter the full street address or a place name with its city (like a hotel or airport), not just "${out.dropoff}".`);
       if (out.service !== 'hourly') out.service = isAirport(out.pickup) || isAirport(out.dropoff) ? 'airport' : 'transfer';
       if (str(b.flight)) {
         const f = normFlight(b.flight);
@@ -6470,5 +6487,5 @@
     };
   }
 
-  return { createCore, MSG_TEMPLATES, INCIDENT_KINDS, setProviders, routeVia, TEMPS, MUSIC, MAX_STOPS, STOP_WAITS, DEFAULT_POLICY, quote, estimateRoute, suggestPlaces, isAirport, flightStatus, normFlight, ApiError, VEHICLE_TYPES, SERVICES, EVENT_TYPES, STATUS_LABELS, DRIVER_FLOW, PLANS, PLATFORM_EMAIL, DEFAULT_AUTOFARM, DEFAULT_DISPATCH, DEFAULT_RATES, DEFAULT_PRICING, VEHICLE_STATUS, MAINT_KINDS, PAY_TYPES, DAYS, AIRLINES };
+  return { createCore, exactAddress, MSG_TEMPLATES, INCIDENT_KINDS, setProviders, routeVia, TEMPS, MUSIC, MAX_STOPS, STOP_WAITS, DEFAULT_POLICY, quote, estimateRoute, suggestPlaces, isAirport, flightStatus, normFlight, ApiError, VEHICLE_TYPES, SERVICES, EVENT_TYPES, STATUS_LABELS, DRIVER_FLOW, PLANS, PLATFORM_EMAIL, DEFAULT_AUTOFARM, DEFAULT_DISPATCH, DEFAULT_RATES, DEFAULT_PRICING, VEHICLE_STATUS, MAINT_KINDS, PAY_TYPES, DAYS, AIRLINES };
 });

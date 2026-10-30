@@ -81,6 +81,17 @@
       img.src = url;
     });
   }
+  // Pickup and drop-off must be a street address or a named place, not just a city.
+  const ADDR_MSG = 'Enter the full street address or a place name with its city (like a hotel or airport), not just the city.';
+  function checkAddr(input, required) {
+    const fld = input && input.closest('.field'); if (!fld) return true;
+    const v = input.value.trim();
+    const good = (!v && !required) || (!!v && C.exactAddress(v));
+    fld.classList.toggle('bad', !good);
+    let m = $('.ferr', fld);
+    if (!good && v) { if (!m) { m = document.createElement('span'); m.className = 'ferr small'; fld.appendChild(m); } m.textContent = ADDR_MSG; } else if (m) m.remove();
+    return good;
+  }
   const coLogo = (co, cls) => co && co.logo ? `<img class="${cls}" src="${esc(co.logo)}" alt="${esc(co.name)} logo">` : '';
   // Photo picker block used by the driver app and the office.
   const photoField = (name, photo, id) => `<div class="photofield">${face(name, photo, 'lg')}<div class="stack" style="gap:6px"><span class="small muted">Passengers see this photo with the car and plate once the trip is theirs.</span><div class="row"><label class="btn sm"><input type="file" id="${id}" accept="image/jpeg,image/png,image/webp" hidden>${photo ? 'Change photo' : 'Add photo'}</label>${photo ? `<button class="btn sm" type="button" id="${id}-rm">Remove</button>` : ''}</div></div></div>`;
@@ -1999,6 +2010,12 @@
     getLive().then((i) => { const n = $('#bk-mapnote', host); if (n && i.live && i.live.maps) n.remove(); });
     form.addEventListener('input', () => { sync(); requote(); });
     form.addEventListener('change', () => { sync(); requote(); });
+    // Red message as soon as a pickup or drop-off is just a city; it clears once fixed.
+    for (const [id, req] of [['#bk-pickup', true], ['#bk-dropoff', false]]) {
+      const el = $(id, form); if (!el) continue;
+      el.addEventListener('change', () => { if (el.value.trim()) checkAddr(el, req); });
+      el.addEventListener('input', () => { if (el.closest('.field').classList.contains('bad')) checkAddr(el, req); });
+    }
     form.addEventListener('submit', (e) => e.preventDefault());
     $('#bk-submit', host).onclick = (e) => busy(e.currentTarget, async () => {
       sync(); $('#bk-err', host).innerHTML = '';
@@ -2043,7 +2060,8 @@
     if (twoStep) {
       $('#bk-next', host).onclick = (e) => busy(e.currentTarget, async () => {
         sync(); const err = $('#bk-err1', host); err.innerHTML = '';
-        const miss = !state.date || !state.time ? 'Choose the pickup date and time.' : !state.pickup.trim() ? 'Enter the pickup address.' : state.service !== 'hourly' && !state.dropoff.trim() ? 'Enter the drop-off address.' : C.isAirport(state.pickup) && !String(state.flight || '').trim() ? 'Pickups at the airport need the flight number, for example AS 331, so we can follow the landing.' : '';
+        const addrOk = [checkAddr($('#bk-pickup', host), true), checkAddr($('#bk-dropoff', host), state.service !== 'hourly')].every(Boolean);
+        const miss = !state.date || !state.time ? 'Choose the pickup date and time.' : !state.pickup.trim() ? 'Enter the pickup address.' : state.service !== 'hourly' && !state.dropoff.trim() ? 'Enter the drop-off address.' : !addrOk ? 'Check the addresses marked in red: we need the exact pickup and drop-off, not just the city.' : C.isAirport(state.pickup) && !String(state.flight || '').trim() ? 'Pickups at the airport need the flight number, for example AS 331, so we can follow the landing.' : '';
         const mi = state.service === 'hourly' ? -1 : moreList.findIndex((m) => !m.date || !m.time || !m.pickup.trim() || !m.dropoff.trim());
         const miss2 = mi >= 0 ? `Ride ${mi + 2}: add the date, time, pickup and drop-off, or remove it.` : '';
         const rw = state.retOn && state.service !== 'hourly' ? (state.retDate && state.retTime ? new Date(`${state.retDate}T${state.retTime}`) : null) : undefined;
