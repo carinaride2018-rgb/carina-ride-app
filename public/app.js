@@ -1709,6 +1709,13 @@
             <label class="field"><span>${agent ? "Client's mobile" : 'Passenger mobile'}</span><input id="bk-phone" name="passengerPhone" type="tel" value="${esc(state.passengerPhone)}"><span class="hint">The chauffeur texts this number.</span></label>
           </div>
           ${opts.guest ? `<label class="field"><span>Your email</span><input id="bk-gemail" type="email" autocomplete="email" value="${esc(state.guestEmail || '')}"><span class="hint">Your confirmation goes here. No account needed. <button class="linkbtn" type="button" id="bk-signin">Have an account? Sign in</button></span></label>` : ''}
+          ${opts.guest && !biz ? `<div class="field" id="bk-gbizf"><span>This ride is</span><div class="modesw" role="radiogroup" aria-label="Personal or business ride"><button type="button" role="radio" data-gbiz="personal" aria-checked="${state.gbiz !== 'business'}">Personal</button><button type="button" role="radio" data-gbiz="business" aria-checked="${state.gbiz === 'business'}">Business<span class="modesw-co">Travelling for work</span></button><span class="modesw-knob" aria-hidden="true"></span></div>
+            <div id="bk-gbiz" class="stack gbiz" style="gap:10px"${state.gbiz === 'business' ? '' : ' hidden'}>
+              <div class="grid2"><label class="field"><span>Company name</span><input id="bk-gbco" autocomplete="organization" value="${esc(state.gbizCo || '')}"></label>
+                <label class="field"><span>Email for invoices <span class="faint">(optional)</span></span><input id="bk-gbmail" type="email" placeholder="Same as your email" value="${esc(state.gbizMail || '')}"></label></div>
+              <label class="field"><span>PO number or cost center <span class="faint">(optional)</span></span><input id="bk-gbpo" value="${esc(state.gbizPo || '')}"></label>
+              <p class="small muted" style="margin:0">Today's ride is paid by card. We'll also ask ${esc((opts.info.company && opts.info.company.name) || 'us')} to open a company account for you, so later rides can go on a monthly invoice.</p>
+            </div></div>` : ''}
           <label class="check smsok"><input type="checkbox" id="bk-sms" ${state.smsOk ? 'checked' : ''}> <span>${dispatch ? 'The passenger agreed to get ride texts at this number. Untick if they did not; they then get emails only.' : smsConsentText(opts.info.company && opts.info.company.name, agent)}</span></label>
           ${agent ? `<label class="field"><span>Client's email <span class="faint">(optional)</span></span><input id="bk-email" name="passengerEmail" type="email" value="${esc(state.passengerEmail)}"><span class="hint">Your client gets the confirmation and chauffeur details. You get a copy by email.</span></label>
             <div class="field"><span>Who pays</span><div class="stack" role="radiogroup" style="gap:6px">
@@ -1779,6 +1786,15 @@
       $$('[data-bkmode]', form).forEach((b) => { b.onclick = () => pick(b.dataset.bkmode); });
       bizNote(!!state.accountId);
     }
+    // A first-time guest can mark the ride as business travel (see public.guestBook).
+    $$('[data-gbiz]', form).forEach((b) => {
+      b.onclick = () => {
+        state.gbiz = b.dataset.gbiz;
+        $$('[data-gbiz]', form).forEach((x) => x.setAttribute('aria-checked', String(x.dataset.gbiz === state.gbiz)));
+        const box = $('#bk-gbiz', form); if (box) box.hidden = state.gbiz !== 'business';
+        if (state.gbiz === 'business') { const co = $('#bk-gbco', form); if (co && !co.value) co.focus(); }
+      };
+    });
     const sync = () => {
       Object.assign(state, formData(form));
       $$('[data-show]', form).forEach((el) => { el.hidden = el.dataset.show !== state.service; });
@@ -1922,6 +1938,11 @@
       if (opts.info.company && opts.info.company.house) { try { out.browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { /* server keeps the time as sent */ } }
       delete out.cardNo; delete out.cardExp; delete out.payDriver;
       if (opts.guest) { const ge = $('#bk-gemail', host); out.guestEmail = ge ? ge.value.trim() : ''; }
+      if (opts.guest && state.gbiz === 'business') {
+        const v = (id) => { const el = $(id, host); return el ? el.value.trim() : ''; };
+        state.gbizCo = v('#bk-gbco'); state.gbizMail = v('#bk-gbmail'); state.gbizPo = v('#bk-gbpo');
+        out.guestBiz = { company: state.gbizCo, billingEmail: state.gbizMail, po: state.gbizPo };
+      }
       if (!agent) delete out.payBy;
       const crb = $('#bk-credit', host); out.useCredit = !!(crb && crb.checked && !out.accountId);
       if ($('#bk-cardno', host) && !(agent && state.payBy === 'passenger')) out.card = { number: state.cardNo || $('#bk-cardno', host).value, exp: state.cardExp || $('#bk-cardexp', host).value };
@@ -2123,6 +2144,7 @@
         // A guest gives an email in the form and books in one step.
         const { guestEmail, ...rest } = b;
         if (!guestEmail) throw new Error('Enter your email so we can send your confirmation.');
+        if (rest.guestBiz && !rest.guestBiz.company) throw new Error('Enter your company name, or choose Personal.');
         await guestBook(rest, { name: rest.passengerName, phone: rest.passengerPhone, email: guestEmail });
       },
       guest: !signedHere,

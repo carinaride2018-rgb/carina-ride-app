@@ -825,7 +825,7 @@
     function officeNewText(t, c) {
       const v = msgVars(t);
       const lines = [`New booking ${t.ref}${t.agent ? ` by travel agent ${t.agent.name}${t.agent.agency ? ` (${t.agent.agency})` : ''}` : ''}.`, '',
-        `Passenger: ${v.passenger_name}`, `Cellphone: ${v.cellphone || '-'}`, `Email: ${t.passengerEmail || '-'}`, `Pickup Date and Time: ${v.pickup_time}`,
+        `Passenger: ${v.passenger_name}`, `Cellphone: ${v.cellphone || '-'}`, `Email: ${t.passengerEmail || '-'}`, ...(t.business ? [`Business trip: ${t.business.company}${t.business.po ? ` (PO ${t.business.po})` : ''}`] : []), `Pickup Date and Time: ${v.pickup_time}`,
         `Pickup Address: ${t.pickup}`, `Destination: ${v.destination}`];
       if (t.flight) lines.push(`Flight: ${t.flight}`);
       lines.push(`Vehicle: ${v.vehicle_choice}`, `Passengers: ${v.passenger_count}`, `Bags: ${v.bag_count}`, `Total: ${v.total}`);
@@ -2654,12 +2654,38 @@
       else if (!u.phone && str(a.phone)) u.phone = str(a.phone, 30);
       const saved = u.card, savedPrefs = u.prefs;
       u.card = null;
+      // A first-time business traveller: the ride is paid by card now and the
+      // office gets a request to open a company account (as customer.bizRequest).
+      const gb = (a.booking || {}).guestBiz || null;
+      const bizCo = gb ? str(gb.company, 80) : '';
+      if (gb && !bizCo) fail('Enter your company name, or choose Personal.');
+      const bizMail = gb ? (str(gb.billingEmail, 120).toLowerCase() || email) : '';
+      if (gb && !emailOk(bizMail)) fail('Enter a valid email for invoices, or leave it blank.');
       const booking = { ...(a.booking || {}), passengerName: str((a.booking || {}).passengerName) || name, passengerPhone: str((a.booking || {}).passengerPhone) || str(a.phone, 30), accountId: '' };
+      delete booking.guestBiz;
+      const bookedFrom = now().toISOString();
       let res;
       try { res = M['customer.book'].fn({ ...ctx, user: u, company: c }, { ...a, booking }); }
       catch (e) { u.card = saved; if (isNew) db.users.splice(db.users.indexOf(u), 1); throw e; }
       // The guest's card stays on their rides only; an existing customer keeps theirs.
       if (!isNew) { u.card = saved; u.prefs = savedPrefs; }
+      if (bizCo) {
+        const business = { company: bizCo, po: str(gb.po, 60) };
+        // Every ride from this booking: the main one, a return and any added rides.
+        for (const t of db.trips) if (t.id === res.id || (t.customerId === u.id && t.createdAt >= bookedFrom)) {
+          t.business = business;
+          // The office email was written before the ride was marked business: write it again.
+          const om = db.messages.find((m) => m.tripId === t.id && m.kind === 'office_new' && !m.delivery);
+          if (om) om.body = officeNewText(t, c);
+        }
+        if (!findAccount(c, u.accountId) && !(u.bizRequest && u.bizRequest.status === 'pending')) {
+          const stamp = now().toISOString();
+          u.bizRequest = { company: bizCo, billingEmail: bizMail, phone: str(a.phone, 30), note: business.po ? `PO or cost center: ${business.po}` : '', at: stamp, status: 'pending', fromBooking: res.ref || '' };
+          const office = officeEmail(c);
+          if (office) db.messages.unshift({ id: id('msg'), companyId: c.id, tripId: null, ref: '', at: stamp, recipient: office, channel: 'email', kind: 'biz_request',
+            body: [`${name} booked ${res.ref || 'a ride'} as a business traveller and would like a company account.`, '', `Company: ${bizCo}`, `Invoices to: ${bizMail}`, `Phone: ${u.phone || '-'}`, `Booker: ${name} (${email})`, ...(business.po ? [`PO or cost center: ${business.po}`] : []), '', 'Open Customers > Company accounts to approve it. This first ride is paid by card.'].join('\n') });
+        }
+      }
       let accountEmail = false;
       if (!u.passHash) {
         mailUser(u, c.id, 'login', `Thanks for booking with ${c.name}, ${name.split(' ')[0]}. Your ride ${res.ref} is booked. Set up your ${c.name} account to see your rides, change bookings and book faster next time: choose a password with this link (it works for ${WELCOME_DAYS} days): ${loginLink(u, 'welcome')}`);
