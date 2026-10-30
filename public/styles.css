@@ -930,3 +930,8 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 .flightbox legend span { color: var(--brand); }
 
 .bh-auth { display: flex; gap: 8px; margin-left: auto; }
+
+/* A field the customer must fix: stays red until it is filled in. */
+.field.must-fix input, .field.must-fix select, .field.must-fix textarea { border-color: var(--bad, #b42318) !important; background: #fff5f4; box-shadow: 0 0 0 3px rgba(180, 35, 24, .15); }
+.field.must-fix > span:first-child { color: var(--bad, #b42318); }
+.check.must-fix { color: var(--bad, #b42318); background: #fff5f4; border-radius: 8px; padding: 6px 8px; box-shadow: 0 0 0 2px rgba(180, 35, 24, .25); }
