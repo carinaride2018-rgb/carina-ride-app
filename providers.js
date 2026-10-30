@@ -450,10 +450,10 @@ function emailHtml(m) {
   const blocks = []; let cur = [];
   for (const l of lines) { if (l.trim()) cur.push(l); else if (cur.length) { blocks.push(cur); cur = []; } }
   if (cur.length) blocks.push(cur);
-  const row = (l) => { const kv = l.match(/^([A-Z][A-Za-z ]{1,32}):\s+(.+)$/); return kv && !/^https?:/.test(kv[1]) ? `<tr><td style="width:38%;padding:4px 10px 4px 0;color:#000000;vertical-align:top">${hesc(kv[1])}</td><td style="padding:4px 0;color:#000000;font-weight:600;vertical-align:top;word-break:break-word;overflow-wrap:anywhere">${linkify(kv[2])}</td></tr>` : null; };
+  const row = (l) => { const kv = l.match(/^([A-Z][^:]{0,40}):\s+(.+)$/); return kv && !/https?$/i.test(kv[1]) ? `<tr><td style="width:38%;padding:4px 10px 4px 0;color:#000000;vertical-align:top">${hesc(kv[1])}</td><td style="padding:4px 0;color:#000000;font-weight:600;vertical-align:top;word-break:break-word;overflow-wrap:anywhere">${linkify(kv[2])}</td></tr>` : null; };
   const html = blocks.map((b) => {
     const rows = b.map(row);
-    if (rows.every(Boolean) && b.length > 1) return `<table role="presentation" style="width:100%;border-collapse:collapse;background:#ffffff;border:1px solid #000000;border-radius:8px;margin:0 0 16px"><tbody><tr><td style="padding:12px 14px"><table role="presentation" style="width:100%;table-layout:fixed;border-collapse:collapse;font-size:15px">${rows.join('')}</table></td></tr></tbody></table>`;
+    if (rows.every(Boolean) && (b.length > 1 || /^Total\b/.test(b[0]))) return `<table role="presentation" style="width:100%;border-collapse:collapse;background:#ffffff;border:1px solid #000000;border-radius:8px;margin:0 0 16px"><tbody><tr><td style="padding:12px 14px"><table role="presentation" style="width:100%;table-layout:fixed;border-collapse:collapse;font-size:15px">${rows.join('')}</table></td></tr></tbody></table>`;
     return `<p style="margin:0 0 16px;font-size:15px;line-height:1.5;color:#000000">${b.map(linkify).join('<br>')}</p>`;
   }).join('');
   const head = co.logoUrl ? `<img src="${hesc(co.logoUrl)}" alt="${hesc(co.name)}" style="max-height:64px;max-width:220px;display:block;margin:0 auto">` : `<div style="font-size:22px;font-weight:700;color:#000000;text-align:center">${hesc(co.name || '')}</div>`;

@@ -827,7 +827,7 @@
           o ? (o.partnerName ? `Offered to ${o.partnerName} on the network.` : `Out of town in ${o.city}: arrange a local company.`) : 'Assign a chauffeur for it too.');
       }
       lines.push('', `Open the dispatch board to assign a chauffeur.`);
-      return lines.join('\n');
+      return withStops(t, lines.join('\n'));
     }
     function masterOf(c) {
       const admins = db.users.filter((u) => c && u.companyId === c.id && u.role === 'admin' && u.active !== false);
@@ -899,15 +899,15 @@
       const c = findCompany(t.companyId);
       const more = (t.groupIds || []).map((x) => db.trips.find((y) => y.id === x)).filter((x) => x && x.status !== 'cancelled');
       if (!more.length) return '';
-      return more.map((m, i) => ['', `Ride ${i + 2}`, `Trip confirmation: ${m.ref}`, `Pickup Date and Time: ${fmtLocal(m.pickupAt, c, true)}`, `Pickup Address: ${m.pickup}`, `Destination: ${m.dropoff}`,
-        ...(m.flight ? [`Flight Information: ${m.flight}`] : []), `Total: $${money(m.price.total)}`].join('\n')).join('\n') + `\n\nAll ${more.length + 1} rides: $${money([t, ...more].reduce((s2, x) => s2 + x.price.total, 0))}\n`;
+      return more.map((m, i) => ['', `Ride ${i + 2}: ${m.ref}`, `Pickup Date and Time: ${fmtLocal(m.pickupAt, c, true)}`, `Pickup Address: ${m.pickup}`, `Destination: ${m.dropoff}`,
+        ...(m.flight ? [`Flight Information: ${m.flight}`] : []), `Total: $${money(m.price.total)}`].join('\n')).join('\n') + `\n\nTotal for all ${more.length + 1} rides: $${money([t, ...more].reduce((s2, x) => s2 + x.price.total, 0))}\n`;
     }
     function landingOnly(t) {
       const c = findCompany(t.companyId), lt = t.landingId && db.trips.find((x) => x.id === t.landingId);
       if (!lt || lt.status === 'cancelled') return '';
       const tz = lt.outOfTown ? { timezone: lt.outOfTown.tz } : c;
-      return ['', 'Pickup when you land', `Trip confirmation: ${lt.ref}`, `Pickup Date and Time: ${fmtLocal(lt.pickupAt, tz, true)}${lt.outOfTown ? ` (${lt.outOfTown.city} time)` : ''}`,
-        `Pickup Address: ${lt.pickup}`, `Destination: ${lt.dropoff}`, `Flight: ${lt.flight}`, `Total: $${money(lt.price.total)}`, 'We follow your flight and move the pickup if you land late.', ''].join('\n');
+      return ['', `Pickup when you land: ${lt.ref}`, `Pickup Date and Time: ${fmtLocal(lt.pickupAt, tz, true)}${lt.outOfTown ? ` (${lt.outOfTown.city} time)` : ''}`,
+        `Pickup Address: ${lt.pickup}`, `Destination: ${lt.dropoff}`, `Flight: ${lt.flight}`, `Total: $${money(lt.price.total)}`, '', 'We follow your flight and move the pickup if you land late.', ''].join('\n');
     }
     // Bottom of the booking confirmation email: how to pay, then the terms.
     function confirmFooter(t) {
@@ -971,7 +971,15 @@
       const c = findCompany(t.companyId);
       const own = c.templates && c.templates[key];
       const vars = msgVars(t, extra);
-      return (own || MSG_TEMPLATES[key].text).replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k] : m)).replace(/ {2,}/g, ' ').replace(/ +\n/g, '\n').trim();
+      return withStops(t, (own || MSG_TEMPLATES[key].text).replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k] : m)).replace(/ {2,}/g, ' ').replace(/ +\n/g, '\n').trim());
+    }
+    // Stops on the way go right under the pickup line, so they sit in the details box.
+    function withStops(t, text) {
+      const list = (t.stopList || []).filter(Boolean);
+      if (!list.length || /^Stop 1:/m.test(text)) return text;
+      const waits = t.stopWaits || [];
+      const lines = list.map((x, i) => `Stop ${i + 1}: ${x}${waits[i] ? ` (wait ${waits[i]} min)` : ''}`).join('\n');
+      return text.replace(/^(Pickup Address: .*)$/m, `$1\n${lines}`);
     }
     function reviewMsgs(t) {
       const out = [];
@@ -1253,7 +1261,7 @@
       if (t.flight) lines.push(`Flight: ${t.flight}`);
       lines.push(`Vehicle: ${v.vehicle_choice}`, `Passengers: ${v.passenger_count}`, `Bags: ${v.bag_count}`, `Total: ${v.total}`);
       if (!t.driverId && t.status === 'confirmed') lines.push('', 'The ride needs a chauffeur. Open the dispatch board to assign one.');
-      return lines.join('\n');
+      return withStops(t, lines.join('\n'));
     }
 
     // Free waiting at pickup. It starts when the driver arrives, or at the
