@@ -813,7 +813,7 @@
     const payOpts = (c) => ({ card: true, cash: false, ...((c && c.payOptions) || {}) });
     const cardsOn = (c) => payOpts(c).card !== false && (payMode === 'demo' || (payMode === 'stripe' && !!(c.stripe && c.stripe.ready)));
     const cashOn = (c) => !!payOpts(c).cash;
-    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), cash: cashOn(c), cardChoice: payOpts(c).card !== false, payMode, logo: c.logo || '', domain: c.domain || '', ...(c.house ? { house: true } : {}) });
+    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), cash: cashOn(c), cardChoice: payOpts(c).card !== false, payMode, logo: c.logo || '', banner: c.banner || '', domain: c.domain || '', ...(c.house ? { house: true } : {}) });
 
     async function hashPw(pw, salt) { return hash(String(pw), salt); }
     async function setPassword(u, pw) { u.salt = randomId(8); u.passHash = await hashPw(pw, u.salt); }
@@ -1135,11 +1135,11 @@
     const driverPhoto = (t) => { const d = t.driverId && findUser(t.driverId); return (d && d.photo) || (t.affiliate && t.affiliate.driver && t.affiliate.driver.photo) || ''; };
     const withPhoto = (view, t) => (view.driver ? { ...view, driver: { ...view.driver, photo: driverPhoto(t) } } : view);
     // Photos arrive as small data URLs the browser has already cropped and shrunk.
-    function cleanPhoto(p) {
+    function cleanPhoto(p, max = 200000) {
       const s = String(p || '');
       if (!s) return '';
       if (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(s)) fail('Choose a JPEG or PNG photo.');
-      if (s.length > 200000) fail('That photo is too large. Try a smaller one.');
+      if (s.length > max) fail('That photo is too large. Try a smaller one.');
       return s;
     }
     // A booking and, when asked for, its return: the same ride the other way at
@@ -5088,6 +5088,13 @@
     });
     def('dispatch.settings', STAFF, false, (ctx) => ({ typeOrder: typesBySize(db.vehicles.filter((v) => v.companyId === ctx.company.id)), company: { ...pubCompany(ctx.company), refPrefix: ctx.company.refPrefix, plan: ctx.company.plan, planInfo: planInfo(ctx.company), terms: ctx.company.terms || '', policy: pcfg(ctx.company), bags: bagsCfg(ctx.company), stripe: ctx.company.stripe ? { ready: !!ctx.company.stripe.ready, since: ctx.company.stripe.connectedAt || null } : null }, rates: clone(ctx.company.rates), addons: clone(ctx.company.pricing.addons), vehicleTypes: VEHICLE_TYPES }));
     // The company's logo (a small picture, shown in the header and on its booking pages).
+    // A wide banner picture: shown across the top of emails (inside the email,
+    // so mail apps don't block it) and the booking page, in place of the logo.
+    def('dispatch.setBanner', ['admin'], true, (ctx, a) => {
+      const banner = cleanPhoto(a.banner, 450000);
+      if (banner) ctx.company.banner = banner; else delete ctx.company.banner;
+      return { company: pubCompany(ctx.company) };
+    });
     def('dispatch.setLogo', ['admin'], true, (ctx, a) => {
       const logo = cleanPhoto(a.logo);
       if (logo) ctx.company.logo = logo; else delete ctx.company.logo;
@@ -6488,7 +6495,7 @@
           const t = m.tripId && m.channel === 'email' && db.trips.find((x) => x.id === m.tripId);
           const toPassenger = t && String(t.passengerEmail || '').toLowerCase() === String(m.recipient || '').toLowerCase();
           const body = toPassenger && c.slug && !/#terms\./.test(m.body) ? `${m.body}\n\nTerms and Conditions: ${base}#terms.${c.slug}` : m.body;
-          out.push({ id: m.id, channel: m.channel, recipient: m.recipient, body, ...(m.wakeKey ? { answerUrl: `${(opts.publicUrl || '').replace(/#.*$/, '')}twilio/wake?k=${m.wakeKey}` } : {}), kind: m.kind || '', ref: m.ref || '', replyTo: m.replyTo || '', company: { name: c.name || '', email: c.email || '', phone: c.phone || '', color: c.color || '', logoData: m.channel === 'email' ? c.logo || '' : '', logoUrl: c.logo && c.slug && base ? `${base}logo/${c.slug}.${(c.logo.match(/^data:image\/(\w+)/) || [])[1] || 'png'}?v=${fnv(c.logo).toString(36)}` : '', termsUrl: c.slug && base ? `${base}#terms.${c.slug}` : '' } });
+          out.push({ id: m.id, channel: m.channel, recipient: m.recipient, body, ...(m.wakeKey ? { answerUrl: `${(opts.publicUrl || '').replace(/#.*$/, '')}twilio/wake?k=${m.wakeKey}` } : {}), kind: m.kind || '', ref: m.ref || '', replyTo: m.replyTo || '', company: { name: c.name || '', email: c.email || '', phone: c.phone || '', color: c.color || '', logoData: m.channel === 'email' ? c.logo || '' : '', bannerData: m.channel === 'email' ? c.banner || '' : '', logoUrl: c.logo && c.slug && base ? `${base}logo/${c.slug}.${(c.logo.match(/^data:image\/(\w+)/) || [])[1] || 'png'}?v=${fnv(c.logo).toString(36)}` : '', termsUrl: c.slug && base ? `${base}#terms.${c.slug}` : '' } });
         }
         if (changed) save(db);
         return out;

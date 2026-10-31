@@ -120,10 +120,14 @@ function createProviders(rawEnv, opts) {
       try { pdf = { filename: `${String(m.ref).replace(/[^\w-]/g, '')}.pdf`, content: bookingPdf(m, PDF_KINDS[m.kind]).toString('base64') }; }
       catch (e) { log(`PDF for ${m.ref} failed: ${e.message}`); }
     }
+    // The banner (or logo) goes inside the email as an inline picture, so mail
+    // apps show it right away instead of "Some images are blocked".
+    const pic = inlinePic(m.company);
+    const attachments = [pdf, pic && { filename: pic.filename, content: pic.content, content_id: pic.cid }].filter(Boolean);
     const name = String(m.company.name || 'Bookings').replace(/["<>]/g, '');
     const r = await request('POST', `${url('RESEND', 'https://api.resend.com')}/emails`, {
       headers: { Authorization: `Bearer ${env.RESEND_API_KEY}` },
-      body: { from: `${name} <${fromAddress()}>`, to: [to], subject: subjectOf(m), text: m.body, html: emailHtml(m, { pdf: !!pdf }), ...(pdf ? { attachments: [pdf] } : {}), ...(isEmail(m.replyTo) ? { reply_to: m.replyTo } : isEmail(m.company.email) ? { reply_to: m.company.email } : {}) },
+      body: { from: `${name} <${fromAddress()}>`, to: [to], subject: subjectOf(m), text: m.body, html: emailHtml(m, { pdf: !!pdf, cid: pic && pic.cid, banner: !!(pic && pic.banner) }), ...(attachments.length ? { attachments } : {}), ...(isEmail(m.replyTo) ? { reply_to: m.replyTo } : isEmail(m.company.email) ? { reply_to: m.company.email } : {}) },
     });
     return r && r.id;
   }
@@ -450,6 +454,14 @@ const linkify = (x) => hesc(x).replace(/https?:\/\/[^\s<]+/g, (u) => `<a href="$
 // Booking emails get a printable PDF; the value is the PDF's heading.
 const PDF_KINDS = { confirm: 'Booking confirmation', office_new: 'New booking', changed: 'Booking changed', office_changed: 'Booking changed', receipt: 'Receipt' };
 const HEADINGS = { ...PDF_KINDS, chauffeur: 'Your chauffeur', en_route: 'On the way', approach: '10 minutes away', arrived: 'Chauffeur arrived', reminder: 'Ride reminder', reminder24: 'Ride reminder', quote: 'Your quote', invoice: 'Invoice' };
+// The company's banner, or else its logo, as an inline email attachment.
+function inlinePic(co) {
+  const banner = !!(co && co.bannerData);
+  const x = String((co && (co.bannerData || co.logoData)) || '').match(/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/);
+  if (!x) return null;
+  const ext = x[1] === 'jpeg' ? 'jpg' : x[1];
+  return { cid: banner ? 'brand-banner' : 'brand-logo', filename: `${banner ? 'banner' : 'logo'}.${ext}`, content: x[2], banner };
+}
 function emailHtml(m, opt) {
   const co = m.company || {};
   const color = /^#[0-9a-f]{6}$/i.test(co.color || '') ? co.color : '#222222';
@@ -469,7 +481,9 @@ function emailHtml(m, opt) {
     return `<p style="margin:0 0 16px;font-size:15px;line-height:1.55;color:#222222">${b.map(linkify).join('<br>')}</p>`;
   }).join('');
   const heading = HEADINGS[m.kind] || '';
-  const logo = co.logoUrl ? `<img src="${hesc(co.logoUrl)}" alt="${hesc(co.name)}" width="180" style="width:180px;max-width:70%;height:auto;display:block;margin:0 auto;border:0">` : `<div style="font-size:24px;font-weight:800;color:#111111;text-align:center;letter-spacing:-.01em">${hesc(co.name || '')}</div>`;
+  const banner = opt && opt.cid && opt.banner ? `<img src="cid:${opt.cid}" alt="${hesc(co.name)}" width="580" style="width:100%;max-width:580px;height:auto;display:block;border:0">` : '';
+  const src = opt && opt.cid && !opt.banner ? `cid:${opt.cid}` : co.logoUrl;
+  const logo = src ? `<img src="${hesc(src)}" alt="${hesc(co.name)}" width="180" style="width:180px;max-width:70%;height:auto;display:block;margin:0 auto;border:0">` : `<div style="font-size:24px;font-weight:800;color:#111111;text-align:center;letter-spacing:-.01em">${hesc(co.name || '')}</div>`;
   const title = heading ? `<tr><td style="padding:0 24px 18px;text-align:center"><div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;font-weight:700;color:${color}">${hesc(heading)}</div>${m.ref ? `<div style="font-size:26px;font-weight:800;color:#111111;margin-top:4px;letter-spacing:.01em">${hesc(m.ref)}</div>` : ''}</td></tr>` : '';
   const pdfNote = opt && opt.pdf ? `<tr><td style="padding:0 24px 18px"><div style="border:1px dashed #cfd0d4;border-radius:10px;padding:12px 14px;font-size:13px;color:#333333;background:#fafafa">&#128196; A printable PDF of this booking is attached.</div></td></tr>` : '';
   const contact = [co.phone ? `<a href="tel:${hesc(String(co.phone).replace(/[^\d+]/g, ''))}" style="color:#111111;text-decoration:none;font-weight:700">${hesc(co.phone)}</a>` : '', co.email ? `<a href="mailto:${hesc(co.email)}" style="color:#111111;text-decoration:none">${hesc(co.email)}</a>` : ''].filter(Boolean).join(' &nbsp;&middot;&nbsp; ');
@@ -477,8 +491,8 @@ function emailHtml(m, opt) {
   return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light only"><meta name="supported-color-schemes" content="light"></head><body style="margin:0;padding:0;background:#f1f1f3">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f1f3"><tr><td style="padding:24px 10px;font-family:Arial,Helvetica,sans-serif">
 <table role="presentation" align="center" cellpadding="0" cellspacing="0" style="width:100%;max-width:580px;margin:0 auto;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e3e3e6">
-<tr><td style="height:5px;background:${color};font-size:0;line-height:0">&nbsp;</td></tr>
-<tr><td style="padding:26px 24px 18px">${logo}</td></tr>
+${banner ? '' : `<tr><td style="height:5px;background:${color};font-size:0;line-height:0">&nbsp;</td></tr>`}
+${banner ? `<tr><td style="padding:0;font-size:0;line-height:0">${banner}</td></tr><tr><td style="height:22px;font-size:0;line-height:0">&nbsp;</td></tr>` : `<tr><td style="padding:26px 24px 18px">${logo}</td></tr>`}
 ${title}
 <tr><td style="padding:0 24px 6px;word-break:break-word;overflow-wrap:anywhere">${html}</td></tr>
 ${pdfNote}
@@ -487,4 +501,4 @@ ${pdfNote}
 }
 const withTimeout = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(r, ms).unref())]);
 
-module.exports = { createProviders, encodeForm, emailHtml };
+module.exports = { createProviders, encodeForm, emailHtml, inlinePic };

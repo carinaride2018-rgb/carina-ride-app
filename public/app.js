@@ -67,7 +67,7 @@
   }
   // A logo keeps its shape and transparency: fitted inside w x h, saved as PNG
   // (JPEG on white if the PNG is too big to store).
-  function logoFrom(file, w = 480, h = 240) {
+  function logoFrom(file, w = 480, h = 240, max = 190000) {
     return new Promise((resolve, reject) => {
       if (!file || !/^image\//.test(file.type)) return reject(new Error('Choose a picture (PNG or JPEG).'));
       const url = URL.createObjectURL(file), img = new Image();
@@ -76,7 +76,7 @@
         const c = document.createElement('canvas'); c.width = cw; c.height = ch;
         const g = c.getContext('2d'); g.drawImage(img, 0, 0, cw, ch);
         let out = c.toDataURL('image/png');
-        if (out.length > 190000) { g.globalCompositeOperation = 'destination-over'; g.fillStyle = '#fff'; g.fillRect(0, 0, cw, ch); out = c.toDataURL('image/jpeg', 0.9); }
+        if (out.length > max) { g.globalCompositeOperation = 'destination-over'; g.fillStyle = '#fff'; g.fillRect(0, 0, cw, ch); out = c.toDataURL('image/jpeg', 0.9); }
         URL.revokeObjectURL(url); resolve(out);
       };
       img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('That file couldn\'t be read as a picture.')); };
@@ -2181,7 +2181,8 @@
     session = keep;
     document.documentElement.style.setProperty('--brand', info.company.color);
     v.innerHTML = `
-      <div class="brandhead slim">${info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : '<div></div>'}
+      ${info.company.banner ? `<img class="bh-banner" src="${esc(info.company.banner)}" alt="${esc(info.company.name)}">` : ''}
+      <div class="brandhead slim${info.company.banner ? ' withbanner' : ''}">${info.company.banner ? '' : info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : '<div></div>'}
         <div class="bh-phone">${info.company.phone ? `<a href="tel:${esc(info.company.phone)}">${esc(fmtPhone(info.company.phone))}</a>` : ''}${signedHere ? ` · Signed in as ${esc(session.user.name)} · <a href="#customer">My trips</a>` : ''}</div>
         ${signedHere ? '' : `<div class="bh-auth"><a class="btn sm" href="#login.${esc(slug)}">Log in</a><a class="btn sm brand" href="#signup.${esc(slug)}">Sign up</a></div>`}</div>
       ${info.company.house ? `<p class="housenote">Book a chauffeured car in any US city. Enter the pickup time in that city's local time. A LimoRelay company in that city drives your ride.</p>` : ''}
@@ -5341,6 +5342,9 @@
             <div class="field"><span>Logo</span><div class="row" id="rs-logo">${s.company.logo ? coLogo(s.company, 'logo-prev') : '<span class="small muted">No logo yet. Your initials are shown instead.</span>'}
               ${isAdmin ? `<label class="btn sm"><input type="file" id="rs-logo-file" accept="image/png,image/jpeg,image/webp" hidden>${s.company.logo ? 'Change logo' : 'Upload logo'}</label>${s.company.logo ? '<button class="btn sm" type="button" id="rs-logo-rm">Remove</button>' : ''}` : ''}</div>
               <span class="hint">Shown at the top of your dashboard, booking page and travel agent page. A PNG with a transparent background looks best.</span></div>
+            <div class="field"><span>Banner (optional)</span><div class="row" id="rs-banner">${s.company.banner ? `<img class="banner-prev" src="${esc(s.company.banner)}" alt="Banner">` : '<span class="small muted">No banner yet.</span>'}
+              ${isAdmin ? `<label class="btn sm"><input type="file" id="rs-banner-file" accept="image/png,image/jpeg,image/webp" hidden>${s.company.banner ? 'Change banner' : 'Upload banner'}</label>${s.company.banner ? '<button class="btn sm" type="button" id="rs-banner-rm">Remove</button>' : ''}` : ''}</div>
+              <span class="hint">A wide picture (about 1200 by 360) shown across the top of your emails and booking page instead of the logo.</span></div>
             <label class="field"><span>Tagline on your booking page</span><input id="rs-tagline" name="tagline" value="${esc(s.company.tagline)}" ${ro}></label>
             <div class="grid2"><label class="field"><span>Phone</span><input id="rs-phone" name="phone" value="${esc(s.company.phone)}" ${ro}></label>
               <label class="field"><span>Email</span><input id="rs-email" name="email" value="${esc(s.company.email)}" ${ro}></label></div>
@@ -5406,6 +5410,11 @@
       };
       const lf = $('#rs-logo-file', v); if (lf) lf.onchange = async () => { try { await setLogo(await logoFrom(lf.files[0])); } catch (err) { toast(err.message, true); } };
       const lr = $('#rs-logo-rm', v); if (lr) lr.onclick = () => setLogo('');
+      const setBanner = async (banner) => {
+        try { const res = await api('dispatch.setBanner', { banner }); setSession({ ...session, company: { ...session.company, ...res.company } }); toast(banner ? 'Banner saved.' : 'Banner removed.'); draw(); } catch (err) { toast(err.message, true); }
+      };
+      const bf = $('#rs-banner-file', v); if (bf) bf.onchange = async () => { try { await setBanner(await logoFrom(bf.files[0], 1200, 400, 440000)); } catch (err) { toast(err.message, true); } };
+      const br = $('#rs-banner-rm', v); if (br) br.onclick = () => setBanner('');
       // One step for every car: raise or lower the chosen rates by a % or a $ amount.
       const hadj = (sign) => {
         const n = Number($('#rs-hadj-n', v).value), pct = $('#rs-hadj-u', v).value === 'pct', k = $('#rs-hadj-k', v).value;

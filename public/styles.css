@@ -935,3 +935,6 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 .field.must-fix input, .field.must-fix select, .field.must-fix textarea { border-color: var(--bad, #b42318) !important; background: #fff5f4; box-shadow: 0 0 0 3px rgba(180, 35, 24, .15); }
 .field.must-fix > span:first-child { color: var(--bad, #b42318); }
 .check.must-fix { color: var(--bad, #b42318); background: #fff5f4; border-radius: 8px; padding: 6px 8px; box-shadow: 0 0 0 2px rgba(180, 35, 24, .25); }
+.bh-banner { display: block; width: 100%; max-width: 680px; height: auto; border-radius: 12px; margin: 0 0 10px; }
+.brandhead.slim.withbanner { padding: 10px 16px; }
+.banner-prev { max-width: 320px; width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--line, #e3e3e6); }
