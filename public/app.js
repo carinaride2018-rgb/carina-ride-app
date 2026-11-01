@@ -4165,19 +4165,20 @@
         $('#t-list', v).innerHTML = trips.length ? `<div class="tablewrap"><table><thead><tr><th>Pickup</th><th>Ref</th><th>Passenger</th><th>Route</th><th>Vehicle</th><th>Driver</th><th>Status</th><th class="r">Total</th><th></th></tr></thead><tbody>
           ${trips.map((t) => `<tr class="click" data-id="${t.id}"><td class="mono small" style="white-space:nowrap">${esc(fmtDT(t.pickupAt))}</td><td class="mono small">${esc(t.ref)}</td><td>${esc(t.passengerName)}</td>
             <td class="small" style="min-width:220px">${esc(t.pickup)}${t.dropoff ? `<br><span class="faint">→ ${esc(t.dropoff)}</span>` : ''}${t.flight ? `<br><span class="mono faint">✈ ${esc(t.flight)}</span>` : ''}</td><td class="small">${esc(t.vehicle ? t.vehicle.name : t.vehicleType)}</td>
-            <td class="small">${t.driver ? esc(t.driver.name) : '<span class="warntext">Unassigned</span>'}</td><td>${pill(t)}</td><td class="r num">${money(t.price.total)}<br>${payPill(t)}</td><td>${canReturn(t) ? `<button class="btn sm nowrap" type="button" data-ret="${t.id}" title="Book the ride back for ${esc(t.passengerName)}">↩ Return</button>` : ''}${t.status === 'cancelled' ? `<button class="btn sm nowrap" type="button" data-del="${t.id}" title="Delete ${esc(t.ref)} from the trips list">Delete</button>` : ''}</td></tr>`).join('')}
+            <td class="small">${t.driver ? esc(t.driver.name) : '<span class="warntext">Unassigned</span>'}</td><td>${pill(t)}</td><td class="r num">${money(t.price.total)}<br>${payPill(t)}</td><td>${canReturn(t) ? `<button class="btn sm nowrap" type="button" data-ret="${t.id}" title="Book the ride back for ${esc(t.passengerName)}">↩ Return</button>` : ''}<button class="btn sm nowrap" type="button" data-del="${t.id}" title="Delete ${esc(t.ref)}">Delete</button></td></tr>`).join('')}
           </tbody></table></div>${more > 0 ? `<div class="row" style="justify-content:center;margin-top:12px"><button class="btn" type="button" id="t-more">Show ${Math.min(more, 50)} more</button></div>` : ''}` : `<div class="panel muted">${all && w !== 'all' ? `No ${w} trips. <button type="button" class="linkbtn" data-when="all">See all trips</button>` : 'No trips match.'}</div>`;
         $$('tr[data-id]', v).forEach((r) => { r.onclick = () => tripModal(r.dataset.id, () => { last = ''; refresh(); }); });
         $$('[data-ret]', v).forEach((b) => { b.onclick = (e) => {
           e.stopPropagation();
           returnModal(trips.find((x) => x.id === b.dataset.ret), (r) => { closeModal(); toast(`Return trip ${r.ref} booked. We sent ${r.passengerName || 'the passenger'} a confirmation.${r.landingTrip ? ` The pickup where they land is ${r.landingTrip.ref}.` : ''}`); last = ''; refresh(); tripModal(r.id, () => { last = ''; refresh(); }); });
         }; });
-        // Cancelled trips can be deleted from the list (reports keep them).
+        // Any trip can be deleted, after asking twice (reports keep it).
         const delTrips = async (args, msg) => {
           if (!confirm(msg)) return;
-          try { const r = await api('dispatch.deleteCancelled', args); toast(`Deleted ${r.deleted} cancelled trip${r.deleted === 1 ? '' : 's'}.`); last = ''; refresh(); } catch (e) { toast(e.message, true); }
+          if (!confirm('Are you sure? This can\'t be undone.')) return;
+          try { const r = await api('dispatch.deleteTrips', args); toast(`Deleted ${r.deleted} trip${r.deleted === 1 ? '' : 's'}.`); last = ''; refresh(); } catch (e) { toast(e.message, true); }
         };
-        $$('[data-del]', v).forEach((b) => { b.onclick = (e) => { e.stopPropagation(); const t = trips.find((x) => x.id === b.dataset.del); delTrips({ ids: [t.id] }, `Delete cancelled trip ${t.ref}? It disappears from the trips list.`); }; });
+        $$('[data-del]', v).forEach((b) => { b.onclick = (e) => { e.stopPropagation(); const t = trips.find((x) => x.id === b.dataset.del); delTrips({ ids: [t.id] }, `Delete trip ${t.ref} for ${t.passengerName}?` + (['completed', 'cancelled'].includes(t.status) ? '' : ' This ride is not finished: it will be cancelled with no fee, the card refunded if it was charged, and it comes off the driver\'s app. The passenger is not messaged.')); }; });
         const nCancelled = cancelledCount;
         const da = $('#t-delall', v); da.hidden = !nCancelled;
         da.onclick = () => delTrips({ all: true }, 'Delete all cancelled trips? They disappear from the trips list.');

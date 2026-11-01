@@ -2084,7 +2084,7 @@
     };
     const PERM_OF = {};
     for (const [perm, names] of Object.entries({
-      bookings: ['dispatch.createTrip', 'dispatch.deleteCancelled', 'dispatch.updateTrip', 'dispatch.resendConfirmation', 'dispatch.sendReceipt', 'dispatch.setStatus', 'dispatch.cancelSeries', 'dispatch.noShow', 'dispatch.noShowNo', 'dispatch.importTrips', 'dispatch.applyFlight', 'dispatch.sendCardLink', 'dispatch.inboxSend', 'dispatch.saveQuote', 'dispatch.sendQuote', 'dispatch.quoteAction'],
+      bookings: ['dispatch.createTrip', 'dispatch.deleteTrips', 'dispatch.updateTrip', 'dispatch.resendConfirmation', 'dispatch.sendReceipt', 'dispatch.setStatus', 'dispatch.cancelSeries', 'dispatch.noShow', 'dispatch.noShowNo', 'dispatch.importTrips', 'dispatch.applyFlight', 'dispatch.sendCardLink', 'dispatch.inboxSend', 'dispatch.saveQuote', 'dispatch.sendQuote', 'dispatch.quoteAction'],
       assign: ['dispatch.assign', 'dispatch.autoAssign', 'network.offer', 'network.respond', 'network.cancelOffer', 'network.handBack'],
       payments: ['dispatch.chargeCard', 'dispatch.markPaid', 'network.settle'],
       customers: ['dispatch.saveCustomer', 'dispatch.sendCustomerLogin', 'dispatch.saveAccount', 'dispatch.accountBooker', 'dispatch.bizRequests', 'dispatch.reviewBiz', 'dispatch.createInvoice', 'dispatch.invoiceAction', 'dispatch.invoices', 'dispatch.invoice'],
@@ -3092,16 +3092,22 @@
       else fail('Unknown step.');
       return setupSteps(c);
     });
-    // Delete cancelled trips from the office lists (one, some, or all of them).
-    // The trip stays in the records, so reports, cancel fees and refunds still add up.
-    def('dispatch.deleteCancelled', STAFF, true, (ctx, a) => {
+    // Delete trips from the office lists: chosen trips (any status) or every
+    // cancelled one. A ride that isn't finished is cancelled first, quietly (no
+    // message to the passenger), with no fee: a card charge is refunded and the
+    // driver no longer sees it. The trip stays in the records, so reports, cancel
+    // fees and refunds still add up.
+    def('dispatch.deleteTrips', STAFF, true, (ctx, a) => {
       const ids = a.all ? null : new Set((Array.isArray(a.ids) ? a.ids : [a.id]).map((x) => str(x, 40)));
-      const list = db.trips.filter((t) => t.companyId === ctx.company.id && !t.officeDeleted && (!ids || ids.has(t.id)));
-      if (ids && list.some((t) => t.status !== 'cancelled')) fail('Only cancelled trips can be deleted.');
-      const gone = list.filter((t) => t.status === 'cancelled');
+      const list = db.trips.filter((t) => t.companyId === ctx.company.id && !t.officeDeleted && (!ids || ids.has(t.id)) && (ids || t.status === 'cancelled'));
+      const open = (t) => !['completed', 'cancelled'].includes(t.status);
+      for (const t of list) if (open(t)) notWithPartner(t);
       const at = now().toISOString();
-      for (const t of gone) { t.officeDeleted = at; log(t, 'cancelled', ctx.user.name, 'Deleted from the trips list'); }
-      return { deleted: gone.length };
+      for (const t of list) {
+        if (open(t)) { t.offer = null; t.status = 'cancelled'; log(t, 'cancelled', ctx.user.name, 'Cancelled by the office to delete it'); payStep(t); }
+        t.officeDeleted = at; log(t, t.status, ctx.user.name, 'Deleted from the trips list');
+      }
+      return { deleted: list.length };
     });
     def('dispatch.trips', STAFF, false, (ctx, a) => {
       const q = str(a.q, 80).toLowerCase();
