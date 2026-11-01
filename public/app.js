@@ -5177,6 +5177,7 @@
       const ro = isAdmin ? '' : 'disabled';
       let peaks = p.peakDates.map((x) => ({ ...x }));
       let promos = p.promos.map((x) => ({ ...x }));
+      let locs = (p.locationFees || []).map((x) => ({ ...x }));
       const numIn = (id, name, val, step, extra) => `<input class="input" id="${id}" name="${name}" type="number" min="0" step="${step || 1}" value="${val}" ${ro} ${extra || ''}>`;
       v.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Pricing</h1><p class="muted">Automatic price adjustments on top of your base rates. Quotes and new bookings use them straight away; booked trips keep their price.${isAdmin ? '' : ' Only the company admin can change these.'}</p></div></div>
         <form id="pr" class="stack" novalidate style="max-width:900px">
@@ -5190,6 +5191,7 @@
             <div class="rule"><div><b>Busy times</b><p class="small muted">Added when most of that vehicle type is already booked within two hours of the pickup.</p></div>
               <div class="row"><span class="small">+</span>${numIn('pr-busy', 'busyPct', p.busyPct, 1, 'style="width:80px"')}<span class="small">% when</span>${numIn('pr-bt', 'busyThreshold', p.busyThreshold, 5, 'style="width:80px" max="100"')}<span class="small">% of vehicles are booked</span></div></div>
           </div>
+          <div class="panel stack"><h2>Pickup location fees</h2><p class="small muted">Added to the fare when the pickup address contains one of the words, for example stadiums after a game. Customers see it as its own line before they book. The highest matching place applies.</p><div id="pr-locs"></div>${isAdmin ? '<div><button class="btn sm" type="button" id="pr-addloc">Add a place</button></div>' : ''}</div>
           <div class="panel stack"><h2>Busy dates</h2><p class="small muted">Holidays, proms, graduations, concerts. The highest matching date applies.</p><div id="pr-peaks"></div>${isAdmin ? '<div><button class="btn sm" type="button" id="pr-addpeak">Add a date</button></div>' : ''}</div>
           <div class="panel stack"><h2>Add-ons</h2>
             <div class="grid3"><label class="field"><span>Child seat, each ($)</span>${numIn('pr-child', 'childSeat', p.addons.childSeat, 0.5)}</label>
@@ -5220,16 +5222,27 @@
         $$('[data-pr]', v).forEach((el) => { el.oninput = el.onchange = () => { promos[el.dataset.pr][el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value; }; });
         $$('[data-rmpr]', v).forEach((b) => { b.onclick = () => { promos.splice(Number(b.dataset.rmpr), 1); drawPromos(); }; });
       };
-      drawPeaks(); drawPromos();
+      const drawLocs = () => {
+        $('#pr-locs', v).innerHTML = locs.length ? `<div class="tablewrap"><table><thead><tr><th>Place</th><th>Pickup address contains (comma-separated)</th><th>Fee %</th><th>On</th><th></th></tr></thead><tbody>${locs.map((x, i) => `<tr>
+          <td><input class="input" style="min-width:140px" data-lc="${i}" data-f="name" value="${esc(x.name)}" ${ro}></td>
+          <td><input class="input" style="min-width:260px" data-lc="${i}" data-f="words" value="${esc(x.words)}" ${ro}></td>
+          <td><input class="input" style="width:80px" type="number" min="0" data-lc="${i}" data-f="pct" value="${x.pct}" ${ro}></td>
+          <td><input type="checkbox" data-lc="${i}" data-f="active" ${x.active !== false ? 'checked' : ''} ${ro}></td>
+          <td>${isAdmin ? `<button class="linkbtn small" type="button" data-rmlc="${i}">Remove</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : '<p class="small faint">No pickup location fees.</p>';
+        $$('[data-lc]', v).forEach((el) => { el.oninput = el.onchange = () => { locs[el.dataset.lc][el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value; }; });
+        $$('[data-rmlc]', v).forEach((b) => { b.onclick = () => { locs.splice(Number(b.dataset.rmlc), 1); drawLocs(); }; });
+      };
+      drawPeaks(); drawPromos(); drawLocs();
       if (isAdmin) {
         $('#pr-addpeak', v).onclick = () => { peaks.push({ date: todayStr(), label: '', pct: 20 }); drawPeaks(); };
+        $('#pr-addloc', v).onclick = () => { locs.push({ name: '', words: '', pct: 20, active: true }); drawLocs(); };
         $('#pr-addpromo', v).onclick = () => { promos.push({ code: '', type: 'percent', value: 10, expires: '', maxUses: 0, uses: 0, active: true }); drawPromos(); };
         $('#pr', v).onsubmit = async (e) => {
           e.preventDefault();
           const f = formData(e.target);
           await busy($('button[type=submit]', e.target), async () => {
             try {
-              await api('dispatch.savePricing', { nightPct: f.nightPct, nightStart: f.nightStart, nightEnd: f.nightEnd, weekendPct: f.weekendPct, bizPct: f.bizPct, busyPct: f.busyPct, busyThreshold: f.busyThreshold, addons: { childSeat: f.childSeat, meetGreet: f.meetGreet, extraStop: f.extraStop, stopWait: f.stopWait }, peakDates: peaks, promos });
+              await api('dispatch.savePricing', { nightPct: f.nightPct, nightStart: f.nightStart, nightEnd: f.nightEnd, weekendPct: f.weekendPct, bizPct: f.bizPct, busyPct: f.busyPct, busyThreshold: f.busyThreshold, addons: { childSeat: f.childSeat, meetGreet: f.meetGreet, extraStop: f.extraStop, stopWait: f.stopWait }, peakDates: peaks, promos, locationFees: locs });
               toast('Pricing saved.'); drawPricing(v);
             } catch (err) { showErr($('#pr-err', v), err); }
           });

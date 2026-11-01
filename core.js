@@ -51,6 +51,7 @@
   const DEFAULT_PRICING = {
     nightPct: 15, nightStart: 22, nightEnd: 5,
     weekendPct: 0,
+    locationFees: [], // extra % on the fare for pickups at chosen places (stadiums, arenas)
     bizPct: 0, // discount for business rides: a guest who books as a business traveller, or a company account
     busyPct: 20, busyThreshold: 75, // add busyPct when this % of a vehicle type is already booked around that time
     // Stops are priced by the extra miles they add plus the wait booked at each
@@ -586,6 +587,10 @@
       if (peak) add(`${peak.label} ${peak.pct}%`, peak.pct);
     }
     if (ctx.busy) add(`Busy time ${p.busyPct}%`, p.busyPct);
+    // Pickup location fee: the highest matching place applies (match on words in the pickup address).
+    const pickTxt = str(b.pickup).toLowerCase();
+    const locFee = (p.locationFees || []).filter((f) => f.active !== false && f.pct > 0 && String(f.words || '').split(',').map((w) => w.trim().toLowerCase()).some((w) => w && pickTxt.includes(w))).sort((x, y) => y.pct - x.pct)[0];
+    if (locFee) add(`Pickup at ${locFee.name} ${locFee.pct}%`, locFee.pct);
 
     // Add-ons
     let addons = 0;
@@ -718,6 +723,11 @@
     function normalize(d) {
       // Business discount, added later: Carina Ride starts at 6%, others at 0.
       for (const c of d.companies || []) if (c.pricing && c.pricing.bizPct == null) c.pricing.bizPct = c.slug === 'carina-ride' ? 6 : 0;
+      // Pickup location fees, added later: Carina Ride starts with the three Seattle stadiums at 40%.
+      for (const c of d.companies || []) if (c.pricing && !Array.isArray(c.pricing.locationFees)) c.pricing.locationFees = c.slug === 'carina-ride' ? [
+        { id: 'loc_lumen', name: 'Lumen Field', words: 'lumen field, 800 occidental', pct: 40, active: true },
+        { id: 'loc_tmobile', name: 'T-Mobile Park', words: 't-mobile park, tmobile park, 1250 1st ave s, 1250 first ave s, safeco field', pct: 40, active: true },
+        { id: 'loc_pledge', name: 'Climate Pledge Arena', words: 'climate pledge, 334 1st ave n, 334 first ave n, key arena, keyarena', pct: 40, active: true }] : [];
       d.accounts = d.accounts || [];
       d.leads = d.leads || [];
       d.pwTokens = d.pwTokens || [];
@@ -5175,6 +5185,14 @@
       if ('nightEnd' in a) p.nightEnd = hr(a.nightEnd, 'late night end hour');
       if ('weekendPct' in a) p.weekendPct = pct(a.weekendPct, 'weekend surcharge');
       if ('bizPct' in a) p.bizPct = pct(a.bizPct, 'business discount', 50);
+      if (Array.isArray(a.locationFees)) {
+        p.locationFees = a.locationFees.filter((x) => x && (str(x.name) || str(x.words))).map((x) => {
+          const name = str(x.name, 60), words = str(x.words, 300).toLowerCase();
+          if (!name) fail('Give each pickup location fee a name, for example "Lumen Field".');
+          if (!words.replace(/[,\s]/g, '')) fail(`Enter the address words for ${name}, for example "lumen field, 800 occidental".`);
+          return { id: x.id || id('loc'), name, words, pct: pct(x.pct, `fee for ${name}`), active: x.active !== false };
+        });
+      }
       if ('busyPct' in a) p.busyPct = pct(a.busyPct, 'busy-time surcharge');
       if ('busyThreshold' in a) p.busyThreshold = pct(a.busyThreshold, 'busy-time trigger', 100);
       if (a.addons) for (const k of ['childSeat', 'meetGreet', 'extraStop', 'stopWait']) if (k in a.addons) p.addons[k] = k === 'stopWait' ? Math.round(pct(a.addons[k], 'wait booked at each stop', 240)) : pct(a.addons[k], 'add-on price', 1000);
