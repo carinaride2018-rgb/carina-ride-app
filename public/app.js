@@ -8,6 +8,9 @@
   'use strict';
 
   const PLATFORM = 'LimoRelay';
+  const DEFAULT_TITLE = document.title;
+  // Customer pages show the company's name in the browser tab, not LimoRelay.
+  const brandTitle = (co, what) => { if (co && co.name) document.title = `${what} | ${co.name}`; };
   // Welcome videos for business travellers, shown in the Business box of a company's booking page.
   const BIZ_VIDEOS = { 'carina-ride': 'media/business/carina-ride' };
   // The demo build inlines the logo files; the live site loads them from icons/.
@@ -702,6 +705,7 @@
   }
   function render2() {
     const route = location.hash.slice(1) || '';
+    document.title = DEFAULT_TITLE;
     if (route.startsWith('book.')) return viewBook(route.slice(5));
     if (route.startsWith('track.')) return viewTrack(route.slice(6));
     if (route.startsWith('review.')) return viewReview(route.slice(7));
@@ -909,7 +913,7 @@
     const load = async () => {
       let d;
       try { d = await api('public.track', { token }); } catch (e) { const v = shell({}); v.innerHTML = `<div class="panel stack"><h2>Tracking unavailable</h2><p class="muted">${esc(e.message)}</p></div>`; current = null; return; }
-      const keep = session; session = { company: d.company, user: null };
+      const keep = session; session = { company: d.company, user: null }; brandTitle(d.company, 'Track your ride');
       const v = $('#view') && $('#view').dataset.track === token ? $('#view') : shell({ narrow: true });
       session = keep; v.dataset.track = token;
       const done = ['on_board', 'completed', 'cancelled'].includes(d.status);
@@ -961,7 +965,7 @@
     current = null;
     let d;
     try { d = await api('public.review', { token }); } catch (e) { const v = shell({}); v.innerHTML = `<div class="panel stack"><h2>Review link not found</h2><p class="muted">${esc(e.message)}</p></div>`; return; }
-    const keep = session; session = { company: d.company, user: null };
+    const keep = session; session = { company: d.company, user: null }; brandTitle(d.company, 'Rate your ride');
     const v = shell({ narrow: true });
     session = keep;
     const thanks = (n) => `<div class="panel stack" style="text-align:center"><span class="stars" style="font-size:32px">${stars(n)}</span><h2>Thank you${d.passengerName ? ', ' + esc(d.passengerName) : ''}!</h2><p class="muted">Your feedback goes straight to the ${esc(d.company.name)} team.</p></div>`;
@@ -1053,7 +1057,7 @@
     current = null;
     let d;
     try { d = await api('public.cardInfo', { token }); } catch (e) { const v = shell({}); v.innerHTML = `<div class="panel stack"><h2>Card link not found</h2><p class="muted">${esc(e.message)}</p></div>`; return; }
-    const keep = session; session = { company: d.company, user: null };
+    const keep = session; session = { company: d.company, user: null }; brandTitle(d.company, 'Add your card');
     const v = shell({ narrow: true });
     session = keep;
     document.documentElement.style.setProperty('--brand', d.company.color);
@@ -1540,7 +1544,7 @@
     current = null;
     let q;
     try { q = await api('public.viewQuote', { token }); } catch (e) { const v = shell({}); v.innerHTML = `<div class="panel stack"><h2>Quote not found</h2><p class="muted">${esc(e.message)}</p></div>`; return; }
-    const keep = session; session = { company: q.company, user: null };
+    const keep = session; session = { company: q.company, user: null }; brandTitle(q.company, 'Your quote');
     const v = shell({ narrow: true });
     session = keep;
     document.documentElement.style.setProperty('--brand', q.company.color);
@@ -2173,6 +2177,7 @@
     let info;
     try { info = await api('public.company', { slug }); }
     catch (e) { const v = shell({}); v.innerHTML = `<div class="panel stack" id="bk-missing"><h2>Booking page unavailable</h2><p class="muted">${esc(e.status === 404 ? `There's no booking page at "${slug}". Check the link with the limo company.` : e.message)}</p><a class="btn" href="#signin">Back</a></div>`; return; }
+    brandTitle(info.company, 'Book a ride');
     const signedHere = session && session.user.role === 'customer' && session.user.companyId === info.company.id;
     if (signedHere && session.user.agent) return go('customer');
     const keep = session;
@@ -2372,6 +2377,7 @@
     session = { company: info.company, user: null };
     const v = shell({});
     session = keep;
+    brandTitle(info.company, start === 'signup' ? 'Sign up' : 'Log in');
     document.documentElement.style.setProperty('--brand', info.company.color);
     let mode = start;
     const draw = () => {
