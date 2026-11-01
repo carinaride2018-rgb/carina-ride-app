@@ -16,7 +16,7 @@
   'use strict';
 
   const SCHEMA_VERSION = 5;
-  const VEHICLE_TYPES = ['Sedan', 'SUV', 'Business Van', 'Sprinter Van', 'Party Bus'];
+  const VEHICLE_TYPES = ['Sedan', 'SUV', 'Business Van', 'Sprinter Van', '22 PAX Mini Bus'];
   const SERVICES = { transfer: 'Transfer', airport: 'Airport transfer', hourly: 'By the hour' };
   const EVENT_TYPES = ['Wedding', 'Prom or homecoming', 'Corporate event', 'Airport group', 'Night out', 'Funeral', 'Tour', 'Other'];
   const DEFAULT_QUOTE = { validDays: 7 }; // no deposits: the customer saves a card instead
@@ -45,7 +45,7 @@
   const DEFAULT_RATES = {
     currency: 'USD', base: 15, perMile: 3.75, minFare: 85, hourly: 95, minHours: 3,
     gratuityPct: 20, taxPct: 0, waitPerMin: 1.5,
-    multipliers: { 'Sedan': 1, 'SUV': 1.3, 'Business Van': 1.9, 'Sprinter Van': 1.7, 'Party Bus': 2.6 },
+    multipliers: { 'Sedan': 1, 'SUV': 1.3, 'Business Van': 1.9, 'Sprinter Van': 1.7, '22 PAX Mini Bus': 2.6 },
   };
   // Automatic price adjustments, add-ons and promo codes for each company.
   const DEFAULT_PRICING = {
@@ -100,6 +100,8 @@
   // Photos for the sample fleet, by VIN. The demo page passes them in as data
   // URLs; the server serves them from public/media/vehicles.
   const SAMPLE_PHOTO_OF = { '1G6KB5RS4LU184417': 'sedan', '5LMJJ3LT2REL08820': 'suv', '1FBAX2CG5PKA01200': 'van10', W1W4EBHY3PT127764: 'van14' };
+  // A stand-in photo for each type, used on booking cards until the company adds its own.
+  const TYPE_PHOTO = { 'Sedan': 'sedan', 'SUV': 'suv', 'Business Van': 'van10', 'Sprinter Van': 'van14', '22 PAX Mini Bus': 'minibus' };
   const samplePhoto = (k) => ((typeof globalThis !== 'undefined' && globalThis.LIMO_CAR_PHOTOS) || {})[k] || `/media/vehicles/${k}.jpg`;
   // Hourly rate for a vehicle type: its own rate when the company set one,
   // otherwise the sedan hourly rate times the type's multiplier.
@@ -109,7 +111,7 @@
   const hourlyRate = (r, type) => rateBy(r, 'hourly', type);
   // Vehicle types from fewest seats to most: by the biggest car the company has
   // of each type, or a usual size for types it has no car of.
-  const USUAL_SEATS = { 'Sedan': 3, 'SUV': 6, 'Business Van': 10, 'Sprinter Van': 14, 'Party Bus': 30 };
+  const USUAL_SEATS = { 'Sedan': 3, 'SUV': 6, 'Business Van': 8, 'Sprinter Van': 14, '22 PAX Mini Bus': 22 };
   function typesBySize(vehicles) {
     const cap = {};
     for (const v of vehicles || []) if (v.status !== 'retired') cap[v.type] = Math.max(cap[v.type] || 0, v.capacity || 0);
@@ -117,7 +119,7 @@
     return VEHICLE_TYPES.slice().sort((a, b) => seats(a) - seats(b) || VEHICLE_TYPES.indexOf(a) - VEHICLE_TYPES.indexOf(b));
   }
   const bySeats = (a, b) => (a.capacity || 0) - (b.capacity || 0) || VEHICLE_TYPES.indexOf(a.type) - VEHICLE_TYPES.indexOf(b.type) || String(a.name || '').localeCompare(String(b.name || ''));
-  const DEFAULT_BAGS = { 'Sedan': 2, 'SUV': 5, 'Business Van': 8, 'Sprinter Van': 12, 'Party Bus': 4 };
+  const DEFAULT_BAGS = { 'Sedan': 2, 'SUV': 5, 'Business Van': 8, 'Sprinter Van': 12, '22 PAX Mini Bus': 4 };
   // Cancellation and free waiting, shown to customers when they book.
   // Travel agents and other bookers who book rides for their clients earn a
   // commission on the ride price (before gratuity and tax).
@@ -716,6 +718,8 @@
     // Collections added without a schema bump. Old free-text "company account"
     // names on customers become real corporate accounts.
     function normalize(d) {
+      // "Party Bus" became "22 PAX Mini Bus" (v137): every stored value and key.
+      { const j = JSON.stringify(d); if (j.includes('"Party Bus"')) Object.assign(d, JSON.parse(j.split('"Party Bus"').join('"22 PAX Mini Bus"'))); }
       // Business discount, added later: Carina Ride starts at 6%, others at 0.
       for (const c of d.companies || []) if (c.pricing && c.pricing.bizPct == null) c.pricing.bizPct = c.slug === 'carina-ride' ? 6 : 0;
       d.accounts = d.accounts || [];
@@ -2123,10 +2127,10 @@
     // suitcases and the actual models ("Lincoln Navigator or similar").
     // The nationwide booking company has no cars of its own: it offers the
     // usual types, and a member company in the pickup city drives the ride.
-    const HOUSE_TYPES = [['Sedan', 3, 'Cadillac, Lincoln or similar'], ['SUV', 6, 'Lincoln Navigator, Cadillac Escalade or similar'], ['Business Van', 10, 'Ford Transit or similar'], ['Sprinter Van', 14, 'Mercedes Sprinter or similar']];
+    const HOUSE_TYPES = [['Sedan', 3, 'Cadillac, Lincoln or similar'], ['SUV', 6, 'Lincoln Navigator, Cadillac Escalade or similar'], ['Business Van', 8, 'Ford Transit or similar'], ['Sprinter Van', 14, 'Mercedes Sprinter or similar']];
     function houseTypes(c) {
       const bags = bagsCfg(c);
-      return HOUSE_TYPES.map(([type, capacity, models]) => ({ type, capacity, bags: bags[type], models, multiplier: c.rates.multipliers[type] || 1, photo: '' }));
+      return HOUSE_TYPES.map(([type, capacity, models]) => ({ type, capacity, bags: bags[type], models, multiplier: c.rates.multipliers[type] || 1, photo: TYPE_PHOTO[type] ? samplePhoto(TYPE_PHOTO[type]) : '' }));
     }
     function vehicleTypesFor(c) {
       if (c.house && !db.vehicles.some((v) => v.companyId === c.id && v.status === 'active')) return houseTypes(c);
@@ -2139,7 +2143,7 @@
       const bags = bagsCfg(c);
       // The picture on the booking card: the first active car of the type with
       // a photo. Without one the page draws a picture of the type.
-      const vp = db.vehiclePhotos || {}, photoOf = (t) => { const v = db.vehicles.find((x) => x.companyId === c.id && x.status === 'active' && x.type === t && vp[x.id]); return v ? vp[v.id] : ''; };
+      const vp = db.vehiclePhotos || {}, photoOf = (t) => { const v = db.vehicles.find((x) => x.companyId === c.id && x.status === 'active' && x.type === t && vp[x.id]); return v ? vp[v.id] : TYPE_PHOTO[t] ? samplePhoto(TYPE_PHOTO[t]) : ''; };
       return VEHICLE_TYPES.filter((t) => out[t]).map((t) => ({ type: t, capacity: out[t], bags: bags[t], models: names[t].slice(0, 2).join(' or ') + ' or similar', multiplier: c.rates.multipliers[t] || 1, photo: photoOf(t) })).sort(bySeats);
     }
     function quoteFor(company, raw, customer) {
@@ -3410,7 +3414,7 @@
       if (exact) return exact;
       const car = db.vehicles.find((k) => k.companyId === c.id && k.name && k.name.toLowerCase() === v);
       if (car) return car.type;
-      if (/bus|coach/.test(v)) return 'Party Bus';
+      if (/bus|coach/.test(v)) return '22 PAX Mini Bus';
       if (/sprinter|14|executive van|limo van/.test(v)) return 'Sprinter Van';
       if (/van|transit|10/.test(v)) return 'Business Van';
       if (/suv|navigator|escalade|suburban|yukon|tahoe|expedition/.test(v)) return 'SUV';
@@ -4342,9 +4346,9 @@
       return f;
     }
     // Does this partner run a vehicle of the trip's type that seats everyone, or
-    // a bigger one (never a party bus unless that's what was booked)?
+    // a bigger one (never a mini bus unless that's what was booked)?
     const partnerFits = (c, t) => db.vehicles.some((v) => v.companyId === c.id && v.status === 'active' && v.capacity >= t.passengers
-      && (v.type === t.vehicleType || (v.type !== 'Party Bus' && VEHICLE_TYPES.indexOf(v.type) > VEHICLE_TYPES.indexOf(t.vehicleType))));
+      && (v.type === t.vehicleType || (v.type !== '22 PAX Mini Bus' && VEHICLE_TYPES.indexOf(v.type) > VEHICLE_TYPES.indexOf(t.vehicleType))));
     // The company's partner order for automatic farm-out: the chosen list, or
     // every network member serving the trip's pickup city (or the company's own
     // cities) when none is chosen yet.
@@ -4548,7 +4552,7 @@
       return want.length >= 3 && ((c.network.cities || []).some((x) => fold(cityName(x)).startsWith(want)) || (c.network.airports || []).some((k) => fold(AIRPORTS[k] ? AIRPORTS[k][2] : '').startsWith(want)));
     }
     const fitsFor = (c, vehicleType, passengers) => db.vehicles.some((v) => v.companyId === c.id && v.status === 'active' && v.capacity >= passengers
-      && (!vehicleType || v.type === vehicleType || (v.type !== 'Party Bus' && VEHICLE_TYPES.indexOf(v.type) > VEHICLE_TYPES.indexOf(vehicleType))));
+      && (!vehicleType || v.type === vehicleType || (v.type !== '22 PAX Mini Bus' && VEHICLE_TYPES.indexOf(v.type) > VEHICLE_TYPES.indexOf(vehicleType))));
     function tripsDone(c) { return db.farmouts.filter((f) => f.toCompanyId === c.id && f.status === 'completed').length; }
     def('network.directory', STAFF, false, (ctx, a) => {
       const me = ctx.company, place = placeQuery(a.q);
@@ -5107,7 +5111,7 @@
       }
       return pubUser(who);
     });
-    def('dispatch.settings', STAFF, false, (ctx) => ({ typeOrder: typesBySize(db.vehicles.filter((v) => v.companyId === ctx.company.id)), company: { ...pubCompany(ctx.company), refPrefix: ctx.company.refPrefix, plan: ctx.company.plan, planInfo: planInfo(ctx.company), terms: ctx.company.terms || '', policy: pcfg(ctx.company), bags: bagsCfg(ctx.company), stripe: ctx.company.stripe ? { ready: !!ctx.company.stripe.ready, since: ctx.company.stripe.connectedAt || null } : null }, rates: clone(ctx.company.rates), addons: clone(ctx.company.pricing.addons), vehicleTypes: VEHICLE_TYPES }));
+    def('dispatch.settings', STAFF, false, (ctx) => ({ carTypes: vehicleTypesFor(ctx.company), typeOrder: typesBySize(db.vehicles.filter((v) => v.companyId === ctx.company.id)), company: { ...pubCompany(ctx.company), refPrefix: ctx.company.refPrefix, plan: ctx.company.plan, planInfo: planInfo(ctx.company), terms: ctx.company.terms || '', policy: pcfg(ctx.company), bags: bagsCfg(ctx.company), stripe: ctx.company.stripe ? { ready: !!ctx.company.stripe.ready, since: ctx.company.stripe.connectedAt || null } : null }, rates: clone(ctx.company.rates), addons: clone(ctx.company.pricing.addons), vehicleTypes: VEHICLE_TYPES }));
     // The company's logo (a small picture, shown in the header and on its booking pages).
     // A wide banner picture: shown across the top of emails (inside the email,
     // so mail apps don't block it) and the booking page, in place of the logo.
@@ -6007,7 +6011,7 @@
       const eCls = mkVeh(pot, { name: 'Mercedes-Benz E-Class', type: 'Sedan', capacity: 3, plate: 'WA 7Y2031', color: 'Black', year: 2023, odometer: 27400, lastServiceOdometer: 25000 });
       const tahoe = mkVeh(pot, { name: 'Chevrolet Tahoe', type: 'SUV', capacity: 6, plate: 'WA 9K4410', color: 'Black', year: 2024, odometer: 15800, lastServiceOdometer: 15000 });
       mkVeh(pot, { name: 'Ford Transit Executive', type: 'Sprinter Van', capacity: 12, plate: 'WA TRN-88', color: 'Black', year: 2022, odometer: 52100, lastServiceOdometer: 50000 });
-      mkVeh(pot, { name: 'Freightliner Party Bus', type: 'Party Bus', capacity: 30, plate: 'WA BUS-30', color: 'White', year: 2020, odometer: 88200, lastServiceOdometer: 86000 });
+      mkVeh(pot, { name: 'Ford E-450 Mini Bus', type: '22 PAX Mini Bus', capacity: 22, plate: 'WA BUS-30', color: 'White', year: 2020, odometer: 88200, lastServiceOdometer: 86000 });
       await mkUser({ role: 'admin', companyId: pot.id, name: 'Grace Lin', email: 'dispatch@pugetsound.demo', phone: '(425) 555-0188' });
       const james = await mkDriver({ companyId: pot.id, name: 'James Carter', photo: sampleFace('#dcdcef', '#f0c8a8', '#7a5532', '#2b2f38'), email: 'james@pugetsound.demo', phone: '(425) 555-0124', vehicleId: tahoe.id, licenseExp: day(600), permitExp: day(240), hireDate: day(-700) });
       const omar = await mkDriver({ companyId: pot.id, name: 'Omar Haddad', photo: sampleFace('#efe2c8', '#b9835c', '#1a1410', '#1d2230'), email: 'omar@pugetsound.demo', phone: '(425) 555-0139', vehicleId: eCls.id, licenseExp: day(380), permitExp: day(150), hireDate: day(-260) });
@@ -6049,8 +6053,8 @@
       farm(fo3, cap, 260, 'We do not have a 10-seat van free. Thank you!', 'completed', { driver: sam, vehicle: str8, settled: true, by: 'Grace Lin' });
       const fo4 = trip(sum, kyle, { pickup: 'Seattle-Tacoma International Airport (SEA), arrivals', dropoff: 'Four Seasons Hotel Seattle, 99 Union St, Seattle, WA', pickupAt: at(60 * 24 + 300), vehicleType: 'SUV', passengers: 2, flight: 'UA 1517', meetGreet: true, notes: 'Our regular client from Denver, travelling for work.' }, { createdMin: -90 });
       farm(fo4, cap, 140, 'Our client is flying into Seattle tomorrow. Could you cover the airport pickup?', 'offered', { by: 'Greg Lindqvist' });
-      const fo5 = trip(cap, priya, { service: 'hourly', hours: 6, pickup: 'Acme Corp, 1201 3rd Ave, Seattle, WA', dropoff: '', pickupAt: at(60 * 24 * 2), vehicleType: 'Party Bus', passengers: 24 }, { createdMin: -60 * 30, source: 'phone' });
-      farm(fo5, pot, Math.round(fo5.price.total * 0.8), 'Company offsite, party bus for the day.', 'declined', { reason: 'Our party bus is booked for a wedding that day.', by: 'Nadia Hassan' });
+      const fo5 = trip(cap, priya, { service: 'hourly', hours: 6, pickup: 'Acme Corp, 1201 3rd Ave, Seattle, WA', dropoff: '', pickupAt: at(60 * 24 * 2), vehicleType: '22 PAX Mini Bus', passengers: 24 }, { createdMin: -60 * 30, source: 'phone' });
+      farm(fo5, pot, Math.round(fo5.price.total * 0.8), 'Company offsite, mini bus for the day.', 'declined', { reason: 'Our mini bus is booked for a wedding that day.', by: 'Nadia Hassan' });
       db.netMessages.push({ id: id('nm'), fromCompanyId: pot.id, toCompanyId: cap.id, farmoutId: null, text: 'Hi Nadia, we have two Tahoes free this weekend if you need cover for the marathon.', by: 'Grace Lin', system: false, at: at(-60 * 5) });
       db.netMessages.push({ id: id('nm'), fromCompanyId: cap.id, toCompanyId: pot.id, farmoutId: null, text: 'Thanks Grace, I will send anything we cannot cover. Same rates as last month?', by: 'Nadia Hassan', system: false, at: at(-60 * 4) });
       db.netMessages.push({ id: id('nm'), fromCompanyId: pot.id, toCompanyId: cap.id, farmoutId: null, text: 'Yes, same rates. SUV airport runs at $120.', by: 'Grace Lin', system: false, at: at(-60 * 3) });

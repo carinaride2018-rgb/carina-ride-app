@@ -11,7 +11,7 @@ const svgUri = (p) => 'data:image/svg+xml;base64,' + Buffer.from(read(p)).toStri
 const logos = { light: svgUri('public/icons/logo-light.svg'), dark: svgUri('public/icons/logo-dark.svg'), hero: svgUri('public/icons/hero.svg') };
 
 const jpgUri = (p) => 'data:image/jpeg;base64,' + fs.readFileSync(path.join(__dirname, p)).toString('base64');
-const carPhotos = Object.fromEntries(['sedan', 'suv', 'van10', 'van14'].map((k) => [k, jpgUri(`public/media/vehicles/${k}.jpg`)]));
+const carPhotos = Object.fromEntries(['sedan', 'suv', 'van10', 'van14', 'minibus'].map((k) => [k, jpgUri(`public/media/vehicles/${k}.jpg`)]));
 
 const html = `<meta charset="utf-8">
 <title>LimoRelay</title>

@@ -44,7 +44,7 @@
     SUV: { body: 'M10 64L10 44Q10 38 18 37L40 36L52 18Q54 15 60 15L140 15Q146 15 150 20L164 36L184 39Q192 40 192 48L192 64Q192 68 186 68L16 68Q10 68 10 64Z', win: ['M56 20L86 20L86 35L46 35Z', 'M90 20L118 20L118 35L90 35Z', 'M122 20L142 20Q146 20 149 24L157 35L122 35Z'], wheels: [48, 156], r: 14 },
     'Business Van': { body: 'M10 66L10 14Q10 8 18 8L142 8Q150 8 154 14L168 36L186 40Q192 42 192 50L192 64Q192 68 186 68L14 68Q10 68 10 66Z', win: ['M22 16H52V34H22Z', 'M58 16H88V34H58Z', 'M94 16H124V34H94Z', 'M130 14L144 14Q148 14 151 19L161 34L130 34Z'], wheels: [46, 158], r: 13 },
     'Sprinter Van': { body: 'M8 66L8 10Q8 4 16 4L150 4Q158 4 162 10L176 34L188 38Q194 40 194 48L194 64Q194 68 188 68L12 68Q8 68 8 66Z', win: ['M18 12H44V32H18Z', 'M50 12H76V32H50Z', 'M82 12H108V32H82Z', 'M114 12H140V32H114Z', 'M146 10L154 10Q158 10 161 15L170 32L146 32Z'], wheels: [44, 164], r: 13 },
-    'Party Bus': { body: 'M6 66L6 12Q6 6 14 6L184 6Q194 6 194 16L194 64Q194 68 188 68L10 68Q6 68 6 66Z', win: ['M14 14H38V34H14Z', 'M44 14H68V34H44Z', 'M74 14H98V34H74Z', 'M104 14H128V34H104Z', 'M134 14H158V34H134Z', 'M172 12H190V40H172Z'], wheels: [40, 160], r: 13 },
+    '22 PAX Mini Bus': { body: 'M6 66L6 12Q6 6 14 6L184 6Q194 6 194 16L194 64Q194 68 188 68L10 68Q6 68 6 66Z', win: ['M14 14H38V34H14Z', 'M44 14H68V34H44Z', 'M74 14H98V34H74Z', 'M104 14H128V34H104Z', 'M134 14H158V34H134Z', 'M172 12H190V40H172Z'], wheels: [40, 160], r: 13 },
   };
   function carArt(type) {
     const a = CAR_ART[type] || CAR_ART.Sedan;
@@ -3502,7 +3502,7 @@
     async function bookingInfo() {
       const [s, vehicles, accounts] = await Promise.all([api('dispatch.settings'), api('dispatch.vehicles'), api('dispatch.accounts')]);
       const caps = {}; vehicles.filter((x) => x.status === 'active').forEach((x) => { caps[x.type] = Math.max(caps[x.type] || 0, x.capacity); });
-      return { rates: s.rates, addons: s.addons, vehicleTypes: C.typesBySize(vehicles).filter((t) => caps[t]).map((t) => ({ type: t, capacity: caps[t] })), accounts: accounts.filter((a) => a.active) };
+      return { rates: s.rates, addons: s.addons, vehicleTypes: C.typesBySize(vehicles).filter((t) => caps[t]).map((t) => ({ type: t, capacity: caps[t], photo: ((s.carTypes || []).find((x) => x.type === t) || {}).photo || '' })), accounts: accounts.filter((a) => a.active) };
     }
     async function newBookingModal(done) {
       let info;
@@ -4096,7 +4096,7 @@
             <label class="check"><input type="checkbox" name="postToBoard" id="af-board" ${a.postToBoard ? 'checked' : ''} ${ro}> <span>When no partner on my list takes it, post it to the city trip board (first to take it, same amount)</span></label>
           </fieldset>
           <fieldset class="fs"><legend>Partners, in order</legend>
-            ${d.members.length ? `<ol class="aflist" id="af-list"></ol><p class="small faint" style="margin:0">Only partners with a car that seats everyone get the offer. A bigger car counts; a party bus only when one was booked.</p>` : '<p class="small muted" style="margin:0">No other companies are in the network yet.</p>'}
+            ${d.members.length ? `<ol class="aflist" id="af-list"></ol><p class="small faint" style="margin:0">Only partners with a car that seats everyone get the offer. A bigger car counts; a mini bus only when one was booked.</p>` : '<p class="small muted" style="margin:0">No other companies are in the network yet.</p>'}
           </fieldset>
           ${isAdmin ? '<div><button class="btn primary" type="submit">Save rules</button></div>' : '<p class="small muted">Only a company admin can change these rules.</p>'}
         </form>
