@@ -942,3 +942,6 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 .affsend .repfs, .affsend #bk-land, .affsend .field:has(> #bk-email), .affsend .smsok, .affsend .field:has(> #bk-promo) { display: none !important; }
 .afsheet { grid-template-columns: minmax(110px, auto) 1fr; margin: 0; }
 .afsheet dd { white-space: pre-wrap; }
+.gpsbox { background: var(--surface-2); border-radius: var(--r); padding: 10px 12px; gap: 6px; }
+.gpsdot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #b8b8b8; margin-right: 4px; vertical-align: 0; }
+.gpsdot.on { background: #1f9d55; box-shadow: 0 0 0 3px rgba(31, 157, 85, .2); }

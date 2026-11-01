@@ -715,6 +715,7 @@
     if (route.startsWith('affsend.')) return viewAffSend(route.slice(8));
     if (route.startsWith('affin.')) return viewAffIn(route.slice(6));
     if (route.startsWith('aff.')) return viewAff(route.slice(4));
+    if (route.startsWith('affdrv.')) return viewAff(route.slice(7));
     if (route.startsWith('request.')) return viewRequest(route.slice(8));
     if (route.startsWith('quote.')) return viewQuote(route.slice(6));
     if (route.startsWith('agent.')) return viewAgentSignup(route.slice(6));
@@ -1041,56 +1042,83 @@
 
   async function viewAff(token) {
     current = null;
-    let gps = null, lastSent = 0;
-    const stopGps = () => { if (gps != null && navigator.geolocation) navigator.geolocation.clearWatch(gps); gps = null; };
-    let last = '';
+    // Live GPS from the chauffeur's phone browser, with their permission. It runs
+    // from On the way until Trip done, only while this page stays open.
+    const g = { watch: null, lastSent: 0, sentAt: null, lock: null, denied: false };
+    const gpsLine = () => { const el = $('#af-gpsline'); if (!el) return; el.innerHTML = g.watch != null ? `<span class="gpsdot on"></span> Location on${g.sentAt ? ` · sent ${esc(fmtTime(g.sentAt))}` : ' · waiting for GPS'}` : `<span class="gpsdot"></span> Location off${g.denied ? '. It is blocked: allow location for this site in the phone settings, then press Turn on location.' : ''}`; const b = $('#af-gpson'); if (b) b.hidden = g.watch != null; };
+    const stopGps = () => {
+      if (g.watch != null && navigator.geolocation) navigator.geolocation.clearWatch(g.watch);
+      g.watch = null; clearInterval(g.beat); clearTimeout(g.timer); g.timer = null; if (g.lock) { g.lock.release().catch(() => {}); g.lock = null; } gpsLine();
+    };
+    const startGps = () => {
+      if (g.watch != null) return;
+      if (!navigator.geolocation) { toast('This phone cannot share its location.', true); return; }
+      g.denied = false;
+      // Newest fix goes out at most every 15 s, and again each minute while parked.
+      const send = () => {
+        g.timer = null;
+        const c = g.latest; if (!c || g.watch == null) return;
+        g.lastSent = Date.now();
+        api('public.affLocation', { token, lat: c.latitude, lng: c.longitude, accuracy: c.accuracy })
+          .then((r) => { if (r && r.stop) stopGps(); else { g.sentAt = new Date().toISOString(); gpsLine(); } }).catch(() => {});
+      };
+      g.beat = setInterval(() => { if (Date.now() - g.lastSent > 55000) send(); }, 15000);
+      g.watch = navigator.geolocation.watchPosition((p) => {
+        g.latest = p.coords;
+        const wait = 15000 - (Date.now() - g.lastSent);
+        if (wait <= 0) send(); else if (!g.timer) g.timer = setTimeout(send, wait);
+      }, (e) => { if (!e || e.code !== 1) return; /* no fix yet: keep waiting */ g.denied = true; stopGps(); toast('Location is blocked on this phone.', true); }, { enableHighAccuracy: true, maximumAge: 10000 });
+      // Keep the screen on so the browser keeps sending.
+      try { if (navigator.wakeLock) navigator.wakeLock.request('screen').then((l) => { g.lock = l; }).catch(() => {}); } catch (e) { /* not supported */ }
+      gpsLine();
+    };
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && g.watch != null && navigator.wakeLock && !g.lock) navigator.wakeLock.request('screen').then((l) => { g.lock = l; }).catch(() => {}); });
+    let last = '', autoTried = false;
     const load = async (msg, silent) => {
       let d;
       try { d = await api('public.affTrip', { token }); } catch (e) { if (silent) return; stopGps(); return badLink('Trip link not working', e); }
       const sig = JSON.stringify(d); if (silent && sig === last) return; last = sig;
-      const v = pubShell(d.company, `Trip ${d.ref}`, 'aff.' + token);
+      const drv = d.driverView;
+      const v = pubShell(d.company, drv ? `Chauffeur · ${d.ref}` : `Trip ${d.ref}`, 'aff.' + token);
       const co = d.company.name, st = d.offerStatus, ch = d.chauffeur || {};
       const live = st === 'accepted';
       const head = live ? (d.tripLabel || 'Accepted') : d.offerLabel;
+      const gpsPhase = live && (d.gpsWanted || d.next === 'en_route');
+      const statusPanel = `<div class="panel stack"><h2>Trip status</h2>
+            <p>Now: <b>${esc(d.tripLabel)}</b></p>
+            ${!ch.name ? '<p class="small muted">Add the chauffeur first.</p>' : d.next ? `<div><button class="btn primary big" type="button" id="af-next" data-st="${esc(d.next)}">${esc(AFF_NEXT[d.next] || d.next)}</button></div>` : ''}
+            ${d.tripStatus === 'arrived' ? (d.noShowAsk ? `<p class="small">No-show sent to ${esc(co)}. Please keep waiting until they confirm.</p>` : '<div><button class="btn danger" type="button" id="af-ns">Passenger is a no-show</button></div>') : ''}
+            ${ch.name && gpsPhase ? `<div class="gpsbox stack"><b>Live location</b>
+              <span class="small">${d.next === 'en_route' ? 'When you press On the way, your phone asks to share its location. Please allow it. ' : ''}${esc(co)} and the passenger see the car on a map from On the way until Trip done. Keep this page open on the chauffeur's phone; it stops when the trip is done or the page is closed.</span>
+              <span class="small" id="af-gpsline"></span>
+              ${d.gpsWanted ? '<div><button class="btn sm" type="button" id="af-gpson">Turn on location</button></div>' : ''}</div>` : ''}
+          </div>`;
+      const chForm = `<div class="panel stack"><h2>Chauffeur and vehicle</h2><p class="small muted">We send these to our passenger.</p>
+          <form id="af-ch" class="stack" novalidate>
+            <div class="grid2"><label class="field"><span>Chauffeur name</span><input name="name" value="${esc(ch.name || '')}"></label>
+              <label class="field"><span>Chauffeur mobile</span><input name="phone" type="tel" value="${esc(ch.phone || '')}"></label></div>
+            <div class="grid3"><label class="field"><span>Vehicle</span><input name="vehicle" placeholder="Black Cadillac Escalade" value="${esc(ch.vehicle || '')}"></label>
+              <label class="field"><span>License plate</span><input name="plate" value="${esc(ch.plate || '')}"></label>
+              <label class="field"><span>Color</span><input name="color" value="${esc(ch.color || '')}"></label></div>
+            <div id="af-cherr"></div>
+            <div><button class="btn ${ch.name ? '' : 'primary'}" type="submit">${ch.name ? 'Update chauffeur' : 'Save chauffeur'}</button></div></form></div>`;
+      const drvLink = live && ch.name && !drv && st === 'accepted' && d.tripStatus !== 'completed' ? `<div class="panel stack"><h2>Chauffeur's own link</h2>
+          <p class="small muted">Text the chauffeur a link for their phone. They press On the way, Arrived and Done there and share their live location. No login.</p>
+          <div class="row"><input class="input grow" id="af-dphone" type="tel" value="${esc(ch.phone || '')}" placeholder="Chauffeur mobile"><button class="btn primary" type="button" id="af-dsend">Text the link</button></div>
+          ${d.driverLink ? `<div class="row"><input class="input grow mono small" id="af-dlink" readonly value="${esc(d.driverLink)}"><button class="btn sm" type="button" id="af-dcopy">Copy</button></div>` : ''}</div>` : '';
       v.innerHTML = `<div class="stack affpage">
-        <div class="spread"><div><h1 style="font-size:24px">Trip ${esc(d.ref)} from ${esc(co)}</h1><p class="muted small">${[d.company.phone, d.company.email].filter(Boolean).map(esc).join(' · ')}</p></div><span class="pill ${st === 'offered' ? 's-assigned' : live ? 's-en_route' : st === 'completed' ? 's-completed' : 's-cancelled'}">${esc(head)}</span></div>
+        <div class="spread"><div><h1 style="font-size:24px">${drv ? `Chauffeur page · ${esc(d.ref)}` : `Trip ${esc(d.ref)} from ${esc(co)}`}</h1><p class="muted small">${drv ? `${esc(co)} · ` : ''}${[d.company.phone, drv ? '' : d.company.email].filter(Boolean).map(esc).join(' · ')}</p></div><span class="pill ${st === 'offered' ? 's-assigned' : live ? 's-en_route' : st === 'completed' ? 's-completed' : 's-cancelled'}">${esc(head)}</span></div>
         ${msg ? `<div class="note">${esc(msg)}</div>` : ''}
-        ${d.changeAt && !d.gotItAt && (live || st === 'offered') ? `<div class="warnbox stack"><b>${esc(co)} changed this trip</b><span>Check the details below, then press Got it.</span><div><button class="btn primary" type="button" id="af-got">Got it</button></div></div>` : ''}
+        ${!drv && d.changeAt && !d.gotItAt && (live || st === 'offered') ? `<div class="warnbox stack"><b>${esc(co)} changed this trip</b><span>Check the details below, then press Got it.</span><div><button class="btn primary" type="button" id="af-got">Got it</button></div></div>` : ''}
+        ${drv && live ? statusPanel : ''}
         ${d.sheet ? `<div class="panel">${sheetKv(d.sheet)}${d.note ? `<div class="note" style="margin-top:10px">“${esc(d.note)}”</div>` : ''}</div>` : ''}
-        ${st === 'offered' ? `<div class="panel stack"><h2>Can you cover this trip?</h2>
+        ${st === 'offered' && !drv ? `<div class="panel stack"><h2>Can you cover this trip?</h2>
           <p class="small muted">Please answer by ${esc(d.answerByText || fmtDT(d.answerBy))}. You are paid <b>${money(d.rate)}</b>.</p>
           <label class="field"><span>Your confirmation number <span class="faint">(optional)</span></span><input id="af-conf" maxlength="40" autocomplete="off"></label>
           <div><button class="btn primary big" type="button" id="af-yes">Accept trip</button></div>
           <div class="row"><input class="input grow" id="af-reason" placeholder="Reason if you decline (optional)"><button class="btn" type="button" id="af-no">Decline</button></div></div>` : ''}
-        ${live ? (ch.name ? `          <div class="panel stack"><h2>Trip status</h2>
-            <p>Now: <b>${esc(d.tripLabel)}</b></p>
-            ${!ch.name ? '<p class="small muted">Add the chauffeur first.</p>' : d.next ? `<div><button class="btn primary big" type="button" id="af-next" data-st="${esc(d.next)}">${esc(AFF_NEXT[d.next] || d.next)}</button></div>` : ''}
-            ${d.tripStatus === 'arrived' ? (d.noShowAsk ? `<p class="small">No-show sent to ${esc(co)}. Please keep waiting until they confirm.</p>` : '<div><button class="btn danger" type="button" id="af-ns">Passenger is a no-show</button></div>') : ''}
-            ${['en_route', 'arrived'].includes(d.tripStatus) ? `<label class="switch"><input type="checkbox" id="af-gps" ${gps != null ? 'checked' : ''}><span>Share this phone's location for the passenger's live map (keep this page open)</span></label>` : ''}
-          </div><div class="panel stack"><h2>Chauffeur and vehicle</h2><p class="small muted">We send these to our passenger.</p>
-          <form id="af-ch" class="stack" novalidate>
-            <div class="grid2"><label class="field"><span>Chauffeur name</span><input name="name" value="${esc(ch.name || '')}"></label>
-              <label class="field"><span>Chauffeur mobile</span><input name="phone" type="tel" value="${esc(ch.phone || '')}"></label></div>
-            <div class="grid3"><label class="field"><span>Vehicle</span><input name="vehicle" placeholder="Black Cadillac Escalade" value="${esc(ch.vehicle || '')}"></label>
-              <label class="field"><span>License plate</span><input name="plate" value="${esc(ch.plate || '')}"></label>
-              <label class="field"><span>Color</span><input name="color" value="${esc(ch.color || '')}"></label></div>
-            <div id="af-cherr"></div>
-            <div><button class="btn ${ch.name ? '' : 'primary'}" type="submit">${ch.name ? 'Update chauffeur' : 'Save chauffeur'}</button></div></form></div>` : `<div class="panel stack"><h2>Chauffeur and vehicle</h2><p class="small muted">We send these to our passenger.</p>
-          <form id="af-ch" class="stack" novalidate>
-            <div class="grid2"><label class="field"><span>Chauffeur name</span><input name="name" value="${esc(ch.name || '')}"></label>
-              <label class="field"><span>Chauffeur mobile</span><input name="phone" type="tel" value="${esc(ch.phone || '')}"></label></div>
-            <div class="grid3"><label class="field"><span>Vehicle</span><input name="vehicle" placeholder="Black Cadillac Escalade" value="${esc(ch.vehicle || '')}"></label>
-              <label class="field"><span>License plate</span><input name="plate" value="${esc(ch.plate || '')}"></label>
-              <label class="field"><span>Color</span><input name="color" value="${esc(ch.color || '')}"></label></div>
-            <div id="af-cherr"></div>
-            <div><button class="btn ${ch.name ? '' : 'primary'}" type="submit">${ch.name ? 'Update chauffeur' : 'Save chauffeur'}</button></div></form></div>
-          <div class="panel stack"><h2>Trip status</h2>
-            <p>Now: <b>${esc(d.tripLabel)}</b></p>
-            ${!ch.name ? '<p class="small muted">Add the chauffeur first.</p>' : d.next ? `<div><button class="btn primary big" type="button" id="af-next" data-st="${esc(d.next)}">${esc(AFF_NEXT[d.next] || d.next)}</button></div>` : ''}
-            ${d.tripStatus === 'arrived' ? (d.noShowAsk ? `<p class="small">No-show sent to ${esc(co)}. Please keep waiting until they confirm.</p>` : '<div><button class="btn danger" type="button" id="af-ns">Passenger is a no-show</button></div>') : ''}
-            ${['en_route', 'arrived'].includes(d.tripStatus) ? `<label class="switch"><input type="checkbox" id="af-gps" ${gps != null ? 'checked' : ''}><span>Share this phone's location for the passenger's live map (keep this page open)</span></label>` : ''}
-          </div>`) : ''}
-        ${d.canExtras ? `<div class="panel stack"><h2>Extra charges</h2>
+        ${live && !drv ? (ch.name ? statusPanel + drvLink + chForm : chForm + statusPanel) : ''}
+        ${d.canExtras && !drv ? `<div class="panel stack"><h2>Extra charges</h2>
           ${d.extras && d.extras.approved ? `<p class="small">Approved by ${esc(co)}: ${money(d.extras.amount)}.</p>` : `<p class="small muted">${d.extras ? `Sent: ${money(d.extras.amount)}. ${esc(co)} will approve it.` : 'Extra wait, tolls or parking, if any.'}</p>
           <form id="af-x" class="stack" novalidate><div class="grid3">
             <label class="field"><span>Extra wait (min)</span><input name="waitMin" type="number" min="0" value="${d.extras ? d.extras.waitMin : 0}"></label>
@@ -1098,7 +1126,7 @@
             <label class="field"><span>Parking ($)</span><input name="parking" type="number" min="0" step="0.01" value="${d.extras ? d.extras.parking : 0}"></label></div>
             <label class="field"><span>Note</span><input name="note" maxlength="300" value="${esc(d.extras ? d.extras.note : '')}"></label>
             <div id="af-xerr"></div><div><button class="btn" type="submit">${d.extras ? 'Update extras' : 'Send extras'}</button></div></form>`}</div>` : ''}
-        ${st === 'completed' && !d.canExtras ? '<div class="panel muted">Trip completed. Thank you.</div>' : ''}
+        ${st === 'completed' && (drv || !d.canExtras) ? '<div class="panel muted">Trip completed. Thank you.</div>' : ''}
         ${['declined', 'expired', 'cancelled'].includes(st) ? `<div class="panel muted">${st === 'declined' ? 'You declined this trip.' : st === 'expired' ? 'The answer time passed, so the trip went back to ' + esc(co) + '.' : esc(co) + ' cancelled this trip. You do not need to cover it.'}</div>` : ''}
         ${d.company.phone ? `<a class="btn" href="tel:${esc(d.company.phone.replace(/[^\d+]/g, ''))}">Call ${esc(co)}</a>` : ''}
       </div>`;
@@ -1109,20 +1137,22 @@
       const no = $('#af-no', v); if (no) no.onclick = () => { if (!no.dataset.armed) { no.dataset.armed = '1'; no.textContent = 'Click again to decline'; return; } act(no, 'public.affAnswer', { accept: false, reason: $('#af-reason', v).value }, 'Declined. Thank you for answering.'); };
       const got = $('#af-got', v); if (got) got.onclick = () => act(got, 'public.affGotIt', {}, `Thanks. ${co} can see you have the change.`);
       const chf = $('#af-ch', v); if (chf) chf.onsubmit = (e) => { e.preventDefault(); act($('button[type=submit]', chf), 'public.affChauffeur', formData(chf), 'Chauffeur saved. We told our passenger.', $('#af-cherr', v)); };
-      const nx = $('#af-next', v); if (nx) nx.onclick = () => act(nx, 'public.affStatus', { status: nx.dataset.st }, `${AFF_NEXT[nx.dataset.st]}: saved.`);
+      const nx = $('#af-next', v); if (nx) nx.onclick = () => {
+        if (nx.dataset.st === 'en_route') startGps(); // asks the phone for permission on this tap
+        act(nx, 'public.affStatus', { status: nx.dataset.st }, `${AFF_NEXT[nx.dataset.st]}: saved.`);
+      };
       const ns = $('#af-ns', v); if (ns) ns.onclick = () => { if (!ns.dataset.armed) { ns.dataset.armed = '1'; ns.textContent = 'Click again to report a no-show'; return; } act(ns, 'public.affNoShow', {}, `Sent to ${co}. Keep waiting until they confirm.`); };
       const xf = $('#af-x', v); if (xf) xf.onsubmit = (e) => { e.preventDefault(); act($('button[type=submit]', xf), 'public.affExtras', formData(xf), `Extras sent to ${co}.`, $('#af-xerr', v)); };
-      const gp = $('#af-gps', v);
-      if (gp) gp.onchange = () => {
-        if (!gp.checked) return stopGps();
-        if (!navigator.geolocation) { gp.checked = false; return toast('This phone cannot share its location.', true); }
-        gps = navigator.geolocation.watchPosition((p) => {
-          if (Date.now() - lastSent < 15000) return;
-          lastSent = Date.now();
-          api('public.affLocation', { token, lat: p.coords.latitude, lng: p.coords.longitude }).catch(() => {});
-        }, () => { stopGps(); toast('Location is blocked. Allow it in the browser settings.', true); }, { enableHighAccuracy: true, maximumAge: 10000 });
-      };
-      if (!['en_route', 'arrived'].includes(d.tripStatus)) stopGps();
+      const gon = $('#af-gpson', v); if (gon) gon.onclick = startGps;
+      const ds = $('#af-dsend', v); if (ds) ds.onclick = () => act(ds, 'public.affDriverLink', { phone: $('#af-dphone', v).value }, 'Link texted to the chauffeur.');
+      const dc = $('#af-dcopy', v); if (dc) dc.onclick = async () => { const inp = $('#af-dlink', v); try { await navigator.clipboard.writeText(inp.value); toast('Link copied.'); } catch (e) { inp.select(); toast('Press Ctrl+C or ⌘C to copy.'); } };
+      if (!d.gpsWanted) { if (g.watch != null) stopGps(); }
+      else if (g.watch == null && !autoTried && navigator.permissions) {
+        // Page reopened mid-trip: carry on sharing if the phone already allowed it.
+        autoTried = true;
+        navigator.permissions.query({ name: 'geolocation' }).then((p) => { if (p.state === 'granted') startGps(); }).catch(() => {});
+      }
+      gpsLine();
       current = { poll: true, refresh: () => load('', true) };
     };
     load();
@@ -3821,7 +3851,9 @@
                 ${o.confirmNo ? `<dt>Their conf #</dt><dd class="mono">${esc(o.confirmNo)}</dd>` : ''}
                 ${fo && fo.status === 'offered' && o.answerBy ? `<dt>Answer by</dt><dd>${esc(fmtDT(o.answerBy))}</dd>` : ''}
                 ${t.driver ? `<dt>Chauffeur</dt><dd>${esc(t.driver.name)}${t.driver.phone ? ` · <span class="mono">${esc(t.driver.phone)}</span>` : ''}</dd>` : ''}
-                ${t.vehicle ? `<dt>Vehicle</dt><dd>${esc(t.vehicle.name)}${t.vehicle.plate ? ' · ' + esc(t.vehicle.plate) : ''}</dd>` : ''}</dl>
+                ${t.vehicle ? `<dt>Vehicle</dt><dd>${esc(t.vehicle.name)}${t.vehicle.plate ? ' · ' + esc(t.vehicle.plate) : ''}</dd>` : ''}
+                ${['en_route', 'arrived', 'on_board'].includes(t.status) ? `<dt>Live GPS</dt><dd>${o.gps ? (() => { const m = Math.round((Date.now() - new Date(o.gps.at).getTime()) / 60000); return m < 3 ? `<span class="gpsdot on"></span>On · ${m < 1 ? 'just now' : m + ' min ago'}` : `<span class="gpsdot"></span>Last seen ${m} min ago`; })() : '<span class="gpsdot"></span>Not shared yet'}</dd>` : ''}</dl>
+              ${['en_route', 'arrived', 'on_board'].includes(t.status) && o.gps ? '<p class="small muted">See the car on the Board map.</p>' : ''}
               ${o.changeAt && fo ? `<p class="small ${o.gotItAt ? 'muted' : 'needtag'}">${o.gotItAt ? 'They saw your last change.' : 'We emailed them your change. Waiting for them to press Got it.'}</p>` : ''}
               ${x && !x.approved && !x.declined ? `<div class="warnbox stack" style="margin:8px 0"><b>Extras from them: ${money(x.amount)}</b><span>${esc([x.waitMin ? x.waitMin + ' min extra wait' : '', x.tolls ? 'tolls ' + money(x.tolls) : '', x.parking ? 'parking ' + money(x.parking) : ''].filter(Boolean).join(', '))}${x.note ? '. ' + esc(x.note) : ''}</span>
                 <div class="row"><button class="btn sm primary" type="button" id="te-xok">Approve</button><button class="btn sm" type="button" id="te-xno">Don't approve</button></div><span class="small">Approve adds it to the customer's fare.</span></div>` : x && x.approved ? `<p class="small muted">Extras approved: ${money(x.amount)}</p>` : ''}
