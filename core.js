@@ -868,8 +868,12 @@
     }
 
     const cmsg = (c) => ({ ...DEFAULT_CLIENT_MSGS, ...(c.clientMsgs || {}) });
-    const reviewUrl = (t) => `${opts.publicUrl || ''}#review.${t.reviewToken}`;
-    const cardUrl = (t) => `${opts.publicUrl || ''}#card.${t.cardToken}`;
+    // Links in texts and emails use the company's own booking address
+    // (for example https://reserve.carinaride.com/) when it has one.
+    const linkBase = (c) => (c && c.domain ? `https://${c.domain}/` : (opts.publicUrl || ''));
+    const coOf = (x) => x && x.companyId && db.companies.find((c) => c.id === x.companyId);
+    const reviewUrl = (t) => `${linkBase(coOf(t))}#review.${t.reviewToken}`;
+    const cardUrl = (t) => `${linkBase(coOf(t))}#card.${t.cardToken}`;
     // The full receipt as an email: the trip, each price line and how it was paid.
     function receiptText(t) {
       const c = findCompany(t.companyId), v = msgVars(t);
@@ -932,7 +936,7 @@
       else if (t.payment.method === 'account') lines.push('Payment: billed to your company account.');
       else if (t.payment.method === 'cash') lines.push(`Payment: cash, paid to ${c.name} before your ride.`);
       else if (onFile(t) && t.cardToken) lines.push(`Payment link: ${cardUrl(t)}`);
-      lines.push(`Terms and Conditions: ${(opts.publicUrl || 'https://limorelay.com/').replace(/#.*$/, '')}#terms.${c.slug}`);
+      lines.push(`Terms and Conditions: ${(c.domain ? linkBase(c) : (opts.publicUrl || 'https://limorelay.com/')).replace(/#.*$/, '')}#terms.${c.slug}`);
       return '\n\n' + lines.join('\n');
     }
     // The words a template can use, for one trip.
@@ -1103,7 +1107,7 @@
         updatedAt: fresh ? tr.gps.at : now().toISOString(), startedAt: tr.startedAt,
       };
     }
-    const trackUrl = (t) => `${opts.publicUrl || ''}#track.${t.trackToken}`;
+    const trackUrl = (t) => `${linkBase(coOf(t))}#track.${t.trackToken}`;
 
     function tripView(t) {
       const d = t.driverId && findUser(t.driverId);
@@ -3605,7 +3609,7 @@
     // the deposit and books one trip per vehicle.
     const QUOTE_LABELS = { new: 'Needs a price', sent: 'Sent', accepted: 'Accepted', declined: 'Declined', expired: 'Expired', cancelled: 'Cancelled' };
     const qcfg = (c) => ({ ...DEFAULT_QUOTE, ...(c.quoteCfg || {}) });
-    const quoteUrl = (q) => `${opts.publicUrl || ''}#quote.${q.token}`;
+    const quoteUrl = (q) => `${linkBase(coOf(q))}#quote.${q.token}`;
     const todayIn = (c) => localParts(now().toISOString(), c.timezone).date;
     // Sent quotes lapse after their valid-until date without anyone touching them.
     const qStatus = (q, c) => q.status === 'sent' && q.validUntil && todayIn(c) > q.validUntil ? 'expired' : q.status;
@@ -5260,13 +5264,13 @@
     // and adds the company (Companies > Add company).
     // ---- Login links: set or reset a password from an emailed link --------
     const WELCOME_DAYS = 7, RESET_HOURS = 2;
-    const loginUrl = (tok) => `${opts.publicUrl || ''}#setpw.${tok}`;
+    const loginUrl = (tok, c) => `${linkBase(c)}#setpw.${tok}`;
     function loginLink(u, purpose) {
       const t = now().getTime();
       db.pwTokens = (db.pwTokens || []).filter((x) => x.userId !== u.id && new Date(x.expires).getTime() > t);
       const token = randomId(24);
       db.pwTokens.push({ token, userId: u.id, purpose, expires: new Date(t + (purpose === 'reset' ? RESET_HOURS * 3600e3 : WELCOME_DAYS * 864e5)).toISOString() });
-      return loginUrl(token);
+      return loginUrl(token, u.role === 'customer' ? coOf(u) : null);
     }
     function linkUser(token) {
       const x = (db.pwTokens || []).find((r) => r.token === String(token || ''));
