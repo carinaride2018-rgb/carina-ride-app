@@ -371,7 +371,7 @@ function createProviders(rawEnv, opts) {
     async setup(p, successUrl, cancelUrl) {
       const cust = await stripe('POST', '/v1/customers', { ...(p.email ? { email: p.email } : {}), ...(p.name ? { name: p.name } : {}), metadata: p.meta }, p.account);
       return stripe('POST', '/v1/checkout/sessions', {
-        mode: 'setup', currency: 'usd', payment_method_types: ['card'], customer: cust.id, success_url: successUrl, cancel_url: cancelUrl,
+        mode: 'setup', currency: 'usd', customer: cust.id, success_url: successUrl, cancel_url: cancelUrl,
         metadata: p.meta, setup_intent_data: { description: p.description, metadata: p.meta },
       }, p.account);
     },
