@@ -2091,7 +2091,7 @@
       bookings: ['dispatch.createTrip', 'dispatch.deleteTrips', 'dispatch.updateTrip', 'dispatch.resendConfirmation', 'dispatch.sendReceipt', 'dispatch.setStatus', 'dispatch.cancelSeries', 'dispatch.noShow', 'dispatch.noShowNo', 'dispatch.importTrips', 'dispatch.applyFlight', 'dispatch.sendCardLink', 'dispatch.inboxSend', 'dispatch.saveQuote', 'dispatch.sendQuote', 'dispatch.quoteAction'],
       assign: ['dispatch.assign', 'dispatch.autoAssign', 'network.offer', 'network.respond', 'network.cancelOffer', 'network.handBack'],
       payments: ['dispatch.chargeCard', 'dispatch.markPaid', 'network.settle'],
-      customers: ['dispatch.saveCustomer', 'dispatch.sendCustomerLogin', 'dispatch.saveAccount', 'dispatch.accountBooker', 'dispatch.bizRequests', 'dispatch.reviewBiz', 'dispatch.createInvoice', 'dispatch.invoiceAction', 'dispatch.invoices', 'dispatch.invoice'],
+      customers: ['dispatch.saveCustomer', 'dispatch.deleteCustomer', 'dispatch.sendCustomerLogin', 'dispatch.saveAccount', 'dispatch.accountBooker', 'dispatch.bizRequests', 'dispatch.reviewBiz', 'dispatch.createInvoice', 'dispatch.invoiceAction', 'dispatch.invoices', 'dispatch.invoice'],
       drivers: ['dispatch.saveDriver', 'dispatch.sendDriverLogin', 'dispatch.setDriverPhoto', 'dispatch.saveVehicle', 'dispatch.setVehiclePhoto', 'dispatch.addMaintenance', 'dispatch.deleteMaintenance'],
       pay: ['dispatch.payroll', 'dispatch.payrollMonths', 'dispatch.markPayout'],
       reports: ['dispatch.reports'],
@@ -4898,6 +4898,19 @@
       const acc = u.accountId && db.accounts.find((x) => x.id === u.accountId);
       return { ...pubUser(u), hasLogin: !!u.passHash, discountPct: u.discountPct || 0, accountId: u.accountId || '', account: acc ? acc.name : '', notes: u.notes || '', trips: trips.length, spend: round2(done.reduce((s, t) => s + t.price.total, 0)), lastTrip: trips.map((t) => t.pickupAt).sort().pop() || null };
     }));
+    // The office deletes a customer's account: their login, saved card and
+    // sessions go. Their trips stay (name and all) in the company's records and
+    // reports; upcoming rides stay booked.
+    def('dispatch.deleteCustomer', STAFF, true, (ctx, a) => {
+      const u = db.users.find((x) => x.id === a.id && x.companyId === ctx.company.id && x.role === 'customer');
+      if (!u) fail('Customer not found.', 404);
+      for (const t of db.trips) if (t.customerId === u.id) t.customerId = null;
+      for (const q of db.quotes || []) if (q.customerId === u.id) q.customerId = null;
+      for (const [tok, x] of Object.entries(db.sessions)) if (x.userId === u.id) delete db.sessions[tok];
+      db.pushSubs = (db.pushSubs || []).filter((x) => x.userId !== u.id);
+      db.users = db.users.filter((x) => x.id !== u.id);
+      return { deleted: true, name: u.name };
+    });
     def('dispatch.saveCustomer', STAFF, true, (ctx, a) => {
       const u = db.users.find((x) => x.id === a.id && x.companyId === ctx.company.id && x.role === 'customer');
       if (!u) fail('Customer not found.', 404);

@@ -5153,8 +5153,8 @@
       list.sort((a, b) => (b.lastTrip || '').localeCompare(a.lastTrip || ''));
       v.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Customers</h1><p class="muted">People who booked online, plus passengers added by phone with an email. Open one to give them an account discount.</p></div>
           <div class="row"><button class="btn" type="button" id="cu-sendall">Email login to customers without one</button><a class="btn" href="#book.${esc(session.company.slug)}">Open your booking page</a></div></div>
-        <div class="tablewrap"><table><thead><tr><th>Name</th><th>Company account</th><th>Email</th><th>Phone</th><th>Online login</th><th class="r">Discount</th><th class="r">Trips</th><th class="r">Spent</th><th>Last trip</th></tr></thead><tbody>
-        ${list.map((c) => `<tr class="click" data-id="${c.id}"><td><b>${esc(c.name)}</b></td><td class="small">${esc(c.account)}</td><td class="mono small">${esc(c.email)}</td><td class="mono small">${esc(c.phone)}</td><td>${c.hasLogin ? '<span class="pill s-on_board">Yes</span>' : '<span class="pill off">No</span>'}</td><td class="r num">${c.discountPct ? c.discountPct + '%' : '—'}</td><td class="r num">${c.trips}</td><td class="r num">${money(c.spend)}</td><td class="small">${c.lastTrip ? esc(fmtDate(c.lastTrip)) : '—'}</td></tr>`).join('') || '<tr><td colspan="9" class="faint">No customers yet.</td></tr>'}
+        <div class="tablewrap"><table><thead><tr><th>Name</th><th>Company account</th><th>Email</th><th>Phone</th><th>Online login</th><th class="r">Discount</th><th class="r">Trips</th><th class="r">Spent</th><th>Last trip</th><th></th></tr></thead><tbody>
+        ${list.map((c) => `<tr class="click" data-id="${c.id}"><td><b>${esc(c.name)}</b></td><td class="small">${esc(c.account)}</td><td class="mono small">${esc(c.email)}</td><td class="mono small">${esc(c.phone)}</td><td>${c.hasLogin ? '<span class="pill s-on_board">Yes</span>' : '<span class="pill off">No</span>'}</td><td class="r num">${c.discountPct ? c.discountPct + '%' : '—'}</td><td class="r num">${c.trips}</td><td class="r num">${money(c.spend)}</td><td class="small">${c.lastTrip ? esc(fmtDate(c.lastTrip)) : '—'}</td><td><button class="btn sm" type="button" data-delcust="${c.id}">Delete</button></td></tr>`).join('') || '<tr><td colspan="10" class="faint">No customers yet.</td></tr>'}
         </tbody></table></div>`;
       // Without email switched on, show the links so the office can send them.
       const custLoginDone = (r) => {
@@ -5171,6 +5171,13 @@
         if (!confirm(`Email a set-your-password link to ${need} customer${need === 1 ? '' : 's'} who don't have a login yet?`)) return;
         try { custLoginDone(await api('dispatch.sendCustomerLogin', { all: true })); } catch (err) { toast(err.message, true); }
       });
+      // Delete a customer account, after asking twice. Their trips stay.
+      const delCust = async (c) => {
+        if (!confirm(`Delete ${c.name}'s customer account? Their login and saved card are removed. Their trips stay in your records.`)) return false;
+        if (!confirm('Are you sure? This can\'t be undone.')) return false;
+        try { await api('dispatch.deleteCustomer', { id: c.id }); toast(`${c.name}'s account deleted.`); redraw(); return true; } catch (err) { toast(err.message, true); return false; }
+      };
+      $$('[data-delcust]', v).forEach((b) => { b.onclick = (e) => { e.stopPropagation(); delCust(list.find((x) => x.id === b.dataset.delcust)); }; });
       $$('tr[data-id]', v).forEach((r) => { r.onclick = () => {
         const c = list.find((x) => x.id === r.dataset.id);
         const m = openModal({
@@ -5181,9 +5188,10 @@
             <label class="field"><span>Phone</span><input id="cf-phone" name="phone" value="${esc(c.phone)}"></label>
             <label class="field"><span>Notes</span><textarea id="cf-notes" name="notes">${esc(c.notes)}</textarea></label>
             <div id="cf-err"></div></form>`,
-          footer: `${c.email ? `<button class="btn" type="button" id="cf-login">${c.hasLogin ? 'Resend login email' : 'Send login email'}</button>` : ''}<span class="grow"></span><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="cf-save">Save</button>`,
+          footer: `<button class="btn danger" type="button" id="cf-del">Delete</button>${c.email ? `<button class="btn" type="button" id="cf-login">${c.hasLogin ? 'Resend login email' : 'Send login email'}</button>` : ''}<span class="grow"></span><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="cf-save">Save</button>`,
         });
         $('[data-close]', m).onclick = closeModal;
+        $('#cf-del', m).onclick = async () => { if (await delCust(c)) closeModal(); };
         const cl = $('#cf-login', m);
         if (cl) cl.onclick = () => busy(cl, async () => { try { custLoginDone(await api('dispatch.sendCustomerLogin', { id: c.id })); } catch (err) { showErr($('#cf-err', m), err); } });
         $('#cf-save', m).onclick = (e) => busy(e.currentTarget, async () => { try { await api('dispatch.saveCustomer', { ...formData($('#cf', m)), id: c.id }); closeModal(); toast('Customer saved.'); redraw(); } catch (err) { showErr($('#cf-err', m), err); } });
