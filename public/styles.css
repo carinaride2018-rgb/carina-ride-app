@@ -938,3 +938,7 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 .bh-banner { display: block; width: 100%; max-width: 680px; height: auto; border-radius: 12px; margin: 0 0 10px; }
 .brandhead.slim.withbanner { padding: 10px 16px; }
 .banner-prev { max-width: 320px; width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--line, #e3e3e6); }
+/* Outside affiliate pages */
+.affsend .repfs, .affsend #bk-land, .affsend .field:has(> #bk-email), .affsend .smsok, .affsend .field:has(> #bk-promo) { display: none !important; }
+.afsheet { grid-template-columns: minmax(110px, auto) 1fr; margin: 0; }
+.afsheet dd { white-space: pre-wrap; }

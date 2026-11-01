@@ -452,7 +452,7 @@ const escapeRe = (s) => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const hesc = (x) => String(x == null ? '' : x).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 const linkify = (x) => hesc(x).replace(/https?:\/\/[^\s<]+/g, (u) => `<a href="${u}" style="color:#1a56db;word-break:break-all">${u}</a>`);
 // Booking emails get a printable PDF; the value is the PDF's heading.
-const PDF_KINDS = { confirm: 'Booking confirmation', office_new: 'New booking', changed: 'Booking changed', office_changed: 'Booking changed', receipt: 'Receipt' };
+const PDF_KINDS = { confirm: 'Booking confirmation', office_new: 'New booking', changed: 'Booking changed', office_changed: 'Booking changed', receipt: 'Receipt', aff_offer: 'Trip sheet', aff_in: 'Farm-in trip' };
 const HEADINGS = { ...PDF_KINDS, chauffeur: 'Your chauffeur', en_route: 'On the way', approach: '10 minutes away', arrived: 'Chauffeur arrived', reminder: 'Ride reminder', reminder24: 'Ride reminder', quote: 'Your quote', invoice: 'Invoice' };
 // The company's banner, or else its logo, as an inline email attachment.
 function inlinePic(co) {

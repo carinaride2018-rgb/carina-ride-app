@@ -712,6 +712,9 @@
     if (route.startsWith('card.')) return viewCard(route.slice(5));
     if (route.startsWith('terms.')) return viewTerms(route.slice(6));
     if (route.startsWith('sms.')) return viewSms(route.slice(4));
+    if (route.startsWith('affsend.')) return viewAffSend(route.slice(8));
+    if (route.startsWith('affin.')) return viewAffIn(route.slice(6));
+    if (route.startsWith('aff.')) return viewAff(route.slice(4));
     if (route.startsWith('request.')) return viewRequest(route.slice(8));
     if (route.startsWith('quote.')) return viewQuote(route.slice(6));
     if (route.startsWith('agent.')) return viewAgentSignup(route.slice(6));
@@ -1022,6 +1025,158 @@
   }
   // Public page that shows (and takes) the ride-text opt-in, for customers and
   // for Twilio's A2P campaign review. The same box is on every booking form.
+  // ---- Outside affiliate pages (no login) -----------------------------------
+  // For companies not on LimoRelay (for example ones on Limo Anywhere).
+  // #aff.<token>: answer a trip we sent them, add the chauffeur, press status.
+  // #affsend.<key>: send us a trip. #affin.<token>: status of a trip they sent.
+  const pubShell = (company, what, key) => {
+    const old = $('#view'); if (key && old && old.dataset.pub === key) return old;
+    const keep = session; session = { company, user: null }; brandTitle(company, what); const v = shell({ narrow: true }); session = keep;
+    if (key) v.dataset.pub = key; return v;
+  };
+  const badLink = (title, e) => { const v = shell({}); v.innerHTML = `<div class="panel stack"><h2>${esc(title)}</h2><p class="muted">${esc(e.message)}</p></div>`; current = null; };
+  // "Label: value" lines -> a tidy list.
+  const sheetKv = (text) => `<dl class="kv afsheet">${String(text || '').split('\n').filter((l) => l.trim()).map((l) => { const i = l.indexOf(': '); return i > 0 ? `<dt>${esc(l.slice(0, i))}</dt><dd>${esc(l.slice(i + 2))}</dd>` : `<dt></dt><dd>${esc(l)}</dd>`; }).join('')}</dl>`;
+  const AFF_NEXT = { en_route: 'On the way', arrived: 'Arrived at pickup', on_board: 'Passenger in car', completed: 'Trip done' };
+
+  async function viewAff(token) {
+    current = null;
+    let gps = null, lastSent = 0;
+    const stopGps = () => { if (gps != null && navigator.geolocation) navigator.geolocation.clearWatch(gps); gps = null; };
+    let last = '';
+    const load = async (msg, silent) => {
+      let d;
+      try { d = await api('public.affTrip', { token }); } catch (e) { if (silent) return; stopGps(); return badLink('Trip link not working', e); }
+      const sig = JSON.stringify(d); if (silent && sig === last) return; last = sig;
+      const v = pubShell(d.company, `Trip ${d.ref}`, 'aff.' + token);
+      const co = d.company.name, st = d.offerStatus, ch = d.chauffeur || {};
+      const live = st === 'accepted';
+      const head = live ? (d.tripLabel || 'Accepted') : d.offerLabel;
+      v.innerHTML = `<div class="stack affpage">
+        <div class="spread"><div><h1 style="font-size:24px">Trip ${esc(d.ref)} from ${esc(co)}</h1><p class="muted small">${[d.company.phone, d.company.email].filter(Boolean).map(esc).join(' · ')}</p></div><span class="pill ${st === 'offered' ? 's-assigned' : live ? 's-en_route' : st === 'completed' ? 's-completed' : 's-cancelled'}">${esc(head)}</span></div>
+        ${msg ? `<div class="note">${esc(msg)}</div>` : ''}
+        ${d.changeAt && !d.gotItAt && (live || st === 'offered') ? `<div class="warnbox stack"><b>${esc(co)} changed this trip</b><span>Check the details below, then press Got it.</span><div><button class="btn primary" type="button" id="af-got">Got it</button></div></div>` : ''}
+        ${d.sheet ? `<div class="panel">${sheetKv(d.sheet)}${d.note ? `<div class="note" style="margin-top:10px">“${esc(d.note)}”</div>` : ''}</div>` : ''}
+        ${st === 'offered' ? `<div class="panel stack"><h2>Can you cover this trip?</h2>
+          <p class="small muted">Please answer by ${esc(d.answerByText || fmtDT(d.answerBy))}. You are paid <b>${money(d.rate)}</b>.</p>
+          <label class="field"><span>Your confirmation number <span class="faint">(optional)</span></span><input id="af-conf" maxlength="40" autocomplete="off"></label>
+          <div><button class="btn primary big" type="button" id="af-yes">Accept trip</button></div>
+          <div class="row"><input class="input grow" id="af-reason" placeholder="Reason if you decline (optional)"><button class="btn" type="button" id="af-no">Decline</button></div></div>` : ''}
+        ${live ? (ch.name ? `          <div class="panel stack"><h2>Trip status</h2>
+            <p>Now: <b>${esc(d.tripLabel)}</b></p>
+            ${!ch.name ? '<p class="small muted">Add the chauffeur first.</p>' : d.next ? `<div><button class="btn primary big" type="button" id="af-next" data-st="${esc(d.next)}">${esc(AFF_NEXT[d.next] || d.next)}</button></div>` : ''}
+            ${d.tripStatus === 'arrived' ? (d.noShowAsk ? `<p class="small">No-show sent to ${esc(co)}. Please keep waiting until they confirm.</p>` : '<div><button class="btn danger" type="button" id="af-ns">Passenger is a no-show</button></div>') : ''}
+            ${['en_route', 'arrived'].includes(d.tripStatus) ? `<label class="switch"><input type="checkbox" id="af-gps" ${gps != null ? 'checked' : ''}><span>Share this phone's location for the passenger's live map (keep this page open)</span></label>` : ''}
+          </div><div class="panel stack"><h2>Chauffeur and vehicle</h2><p class="small muted">We send these to our passenger.</p>
+          <form id="af-ch" class="stack" novalidate>
+            <div class="grid2"><label class="field"><span>Chauffeur name</span><input name="name" value="${esc(ch.name || '')}"></label>
+              <label class="field"><span>Chauffeur mobile</span><input name="phone" type="tel" value="${esc(ch.phone || '')}"></label></div>
+            <div class="grid3"><label class="field"><span>Vehicle</span><input name="vehicle" placeholder="Black Cadillac Escalade" value="${esc(ch.vehicle || '')}"></label>
+              <label class="field"><span>License plate</span><input name="plate" value="${esc(ch.plate || '')}"></label>
+              <label class="field"><span>Color</span><input name="color" value="${esc(ch.color || '')}"></label></div>
+            <div id="af-cherr"></div>
+            <div><button class="btn ${ch.name ? '' : 'primary'}" type="submit">${ch.name ? 'Update chauffeur' : 'Save chauffeur'}</button></div></form></div>` : `<div class="panel stack"><h2>Chauffeur and vehicle</h2><p class="small muted">We send these to our passenger.</p>
+          <form id="af-ch" class="stack" novalidate>
+            <div class="grid2"><label class="field"><span>Chauffeur name</span><input name="name" value="${esc(ch.name || '')}"></label>
+              <label class="field"><span>Chauffeur mobile</span><input name="phone" type="tel" value="${esc(ch.phone || '')}"></label></div>
+            <div class="grid3"><label class="field"><span>Vehicle</span><input name="vehicle" placeholder="Black Cadillac Escalade" value="${esc(ch.vehicle || '')}"></label>
+              <label class="field"><span>License plate</span><input name="plate" value="${esc(ch.plate || '')}"></label>
+              <label class="field"><span>Color</span><input name="color" value="${esc(ch.color || '')}"></label></div>
+            <div id="af-cherr"></div>
+            <div><button class="btn ${ch.name ? '' : 'primary'}" type="submit">${ch.name ? 'Update chauffeur' : 'Save chauffeur'}</button></div></form></div>
+          <div class="panel stack"><h2>Trip status</h2>
+            <p>Now: <b>${esc(d.tripLabel)}</b></p>
+            ${!ch.name ? '<p class="small muted">Add the chauffeur first.</p>' : d.next ? `<div><button class="btn primary big" type="button" id="af-next" data-st="${esc(d.next)}">${esc(AFF_NEXT[d.next] || d.next)}</button></div>` : ''}
+            ${d.tripStatus === 'arrived' ? (d.noShowAsk ? `<p class="small">No-show sent to ${esc(co)}. Please keep waiting until they confirm.</p>` : '<div><button class="btn danger" type="button" id="af-ns">Passenger is a no-show</button></div>') : ''}
+            ${['en_route', 'arrived'].includes(d.tripStatus) ? `<label class="switch"><input type="checkbox" id="af-gps" ${gps != null ? 'checked' : ''}><span>Share this phone's location for the passenger's live map (keep this page open)</span></label>` : ''}
+          </div>`) : ''}
+        ${d.canExtras ? `<div class="panel stack"><h2>Extra charges</h2>
+          ${d.extras && d.extras.approved ? `<p class="small">Approved by ${esc(co)}: ${money(d.extras.amount)}.</p>` : `<p class="small muted">${d.extras ? `Sent: ${money(d.extras.amount)}. ${esc(co)} will approve it.` : 'Extra wait, tolls or parking, if any.'}</p>
+          <form id="af-x" class="stack" novalidate><div class="grid3">
+            <label class="field"><span>Extra wait (min)</span><input name="waitMin" type="number" min="0" value="${d.extras ? d.extras.waitMin : 0}"></label>
+            <label class="field"><span>Tolls ($)</span><input name="tolls" type="number" min="0" step="0.01" value="${d.extras ? d.extras.tolls : 0}"></label>
+            <label class="field"><span>Parking ($)</span><input name="parking" type="number" min="0" step="0.01" value="${d.extras ? d.extras.parking : 0}"></label></div>
+            <label class="field"><span>Note</span><input name="note" maxlength="300" value="${esc(d.extras ? d.extras.note : '')}"></label>
+            <div id="af-xerr"></div><div><button class="btn" type="submit">${d.extras ? 'Update extras' : 'Send extras'}</button></div></form>`}</div>` : ''}
+        ${st === 'completed' && !d.canExtras ? '<div class="panel muted">Trip completed. Thank you.</div>' : ''}
+        ${['declined', 'expired', 'cancelled'].includes(st) ? `<div class="panel muted">${st === 'declined' ? 'You declined this trip.' : st === 'expired' ? 'The answer time passed, so the trip went back to ' + esc(co) + '.' : esc(co) + ' cancelled this trip. You do not need to cover it.'}</div>` : ''}
+        ${d.company.phone ? `<a class="btn" href="tel:${esc(d.company.phone.replace(/[^\d+]/g, ''))}">Call ${esc(co)}</a>` : ''}
+      </div>`;
+      const act = (btn, method, args, okMsg, errEl) => busy(btn, async () => {
+        try { await api(method, { token, ...args }); load(okMsg); } catch (e) { if (errEl) showErr(errEl, e); else toast(e.message, true); }
+      });
+      const yes = $('#af-yes', v); if (yes) yes.onclick = () => act(yes, 'public.affAnswer', { accept: true, confirmNo: $('#af-conf', v).value }, 'Accepted. Add the chauffeur below.');
+      const no = $('#af-no', v); if (no) no.onclick = () => { if (!no.dataset.armed) { no.dataset.armed = '1'; no.textContent = 'Click again to decline'; return; } act(no, 'public.affAnswer', { accept: false, reason: $('#af-reason', v).value }, 'Declined. Thank you for answering.'); };
+      const got = $('#af-got', v); if (got) got.onclick = () => act(got, 'public.affGotIt', {}, `Thanks. ${co} can see you have the change.`);
+      const chf = $('#af-ch', v); if (chf) chf.onsubmit = (e) => { e.preventDefault(); act($('button[type=submit]', chf), 'public.affChauffeur', formData(chf), 'Chauffeur saved. We told our passenger.', $('#af-cherr', v)); };
+      const nx = $('#af-next', v); if (nx) nx.onclick = () => act(nx, 'public.affStatus', { status: nx.dataset.st }, `${AFF_NEXT[nx.dataset.st]}: saved.`);
+      const ns = $('#af-ns', v); if (ns) ns.onclick = () => { if (!ns.dataset.armed) { ns.dataset.armed = '1'; ns.textContent = 'Click again to report a no-show'; return; } act(ns, 'public.affNoShow', {}, `Sent to ${co}. Keep waiting until they confirm.`); };
+      const xf = $('#af-x', v); if (xf) xf.onsubmit = (e) => { e.preventDefault(); act($('button[type=submit]', xf), 'public.affExtras', formData(xf), `Extras sent to ${co}.`, $('#af-xerr', v)); };
+      const gp = $('#af-gps', v);
+      if (gp) gp.onchange = () => {
+        if (!gp.checked) return stopGps();
+        if (!navigator.geolocation) { gp.checked = false; return toast('This phone cannot share its location.', true); }
+        gps = navigator.geolocation.watchPosition((p) => {
+          if (Date.now() - lastSent < 15000) return;
+          lastSent = Date.now();
+          api('public.affLocation', { token, lat: p.coords.latitude, lng: p.coords.longitude }).catch(() => {});
+        }, () => { stopGps(); toast('Location is blocked. Allow it in the browser settings.', true); }, { enableHighAccuracy: true, maximumAge: 10000 });
+      };
+      if (!['en_route', 'arrived'].includes(d.tripStatus)) stopGps();
+      current = { poll: true, refresh: () => load('', true) };
+    };
+    load();
+  }
+
+  async function viewAffSend(key) {
+    current = null;
+    let info;
+    try { info = await api('public.affSendInfo', { key }); } catch (e) { return badLink('Link not working', e); }
+    const co = info.company.name;
+    const keep = session; session = { company: info.company, user: null }; brandTitle(info.company, `Send a trip to ${co}`); const v = shell({}); session = keep;
+    const draw = () => {
+      v.innerHTML = `<div class="stack">
+        <div><h1 style="font-size:24px">Send a trip to ${esc(co)}</h1><p class="muted small">For ${esc(info.affiliate)}. No login needed. Keep this link private.</p></div>
+        <div class="panel"><label class="field"><span>Your reference number <span class="faint">(optional)</span></span><input id="as-ref" maxlength="40" autocomplete="off" placeholder="Your confirmation number for this trip"></label>
+          <p class="small muted" style="margin:6px 0 0">The price shown is ${esc(co)}'s rate. It is billed to your account. We confirm each trip by email.</p></div>
+        <div id="as-form" class="affsend"></div></div>`;
+      bookingForm($('#as-form', v), {
+        info: { rates: info.rates, addons: info.addons, vehicleTypes: info.vehicleTypes, company: info.company }, mode: 'dispatch', submitLabel: 'Send trip', payNote: `Billed to ${info.affiliate}'s account with ${co}.`,
+        quoteFn: (b) => api('public.quote', { slug: info.slug, booking: b }),
+        onSubmit: async (b) => {
+          const r = await api('public.affSend', { key, booking: b, theirRef: $('#as-ref', v).value });
+          v.innerHTML = `<div class="stack"><div class="panel stack"><h2>Thank you. ${esc(co)} received ${r.trips.length === 1 ? 'your trip' : r.trips.length + ' trips'}.</h2>
+            <p class="small muted">We confirm by email. You can follow each trip here:</p>
+            <ul class="stack" style="padding-left:18px;margin:0">${r.trips.map((t) => `<li><b class="mono">${esc(t.ref)}</b> · ${esc(fmtDT(t.pickupAt))} · ${esc(t.pickup)} · ${money(t.total)}<br><a href="${esc(t.statusLink)}">Trip status page</a></li>`).join('')}</ul>
+            <div><button class="btn" type="button" id="as-again">Send another trip</button></div></div></div>`;
+          $('#as-again', v).onclick = draw;
+          window.scrollTo(0, 0);
+        },
+      });
+    };
+    draw();
+  }
+
+  async function viewAffIn(token) {
+    current = null;
+    let last = '';
+    const load = async (silent) => {
+      let d;
+      try { d = await api('public.affInTrip', { token }); } catch (e) { if (!silent) badLink('Trip link not working', e); return; }
+      const sig = JSON.stringify(d); if (silent && sig === last) return; last = sig;
+      const v = pubShell(d.company, `Trip ${d.ref}`, 'affin.' + token);
+      v.innerHTML = `<div class="stack">
+        <div class="spread"><div><h1 style="font-size:24px">${esc(d.state)}</h1><p class="muted small">${esc(d.company.name)} · our ref ${esc(d.ref)}${d.theirRef ? ` · your ref ${esc(d.theirRef)}` : ''}</p></div><span class="pill s-${d.pending ? 'assigned' : esc(d.status)}">${esc(d.state)}</span></div>
+        <div class="panel"><dl class="kv"><dt>Passenger</dt><dd>${esc(d.passengerName || '')}</dd><dt>Pickup</dt><dd>${esc(fmtDT(d.pickupAt))}<br>${esc(d.pickup)}</dd>${d.dropoff ? `<dt>Drop-off</dt><dd>${esc(d.dropoff)}</dd>` : ''}<dt>Price</dt><dd>${money(d.total)}</dd></dl></div>
+        ${d.driver || d.vehicle ? `<div class="panel"><dl class="kv">${d.driver ? `<dt>Chauffeur</dt><dd>${esc(d.driver.name)}${d.driver.phone ? ` · <a href="tel:${esc(d.driver.phone.replace(/[^\d+]/g, ''))}">${esc(d.driver.phone)}</a>` : ''}</dd>` : ''}${d.vehicle ? `<dt>Vehicle</dt><dd>${esc([d.vehicle.color, d.vehicle.name].filter(Boolean).join(' '))}${d.vehicle.plate ? ` · <span class="mono">${esc(d.vehicle.plate)}</span>` : ''}</dd>` : ''}</dl></div>` : ''}
+        ${d.track ? `<a class="btn primary" href="${esc(d.track)}">Live map</a>` : ''}
+        ${d.company.phone ? `<a class="btn" href="tel:${esc(d.company.phone.replace(/[^\d+]/g, ''))}">Call ${esc(d.company.name)}</a>` : ''}
+      </div>`;
+      current = { poll: true, refresh: () => load(true) };
+    };
+    load();
+  }
+
   async function viewSms(slug) {
     current = null;
     let info;
@@ -1907,6 +2062,7 @@
         if (state.payCash) { $('#bk-cardbody', el).innerHTML = cashNote; return; }
       } else if (cashPick) { el.innerHTML = cashNote; return; }
       const box = $('#bk-cardbody', el) || el;
+      if (opts.payNote) { box.innerHTML = `<p class="note small">${esc(opts.payNote)}</p>`; return; }
       if (co.cards === false || state.accountId) { box.innerHTML = ''; return; }
       if (dispatch || (agent && state.payBy === 'passenger')) {
         box.innerHTML = `<p class="note small">Paid by card on file. We text the ${agent ? 'client' : 'passenger'} a link to save their card.</p>`;
@@ -3492,6 +3648,7 @@
         ${t.live && !t.live.arrived ? `<div class="small eta">● ${t.live.etaMin} min to pickup · ${t.live.milesLeft} mi</div>` : ''}
         ${t.farmout ? `<div class="partnertag small">${t.farmout.status === 'offered' ? 'Offered to' : 'With'} ${esc(t.farmout.toName)}${t.driver ? ' · ' + esc(t.driver.name) : ''}</div>` : ''}
         ${t.farmIn ? `<div class="partnertag in small">From ${esc(t.farmIn.fromName)}</div>` : ''}
+        ${t.affIn ? `<div class="partnertag in small">From ${esc(t.affIn.name)}${t.affIn.pending ? ' · accept or decline' : ''}</div>` : ''}
         ${t.account ? `<div class="small accttag">Bill to ${esc(t.account.name)}</div>` : ''}
         ${t.status === 'assigned' && t.offer ? `<div class="small offertag">Waiting to accept · ${minsLeft(t.offer.expiresAt)} min left</div>` : ''}
         ${t.status === 'confirmed' && t.needsDriver && !t.farmout ? `<div class="small needtag">Needs a driver: ${esc(t.needsDriver.why)}</div>` : ''}
@@ -3592,7 +3749,7 @@
       const f = t.flightInfo;
       const canApply = f && f.suggestedPickup && f.suggestedPickup !== t.pickupAt && !noAssign;
       const fo = t.farmout && !t.farmout.done ? t.farmout : null;
-      const canFarm = !t.farmout && !t.farmIn && ['confirmed', 'assigned'].includes(t.status) && !(t.netPost && ['open', 'closed'].includes(t.netPost.status));
+      const canFarm = !t.farmout && !t.farmIn && !t.affIn && ['confirmed', 'assigned'].includes(t.status) && !(t.netPost && ['open', 'closed'].includes(t.netPost.status));
       const priceLock = t.farmIn ? 'disabled' : '';
       const canSuggest = ['confirmed', 'assigned'].includes(t.status) && (!t.farmout || t.farmout.done);
       const m = openModal({
@@ -3658,7 +3815,26 @@
           <div class="side">
             ${canReturn(t) ? '<button class="btn retbtn" type="button" id="te-return">↩ Add return trip</button>' : ''}
             ${t.warnings && t.warnings.length ? `<div class="warnbox"><b>Check before the trip</b><ul>${t.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></div>` : ''}
-            ${t.farmout ? `<div class="sidebox partnerbox"><div class="spread"><span class="label">${fo && fo.status === 'offered' ? 'Offered to partner' : 'Partner company'}</span>${pill(t)}</div>
+            ${t.farmout && t.farmout.outside ? (() => { const o = t.affOffer || {}; const x = o.extras; return `<div class="sidebox partnerbox"><div class="spread"><span class="label">${fo && fo.status === 'offered' ? 'Offered to outside affiliate' : 'Outside affiliate'}</span>${pill(t)}</div>
+              <b>${esc(t.farmout.toName)}</b>
+              <dl class="kv small"><dt>You pay them</dt><dd class="num">${money(t.farmout.rate)}</dd><dt>You keep</dt><dd class="num">${money(t.price.total - t.farmout.rate)}</dd>
+                ${o.confirmNo ? `<dt>Their conf #</dt><dd class="mono">${esc(o.confirmNo)}</dd>` : ''}
+                ${fo && fo.status === 'offered' && o.answerBy ? `<dt>Answer by</dt><dd>${esc(fmtDT(o.answerBy))}</dd>` : ''}
+                ${t.driver ? `<dt>Chauffeur</dt><dd>${esc(t.driver.name)}${t.driver.phone ? ` · <span class="mono">${esc(t.driver.phone)}</span>` : ''}</dd>` : ''}
+                ${t.vehicle ? `<dt>Vehicle</dt><dd>${esc(t.vehicle.name)}${t.vehicle.plate ? ' · ' + esc(t.vehicle.plate) : ''}</dd>` : ''}</dl>
+              ${o.changeAt && fo ? `<p class="small ${o.gotItAt ? 'muted' : 'needtag'}">${o.gotItAt ? 'They saw your last change.' : 'We emailed them your change. Waiting for them to press Got it.'}</p>` : ''}
+              ${x && !x.approved && !x.declined ? `<div class="warnbox stack" style="margin:8px 0"><b>Extras from them: ${money(x.amount)}</b><span>${esc([x.waitMin ? x.waitMin + ' min extra wait' : '', x.tolls ? 'tolls ' + money(x.tolls) : '', x.parking ? 'parking ' + money(x.parking) : ''].filter(Boolean).join(', '))}${x.note ? '. ' + esc(x.note) : ''}</span>
+                <div class="row"><button class="btn sm primary" type="button" id="te-xok">Approve</button><button class="btn sm" type="button" id="te-xno">Don't approve</button></div><span class="small">Approve adds it to the customer's fare.</span></div>` : x && x.approved ? `<p class="small muted">Extras approved: ${money(x.amount)}</p>` : ''}
+              <p class="small muted">${fo && fo.status === 'offered' ? 'We emailed them the trip with a link to accept.' : t.farmout.done ? 'Completed by them.' : 'They press the status buttons on their trip page. Your passenger gets your usual texts.'}</p>
+              <div class="row">${fo ? '<button class="btn sm" type="button" id="te-takeback">Take it back</button>' : ''}${o.link ? `<button class="btn sm" type="button" id="te-afflink" data-link="${esc(o.link)}">Copy their trip link</button>` : ''}</div>
+            </div>`; })() : ''}
+            ${t.affIn ? `<div class="sidebox partnerbox in"><span class="label">From an outside affiliate</span><b>${esc(t.affIn.name)}</b>
+              <dl class="kv small">${t.affIn.theirRef ? `<dt>Their ref</dt><dd class="mono">${esc(t.affIn.theirRef)}</dd>` : ''}<dt>Billed to</dt><dd>${esc(t.account ? t.account.name : t.affIn.name)}</dd></dl>
+              ${t.affIn.pending ? `<p class="small needtag">Waiting for you to accept.</p><div class="row"><button class="btn sm primary" type="button" id="te-ainok">Accept trip</button></div>
+                <div class="row"><input class="input grow" id="te-ainreason" placeholder="Reason if you decline (optional)"><button class="btn sm danger" type="button" id="te-ainno">Decline</button></div>`
+                : t.affIn.declined ? '<p class="small muted">You declined this trip.</p>' : `<p class="small muted">${esc(t.affIn.name)} gets an email at each step.${t.affIn.passengerMsgs ? ' The passenger gets your usual texts.' : ' No texts go to the passenger.'} Your driver should not collect payment.</p>`}
+            </div>` : ''}
+            ${t.farmout && !t.farmout.outside ? `<div class="sidebox partnerbox"><div class="spread"><span class="label">${fo && fo.status === 'offered' ? 'Offered to partner' : 'Partner company'}</span>${pill(t)}</div>
               <b>${esc(t.farmout.toName)}</b>
               <dl class="kv small"><dt>You pay them</dt><dd class="num">${money(t.farmout.rate)}</dd><dt>You keep</dt><dd class="num">${money(t.price.total - t.farmout.rate)}</dd>
                 ${t.driver ? `<dt>Chauffeur</dt><dd>${esc(t.driver.name)}${t.driver.phone ? ` · <span class="mono">${esc(t.driver.phone)}</span>` : ''}</dd>` : ''}
@@ -3689,7 +3865,7 @@
               ${t.status !== 'cancelled' && (t.passengerEmail || t.passengerPhone) ? '<button class="btn sm" type="button" id="te-confirm">Resend confirmation</button>' : ''}
               ${t.status === 'completed' || t.payment.status === 'paid' ? '<button class="btn sm" type="button" id="te-receipt">Receipt</button>' : ''}
               ${t.passengerPhone ? '<button class="btn sm" type="button" id="te-text">Text passenger</button>' : ''}
-              ${canFarm ? '<button class="btn sm" type="button" id="te-farm">Send to a partner company</button><button class="btn sm" type="button" id="te-post">Post to city board</button>' : ''}
+              ${canFarm ? '<button class="btn sm" type="button" id="te-farm">Send to a partner company</button><button class="btn sm" type="button" id="te-affsend">Send to an outside affiliate</button><button class="btn sm" type="button" id="te-post">Post to city board</button>' : ''}
               ${t.netPost && ['open', 'closed'].includes(t.netPost.status) ? `<p class="small muted" style="margin:0">On the ${esc(t.netPost.label)} trip board${t.netPost.status === 'closed' ? ': prices are in, choose one' : ''}. <button class="linkbtn small" type="button" id="te-board">Open trip board</button></p>` : ''}
             </div>` : ''}
             ${t.live ? `<div class="sidebox"><span class="label">Live tracking</span><div id="te-live">${trackMap(t.live, t.pickup)}</div>${t.trackToken ? `<p class="small faint">Passenger link: <span class="mono">#track.${esc(t.trackToken)}</span></p>` : ''}</div>` : ''}
@@ -3759,11 +3935,19 @@
       const ap = $('#te-applyflight', m);
       if (ap) ap.onclick = () => busy(ap, async () => { try { await api('dispatch.applyFlight', { id }); toast('Pickup moved. Driver and passenger told.'); reopen(); } catch (err) { toast(err.message, true); } });
       const tf = $('#te-farm', m); if (tf) tf.onclick = () => { m._onClose = null; closeModal(); farmModal(t, () => tripModal(id, done)); };
+      const tas = $('#te-affsend', m); if (tas) tas.onclick = () => { m._onClose = null; closeModal(); affOfferModal(t, () => tripModal(id, done)); };
+      const tal = $('#te-afflink', m); if (tal) tal.onclick = async () => { try { await navigator.clipboard.writeText(tal.dataset.link); toast('Their trip link is copied.'); } catch (e) { toast(`Their trip link: ${tal.dataset.link}`, false, 9000); } };
+      [['#te-xok', true], ['#te-xno', false]].forEach(([sel, ok]) => { const b = $(sel, m); if (b) b.onclick = () => busy(b, async () => { try { await api('aff.approveExtras', { id: t.farmout.id, approve: ok }); toast(ok ? 'Extras approved and added to the fare.' : 'Extras not approved.'); reopen(); } catch (err) { toast(err.message, true); } }); });
+      const aok = $('#te-ainok', m); if (aok) aok.onclick = () => busy(aok, async () => { try { await api('aff.inAnswer', { id, accept: true }); toast(`Accepted. We emailed ${t.affIn.name} your confirmation. Assign a driver.`); reopen(); } catch (err) { toast(err.message, true); } });
+      const ano = $('#te-ainno', m); if (ano) ano.onclick = () => {
+        if (!ano.dataset.armed) { ano.dataset.armed = '1'; ano.textContent = 'Click again to decline'; return; }
+        busy(ano, async () => { try { await api('aff.inAnswer', { id, accept: false, reason: $('#te-ainreason', m).value }); toast(`Declined. We told ${t.affIn.name}.`); closeModal(); } catch (err) { toast(err.message, true); } });
+      };
       const tp = $('#te-post', m); if (tp) tp.onclick = () => { m._onClose = null; closeModal(); postModal(t, () => tripModal(id, done)); };
       const tbd = $('#te-board', m); if (tbd) tbd.onclick = () => { netState.sub = 'board'; m._onClose = null; closeModal(); go2('network'); };
       const tb = $('#te-takeback', m); if (tb) tb.onclick = () => {
         if (!tb.dataset.armed) { tb.dataset.armed = '1'; tb.textContent = 'Click again to take it back'; return; }
-        busy(tb, async () => { try { await api('network.cancelOffer', { id: t.farmout.id }); toast(`${t.ref} is back with you. Assign a driver.`); reopen(); } catch (err) { toast(err.message, true); } });
+        busy(tb, async () => { try { await api(t.farmout.outside ? 'aff.takeBack' : 'network.cancelOffer', { id: t.farmout.id }); toast(`${t.ref} is back with you. Assign a driver.${t.farmout.outside ? ` We told ${t.farmout.toName}.` : ''}`); reopen(); } catch (err) { toast(err.message, true); } });
       };
       const hb = $('#te-handback', m); if (hb) hb.onclick = () => {
         if (!hb.dataset.armed) { hb.dataset.armed = '1'; hb.textContent = 'Click again to hand back'; return; }
@@ -3839,6 +4023,111 @@
       });
     }
 
+    // Outside affiliates: companies not on the platform (Limo Anywhere and others).
+    async function netOutside(host, d, redraw) {
+      let a;
+      try { a = await api('aff.list'); } catch (e) { return showErr(host, e); }
+      const st = (r) => `<span class="pill ${({ offered: 's-assigned', accepted: 's-en_route', completed: 's-completed', declined: 's-cancelled', expired: 'off', cancelled: 'off' })[r.status] || ''}">${esc(r.statusLabel)}</span>`;
+      host.innerHTML = `
+        <div class="spread" style="margin-bottom:10px;align-items:flex-start"><p class="small muted" style="margin:0;max-width:680px">Companies not on ${esc(PLATFORM)}, for example ones on Limo Anywhere. Send them a trip from the trip window: they get an email with a link to accept, add the chauffeur and press On the way, Arrived and Done. They send you trips with their own private link. No login for them.</p>
+          ${P.bookings ? '<button class="btn primary" type="button" id="oa-add">Add affiliate</button>' : ''}</div>
+        ${a.affiliates.length ? `<div class="tablewrap"><table><thead><tr><th>Company</th><th>Dispatch</th><th>Areas</th><th class="r">Pay</th><th class="r">Sent</th><th class="r">Received</th><th class="r">You owe</th><th></th></tr></thead><tbody>
+          ${a.affiliates.map((x) => `<tr><td><b>${esc(x.name)}</b><div class="small faint">${esc(x.software || '')}</div></td>
+            <td class="small">${esc(x.email)}${x.phone ? `<div class="mono">${esc(x.phone)}</div>` : ''}</td><td class="small">${esc(x.cities || '')}</td>
+            <td class="r num">${x.payPct}%</td><td class="r num">${x.sent}</td><td class="r num">${x.received}</td>
+            <td class="r num">${money(x.owed)}${x.owed > 0 && P.pay !== false ? `<div><button class="linkbtn small" type="button" data-settle="${x.id}">Mark paid</button></div>` : ''}</td>
+            <td class="r"><div class="row" style="justify-content:flex-end;gap:6px;flex-wrap:nowrap"><button class="btn sm" type="button" data-sendlink="${x.id}">Email their link</button><button class="btn sm" type="button" data-copylink="${esc(x.sendLink)}">Copy link</button><button class="btn sm" type="button" data-edit="${x.id}">Edit</button></div></td></tr>`).join('')}</tbody></table></div>`
+          : '<div class="panel muted">No outside affiliates yet. Add one with their company name and dispatch email.</div>'}
+        <span class="label" style="display:block;margin-top:22px">Trips you sent them</span>
+        ${a.offers.length ? `<div class="tablewrap" style="margin-top:8px"><table><thead><tr><th>Pickup</th><th>Trip</th><th>Affiliate</th><th>Status</th><th>Chauffeur</th><th class="r">You pay</th><th></th></tr></thead><tbody>
+          ${a.offers.map((r) => `<tr><td class="mono small">${r.pickupAt ? esc(fmtDT(r.pickupAt)) : ''}</td><td class="mono small">${esc(r.ref)}</td>
+            <td>${esc(r.toName)}${r.confirmNo ? `<div class="mono small faint">Their # ${esc(r.confirmNo)}</div>` : ''}</td>
+            <td>${st(r)}${r.status === 'accepted' && r.tripStatus ? `<div class="small faint">${esc(C.STATUS_LABELS[r.tripStatus] || '')}</div>` : ''}${r.status === 'offered' && r.answerBy ? `<div class="small faint">Answer by ${esc(fmtTime(r.answerBy))}</div>` : ''}${r.reason ? `<div class="small faint">${esc(r.reason)}</div>` : ''}${r.changeAt && !r.gotItAt && r.status === 'accepted' ? '<div class="small needtag">Change not seen yet</div>' : ''}${r.extras && !r.extras.approved && !r.extras.declined ? `<div class="small needtag">Extras ${money(r.extras.amount)} to approve</div>` : ''}</td>
+            <td class="small">${r.chauffeur ? `${esc(r.chauffeur.name)}<div class="faint">${esc(r.chauffeur.vehicle || '')}${r.chauffeur.plate ? ' · ' + esc(r.chauffeur.plate) : ''}</div>` : '—'}</td>
+            <td class="r num">${money(r.rate)}${r.settledAt ? '<div class="small faint">Paid</div>' : ''}</td><td class="r"><button class="linkbtn small" type="button" data-open="${r.tripId}">Open</button></td></tr>`).join('')}</tbody></table></div>`
+          : '<p class="faint small" style="margin-top:8px">None yet. Open a trip and choose "Send to an outside affiliate".</p>'}
+        <span class="label" style="display:block;margin-top:22px">Trips they sent you</span>
+        ${a.incoming.length ? `<div class="tablewrap" style="margin-top:8px"><table><thead><tr><th>Pickup</th><th>From</th><th>Your trip</th><th>Status</th><th class="r">They pay you</th><th></th></tr></thead><tbody>
+          ${a.incoming.map((r) => `<tr><td class="mono small">${esc(fmtDT(r.pickupAt))}</td><td>${esc(r.from)}${r.theirRef ? `<div class="mono small faint">Their # ${esc(r.theirRef)}</div>` : ''}</td>
+            <td class="mono small">${esc(r.ref)}</td><td>${r.pending ? '<span class="pill s-assigned">Waiting for you</span>' : r.declined ? '<span class="pill s-cancelled">Declined</span>' : `<span class="pill s-${esc(r.status)}">${esc(C.STATUS_LABELS[r.status] || r.status)}</span>`}</td>
+            <td class="r num">${money(r.total)}</td><td class="r">${r.pending && P.bookings ? `<button class="btn sm primary" type="button" data-inok="${r.id}">Accept</button> ` : ''}<button class="linkbtn small" type="button" data-open="${r.id}">Open</button></td></tr>`).join('')}</tbody></table></div>`
+          : '<p class="faint small" style="margin-top:8px">None yet. Email them their link so they can send you trips.</p>'}`;
+      const add = $('#oa-add', host); if (add) add.onclick = () => affModal(null, redraw);
+      $$('[data-edit]', host).forEach((b) => { b.onclick = () => affModal(a.affiliates.find((x) => x.id === b.dataset.edit), redraw); });
+      $$('[data-copylink]', host).forEach((b) => { b.onclick = async () => { try { await navigator.clipboard.writeText(b.dataset.copylink); toast('Their send-a-trip link is copied.'); } catch (e) { toast(`Their link: ${b.dataset.copylink}`, false, 9000); } }; });
+      $$('[data-sendlink]', host).forEach((b) => { b.onclick = () => busy(b, async () => { try { await api('aff.sendLink', { id: b.dataset.sendlink }); toast('Emailed them their send-a-trip link.'); } catch (e) { toast(e.message, true); } }); });
+      $$('[data-settle]', host).forEach((b) => { b.onclick = () => {
+        if (!b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'Click again: paid in full'; return; }
+        busy(b, async () => { try { const r = await api('aff.settle', { affId: b.dataset.settle }); toast(`Marked ${r.settled} trip${r.settled === 1 ? '' : 's'} as paid.`); redraw(); } catch (e) { toast(e.message, true); } });
+      }; });
+      $$('[data-inok]', host).forEach((b) => { b.onclick = () => busy(b, async () => { try { const t = await api('aff.inAnswer', { id: b.dataset.inok, accept: true }); toast(`Accepted ${t.ref}. We emailed them your confirmation.`); redraw(); } catch (e) { toast(e.message, true); } }); });
+      $$('[data-open]', host).forEach((b) => { b.onclick = () => tripModal(b.dataset.open, redraw); });
+    }
+    function affModal(x, done) {
+      const m = openModal({
+        title: x ? `Edit ${x.name}` : 'Add an outside affiliate',
+        body: `<form id="oa" class="stack" novalidate>
+          <div class="grid2"><label class="field"><span>Company name</span><input name="name" maxlength="80" value="${esc(x ? x.name : '')}"></label>
+            <label class="field"><span>Their dispatch software</span><input name="software" maxlength="40" list="oa-sw" value="${esc(x ? x.software : 'Limo Anywhere')}"><datalist id="oa-sw"><option>Limo Anywhere</option><option>Santa Cruz</option><option>Livery Coach</option><option>Moovs</option><option>Other</option></datalist></label></div>
+          <div class="grid2"><label class="field"><span>Dispatch email</span><input name="email" type="email" maxlength="120" value="${esc(x ? x.email : '')}"><span class="hint">Trips are sent here.</span></label>
+            <label class="field"><span>Dispatch phone <span class="faint">(optional)</span></span><input name="phone" type="tel" maxlength="30" value="${esc(x ? x.phone : '')}"><span class="hint">Gets a text with each trip.</span></label></div>
+          <div class="grid2"><label class="field"><span>Cities or areas</span><input name="cities" maxlength="200" placeholder="Portland, Vancouver WA" value="${esc(x ? x.cities : '')}"></label>
+            <label class="field"><span>Usual pay (% of your fare)</span><input name="payPct" type="number" min="1" max="100" step="0.5" value="${x ? x.payPct : 80}"></label></div>
+          <label class="switch"><input type="checkbox" name="passengerMsgs" ${x && x.passengerMsgs ? 'checked' : ''}><span>On trips they send us, text their passenger too (off: only they get updates)</span></label>
+          <label class="field"><span>Notes</span><textarea name="notes" maxlength="400">${esc(x ? x.notes : '')}</textarea></label>
+          ${x ? `<div class="field"><span>Their send-a-trip link</span><div class="row"><input class="input grow mono small" id="oa-link" readonly value="${esc(x.sendLink)}"><button class="btn sm" type="button" id="oa-copy">Copy</button><button class="btn sm" type="button" id="oa-reset">New link</button></div><span class="hint">New link: the old one stops working.</span></div>` : ''}
+          <div id="oa-err"></div></form>`,
+        footer: `${x ? '<button class="btn danger" type="button" id="oa-del" style="margin-right:auto">Remove</button>' : ''}<button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="oa-save">${x ? 'Save' : 'Add affiliate'}</button>`,
+      });
+      $('[data-close]', m).onclick = closeModal;
+      $('#oa-save', m).onclick = (e) => busy(e.currentTarget, async () => {
+        try {
+          const f = formData($('#oa', m)); f.passengerMsgs = !!$('[name=passengerMsgs]', m).checked;
+          const r = await api('aff.save', { ...f, id: x ? x.id : undefined });
+          closeModal(); toast(x ? 'Saved.' : `${r.name} added. Email them their link so they can send you trips.`); done && done();
+        } catch (err) { showErr($('#oa-err', m), err); }
+      });
+      const cp = $('#oa-copy', m); if (cp) cp.onclick = async () => { const inp = $('#oa-link', m); try { await navigator.clipboard.writeText(inp.value); toast('Link copied.'); } catch (e) { inp.select(); toast('Press Ctrl+C or ⌘C to copy.'); } };
+      const rs = $('#oa-reset', m); if (rs) rs.onclick = () => {
+        if (!rs.dataset.armed) { rs.dataset.armed = '1'; rs.textContent = 'Click again: old link stops'; return; }
+        busy(rs, async () => { try { const r = await api('aff.resetKey', { id: x.id }); $('#oa-link', m).value = r.sendLink; x.sendLink = r.sendLink; rs.textContent = 'New link made'; toast('New link made. Send it to them again.'); } catch (e) { toast(e.message, true); } });
+      };
+      const dl = $('#oa-del', m); if (dl) dl.onclick = () => {
+        if (!confirm(`Remove ${x.name}? Their send-a-trip link stops working.`)) return;
+        busy(dl, async () => { try { await api('aff.remove', { id: x.id }); closeModal(); toast(`${x.name} removed.`); done && done(); } catch (err) { showErr($('#oa-err', m), err); } });
+      };
+    }
+    // Trip window > Send to an outside affiliate.
+    async function affOfferModal(t, back) {
+      let a;
+      try { a = await api('aff.list'); } catch (e) { return toast(e.message, true); }
+      const list = a.affiliates;
+      const m = openModal({
+        title: `Send ${t.ref} to an outside affiliate`, onClose: back,
+        body: list.length ? `<form id="ao" class="stack" novalidate>
+          <p class="small muted">${esc(fmtDT(t.pickupAt))} · ${esc(t.vehicleType)} · ${t.passengers} pax · ${esc(t.pickup)}${t.dropoff ? ' → ' + esc(t.dropoff) : ''}</p>
+          <label class="field"><span>Affiliate</span><select name="affId" id="ao-aff">${list.map((x) => `<option value="${x.id}" data-pct="${x.payPct}">${esc(x.name)}${x.cities ? ' · ' + esc(x.cities) : ''}</option>`).join('')}</select></label>
+          <div class="grid3"><label class="field"><span>You pay them ($)</span><input id="ao-rate" name="rate" type="number" min="1" step="1"><span class="hint" id="ao-keep"></span></label>
+            <div class="field"><span>Customer pays you</span><b class="num" style="font-size:20px;padding-top:6px">${money(t.price.total)}</b></div>
+            <label class="field"><span>They must answer within</span><select name="answerMin"><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60" selected>1 hour</option><option value="120">2 hours</option><option value="240">4 hours</option><option value="720">12 hours</option></select></label></div>
+          <label class="field"><span>Note for them</span><textarea name="note" maxlength="300" placeholder="Sign name, passenger preferences, anything they should know"></textarea></label>
+          <p class="note small">We email ${list.length === 1 ? 'them' : 'the affiliate'} the trip sheet (and text it when texting is on) with a link to accept. They see the passenger name and phone and what you pay them, not your price or the customer's email. Your passenger keeps getting your texts.</p>
+          <div id="ao-err"></div></form>` : '<p class="muted">Add an outside affiliate first in Network > Outside affiliates.</p>',
+        footer: list.length ? '<button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="ao-send">Send trip</button>' : '<button class="btn" type="button" data-close>Close</button><button class="btn primary" type="button" id="ao-go">Add one</button>',
+      });
+      $('[data-close]', m).onclick = closeModal;
+      const g = $('#ao-go', m); if (g) g.onclick = () => { m._onClose = null; closeModal(); netState.sub = 'outside'; go2('network'); };
+      if (!list.length) return;
+      const rate = $('#ao-rate', m), sel = $('#ao-aff', m);
+      const setRate = () => { rate.value = Math.round(t.price.total * (+sel.selectedOptions[0].dataset.pct || 80)) / 100; keep(); };
+      const keep = () => { const r = +rate.value || 0; $('#ao-keep', m).textContent = `You keep ${money(t.price.total - r)}.`; };
+      sel.onchange = setRate; rate.oninput = keep; setRate();
+      $('#ao-send', m).onclick = (e) => busy(e.currentTarget, async () => {
+        try { const r = await api('aff.offer', { tripId: t.id, ...formData($('#ao', m)) }); toast(`${t.ref} sent to ${r.toName}. You'll see their answer here and on the board.`); closeModal(); }
+        catch (err) { showErr($('#ao-err', m), err); }
+      });
+    }
+
     const netState = { sub: 'trips', partner: null };
     async function drawNetwork(v) {
       let last = '';
@@ -3847,7 +4136,7 @@
         try { d = await api('network.overview'); } catch (e) { if (!silent) showErr(v, e); return; }
         if (netState.sub === 'messages' && silent) return; // don't disturb typing
         const sig = JSON.stringify(d) + netState.sub; if (sig === last) return; last = sig;
-        const subs = [['trips', `Trips${d.waiting ? ` (${d.waiting})` : ''}`], ['board', `Trip board${d.boardOpen ? ` (${d.boardOpen})` : ''}`], ['partners', 'Find operators'], ['messages', `Messages${d.unreadTotal ? ` (${d.unreadTotal})` : ''}`], ['balances', 'Balances'], ['auto', `Auto farm-out${d.auto.on ? ' · on' : ''}`], ...(isAdmin ? [['settings', 'Settings']] : [])];
+        const subs = [['trips', `Trips${d.waiting ? ` (${d.waiting})` : ''}`], ['board', `Trip board${d.boardOpen ? ` (${d.boardOpen})` : ''}`], ['partners', 'Find operators'], ['outside', 'Outside affiliates'], ['messages', `Messages${d.unreadTotal ? ` (${d.unreadTotal})` : ''}`], ['balances', 'Balances'], ['auto', `Auto farm-out${d.auto.on ? ' · on' : ''}`], ...(isAdmin ? [['settings', 'Settings']] : [])];
         v.innerHTML = `<div class="subtabs">${subs.map(([k, l]) => `<button type="button" data-sub="${k}" aria-pressed="${netState.sub === k}">${l}</button>`).join('')}</div>
           <div class="pagehead"><div class="stack" style="gap:4px"><h1>Network</h1><p class="muted">Companies on ${esc(PLATFORM)} send each other trips they can't cover. You keep the customer; the partner does the driving for an agreed amount.</p></div></div>
           ${d.me.joined ? '' : `<div class="warnbox" style="margin-bottom:16px"><b>You're not in the network yet.</b> Other companies can't see you or send you trips. ${isAdmin ? '<button class="btn sm" type="button" id="nw-join" style="margin-left:8px">Join the network</button>' : 'Ask your company admin to join.'}</div>`}
@@ -3855,7 +4144,7 @@
         $$('[data-sub]', v).forEach((b) => { b.onclick = () => { netState.sub = b.dataset.sub; last = ''; refresh(); }; });
         const j = $('#nw-join', v); if (j) j.onclick = () => busy(j, async () => { try { await api('network.saveSettings', { joined: true }); toast('You joined the network.'); last = ''; refresh(); } catch (e) { toast(e.message, true); } });
         const host = $('#nw', v);
-        ({ trips: netTrips, board: netBoard, partners: netFind, messages: netMessages, balances: netBalances, auto: netAuto, settings: netSettings })[netState.sub](host, d, () => { last = ''; refresh(); });
+        ({ trips: netTrips, board: netBoard, partners: netFind, outside: netOutside, messages: netMessages, balances: netBalances, auto: netAuto, settings: netSettings })[netState.sub](host, d, () => { last = ''; refresh(); });
       };
       current = { poll: true, refresh };
       v.innerHTML = '<p class="faint">Loading…</p>';

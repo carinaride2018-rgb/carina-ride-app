@@ -1029,7 +1029,7 @@
       // A trip taken from a partner: the partner's office talks to the passenger
       // under its own brand, so only driver messages go out from here.
       const passenger = [to, trip.passengerPhone, trip.passengerEmail].filter(Boolean);
-      const say = (recipient, ch, body, mk) => { if (trip.farmIn && passenger.includes(recipient)) return; msgs.push({ recipient, channel: ch, body, ...(mk ? { kind: mk } : {}) }); };
+      const say = (recipient, ch, body, mk) => { if ((trip.farmIn || (trip.affIn && !trip.affIn.passengerMsgs)) && passenger.includes(recipient)) return; msgs.push({ recipient, channel: ch, body, ...(mk ? { kind: mk } : {}) }); };
       if (kind === 'booked') {
         const cm = cmsg(c);
         const sent = [];
@@ -1076,6 +1076,7 @@
       }
       if (kind === 'flight_cancelled') say(c.phone || c.email || 'Dispatch office', 'email', `Flight ${trip.flight} for ${trip.ref} (${trip.passengerName}) shows as cancelled. Call the passenger to rebook.`);
       for (const m of msgs) db.messages.unshift({ id: id('msg'), companyId: trip.companyId, tripId: trip.id, ref: trip.ref, at: now().toISOString(), ...m });
+      affInNotify(trip, kind);
       if (db.messages.length > 600) db.messages.length = 600;
     }
 
@@ -1133,6 +1134,7 @@
         awayTime: t.outOfTown ? `${fmtLocal(t.pickupAt, { timezone: t.outOfTown.tz }, true)} ${t.outOfTown.city} time` : '',
         group: (() => { const head = t.groupOf ? db.trips.find((x) => x.id === t.groupOf) : t; const ids = head ? [head.id, ...(head.groupIds || [])] : []; return ids.length > 1 ? ids.map((x) => db.trips.find((y) => y.id === x)).filter(Boolean).map((x) => ({ id: x.id, ref: x.ref, pickupAt: x.pickupAt, pickup: x.pickup, dropoff: x.dropoff, status: x.status })) : null; })(),
         pair: (() => { const o = (t.returnId || t.returnOf) && db.trips.find((x) => x.id === (t.returnId || t.returnOf)); return o ? { kind: t.returnId ? 'return' : 'outbound', id: o.id, ref: o.ref, pickupAt: o.pickupAt } : null; })(),
+        affOffer: t.farmout && t.farmout.outside ? (() => { const o = (db.affOffers || []).find((x) => x.id === t.farmout.id); return o ? { ...affRow(o), note: o.note || '', log: (o.log || []).slice(-20) } : null; })() : null,
         driver: d ? { id: d.id, name: d.name, phone: d.phone } : (t.affiliate && t.affiliate.driver ? { id: null, name: t.affiliate.driver.name, phone: t.affiliate.driver.phone, partner: t.affiliate.companyName } : null),
         vehicle: v ? { id: v.id, name: v.name, type: v.type, plate: v.plate, capacity: v.capacity, color: v.color || '', year: v.year || null } : (t.affiliate && t.affiliate.vehicle ? { id: null, ...t.affiliate.vehicle } : null),
       };
@@ -1730,6 +1732,13 @@
           else if (left <= 30) out.push({ level: 'warn', area: 'drivers', text: `${who}: ${label} expires in ${left} day${left === 1 ? '' : 's'}` });
         }
       }
+      // Outside affiliates: trips they sent us, extras to approve, changes not seen.
+      for (const t of db.trips) if (t.companyId === company.id && t.affIn && t.affIn.pending && t.status !== 'cancelled' && !t.officeDeleted) out.push({ level: 'warn', area: 'network', text: `${t.ref}: trip from ${t.affIn.name}. Accept or decline it`, tripId: t.id });
+      for (const o of db.affOffers || []) {
+        if (o.companyId !== company.id) continue;
+        if (o.extras && !o.extras.approved && !o.extras.declined) out.push({ level: 'warn', area: 'network', text: `${o.ref}: ${o.toName} sent extras of $${money(o.extras.amount)}. Approve them`, tripId: o.tripId });
+        if (o.status === 'accepted' && o.changeAt && !o.gotItAt) out.push({ level: 'warn', area: 'network', text: `${o.ref}: ${o.toName} has not pressed Got it on your change`, tripId: o.tripId });
+      }
       for (const t of db.trips) {
         if (t.companyId !== company.id || !t.flightInfo || ['completed', 'cancelled'].includes(t.status)) continue;
         const f = t.flightInfo;
@@ -1994,6 +2003,7 @@
           changed = true;
           continue;
         }
+        if (t.affIn && t.affIn.pending) continue; // waits for the office to accept it
         if (t.outOfTown && t.status === 'confirmed') {
           if (!t.needsDriver) { t.needsDriver = { at: n.toISOString(), why: `Out of town in ${t.outOfTown.city}: arrange a local company`, outOfTown: true }; changed = true; }
           continue;
@@ -2026,6 +2036,7 @@
         }
       }
       if (sweepAutoFarm(company)) changed = true;
+      if (sweepAffiliates(company)) changed = true;
       return changed;
     }
     function sendTo(t, recipient, body) {
@@ -2397,6 +2408,14 @@
           if (['open', 'closed'].includes(p.status) && lb && recent(lb.at, 24)) add(`bid:${p.id}:${p.bids.length}`, `${p.bids.length} price${p.bids.length === 1 ? '' : 's'} for ${p.ref}`, `Latest: ${lb.name}, $${money(lb.price)}. Open Network > Trip board to choose.`, '#dispatch', lb.at);
           if (p.status === 'taken' && recent(p.closedAt, 24)) add(`taken:${p.id}`, `${p.takenBy.name} took ${p.ref}`, `From the ${p.place.label} trip board, for $${money(p.takenBy.rate)}.`, '#dispatch', p.closedAt);
           if (p.status === 'expired' && recent(p.closedAt, 24)) add(`pexp:${p.id}`, `Nobody took ${p.ref}`, `The ${p.place.label} trip board post closed. The trip needs a driver.`, '#dispatch', p.closedAt);
+        }
+        for (const t of db.trips) if (t.companyId === c.id && t.affIn && t.affIn.pending && !t.officeDeleted && t.status !== 'cancelled') add(`affin:${t.id}`, `Trip from ${t.affIn.name}`, `${t.ref}: ${t.passengerName || 'Passenger'}, ${at(t)}. Accept or decline it on the Board.`, '#dispatch', t.createdAt);
+        for (const o of db.affOffers || []) {
+          if (o.companyId !== c.id) continue;
+          const tr = db.trips.find((x) => x.id === o.tripId); const ref = tr ? tr.ref : o.ref;
+          if (o.status === 'accepted' && recent(o.answeredAt || o.updatedAt, 24)) add(`affok:${o.id}`, `${o.toName} accepted ${ref}`, o.confirmNo ? `Their confirmation number: ${o.confirmNo}.` : 'They will add the chauffeur on their trip page.', '#dispatch', o.answeredAt || o.updatedAt);
+          if (['declined', 'expired'].includes(o.status) && recent(o.updatedAt, 24)) add(`affno:${o.id}`, `${o.toName} ${o.status === 'declined' ? 'declined' : 'did not answer'} ${ref}`, `${o.reason ? o.reason + '. ' : ''}The trip is back with you. Assign a driver.`, '#dispatch', o.updatedAt);
+          if (o.extras && !o.extras.approved && !o.extras.declined && recent(o.extras.at, 48)) add(`affx:${o.id}:${o.extras.at}`, `Extra charges from ${o.toName}`, `${ref}: $${money(o.extras.amount)}. Open the trip to approve.`, '#dispatch', o.extras.at);
         }
         for (const f of db.farmouts || []) {
           if (f.toCompanyId === c.id && f.status === 'offered') add(`farm:${f.id}`, `Trip offer from ${f.fromName}`, `${f.ref}: $${money(f.rate)}. Open Network to accept or decline.`, '#dispatch', f.createdAt);
@@ -3221,7 +3240,9 @@
       const t = ownTrip(ctx, a.id);
       const p = a.patch || {};
       const priceOnly = ['notes', 'priceOverride', 'adjustment'];
-      if (t.farmout && Object.keys(p).some((k) => !priceOnly.includes(k))) fail(`This trip is with ${t.farmout.toName}. Take it back from them before changing the details.`);
+      if (t.farmout && !t.farmout.outside && Object.keys(p).some((k) => !priceOnly.includes(k))) fail(`This trip is with ${t.farmout.toName}. Take it back from them before changing the details.`);
+      const affKey = () => JSON.stringify([t.pickupAt, t.pickup, t.dropoff, t.stopList, t.stopWaits, t.vehicleType, t.passengers, t.bags, t.flight, t.passengerName, t.passengerPhone, t.notes, t.hours, t.service, t.childSeats, t.meetGreet, t.signName]);
+      const affBefore = t.farmout && t.farmout.outside && !t.farmout.done ? affKey() : null;
       if (['completed', 'cancelled'].includes(t.status) && Object.keys(p).some((k) => !priceOnly.includes(k))) fail('This trip is closed. Only notes and price can change.');
       const before = t.pickupAt;
       if (t.invoiceId && Object.keys(p).some((k) => !['notes'].includes(k))) fail('This trip is on an invoice. Void the invoice first to change it.');
@@ -3250,11 +3271,12 @@
       reprice(t);
       if (t.flight) checkFlight(t, false);
       log(t, 'edited', ctx.user.name);
+      if (affBefore && affKey() !== affBefore) affChanged(t, ctx.user.name);
       return { ...tripView(t), warnings: assignWarnings(t) };
     });
     def('dispatch.assign', STAFF, true, (ctx, a) => {
       const t = ownTrip(ctx, a.id);
-      notWithPartner(t);
+      { notWithPartner(t); notPendingAff(t); }
       if (['on_board', 'completed', 'cancelled'].includes(t.status)) fail(`This trip is ${STATUS_LABELS[t.status].toLowerCase()} and can't be reassigned.`);
       if (!a.driverId) {
         t.driverId = null; t.vehicleId = null; t.status = 'confirmed'; t.offer = null; t.needsDriver = { at: now().toISOString(), why: 'Unassigned by the office' }; log(t, 'unassigned', ctx.user.name);
@@ -3284,7 +3306,7 @@
       const t = ownTrip(ctx, a.id);
       const s = str(a.status, 20);
       if (!STATUS_LABELS[s]) fail('Unknown status.');
-      if (s !== 'cancelled') notWithPartner(t);
+      if (s !== 'cancelled') { notWithPartner(t); notPendingAff(t); }
       if (s !== 'confirmed' && s !== 'cancelled' && !t.driverId) fail('Assign a driver first.');
       if (s === 'confirmed') { t.driverId = null; t.vehicleId = null; }
       if (s !== 'assigned') t.offer = null;
@@ -3531,7 +3553,7 @@
     // The office can close a no-show at any point once a driver has the trip.
     def('dispatch.noShow', STAFF, true, (ctx, a) => {
       const t = ownTrip(ctx, a.id);
-      notWithPartner(t);
+      { notWithPartner(t); notPendingAff(t); }
       if (!['accepted', 'en_route', 'arrived'].includes(t.status)) fail('Only a trip whose driver has accepted it can be marked a no-show.');
       markNoShow(t, ctx.user.name, a.note);
       return tripView(t);
@@ -3542,7 +3564,7 @@
     });
     def('dispatch.autoAssign', STAFF, true, (ctx, a) => {
       const t = ownTrip(ctx, a.id);
-      notWithPartner(t);
+      { notWithPartner(t); notPendingAff(t); }
       if (!['confirmed', 'assigned'].includes(t.status)) fail('Only trips without an accepted driver can be auto-assigned.');
       const keep = { driverId: t.driverId, status: t.status };
       if (t.driverId) t.passedBy = [...new Set([...(t.passedBy || []), t.driverId])];
@@ -4148,6 +4170,7 @@
     // vehicle flow back to the sender's trip, which keeps its customer and price.
     const FARM_LABELS = { offered: 'Waiting for answer', accepted: 'Accepted', declined: 'Declined', cancelled: 'Cancelled', returned: 'Handed back', expired: 'Expired', completed: 'Completed' };
     const isMember = (c) => c && c.status === 'active' && !c.house && c.network && c.network.joined;
+    function notPendingAff(t) { if (t.affIn && t.affIn.pending) fail(`Accept this trip from ${t.affIn.name} first.`); }
     function notWithPartner(t) {
       if (t.farmout) fail(`This trip is with ${t.farmout.toName}. Take it back from them first.`);
     }
@@ -4269,6 +4292,408 @@
       return out;
     };
 
+    // ---- Outside affiliates -------------------------------------------------
+    // Companies not on LimoRelay (for example ones dispatching in Limo Anywhere).
+    // Trips go out to them by email/text with a no-login page (#aff.<token>)
+    // where they accept or decline, add the chauffeur and press status buttons.
+    // Trips come in from them on a private page (#affsend.<key>).
+    const AFF_STATUS = { offered: 'Waiting for answer', accepted: 'Accepted', declined: 'Declined', expired: 'No answer', cancelled: 'Taken back', completed: 'Completed' };
+    const AFF_STEPS = { accepted: 'en_route', en_route: 'arrived', arrived: 'on_board', on_board: 'completed' };
+    const siteOf = (c) => (linkBase(c) || 'https://limorelay.com/').replace(/#.*$/, '');
+    const affsOf = (c) => (db.outsideAffs || []).filter((x) => x.companyId === c.id && !x.removed);
+    const affView = (x) => ({ id: x.id, name: x.name, email: x.email, phone: x.phone, cities: x.cities, software: x.software, notes: x.notes, payPct: x.payPct, passengerMsgs: !!x.passengerMsgs, accountId: x.accountId || '', sendLink: `${siteOf(findCompany(x.companyId))}#affsend.${x.key}` });
+    function ownAff(ctx, affId) {
+      const x = affsOf(ctx.company).find((y) => y.id === affId);
+      if (!x) fail('Affiliate not found.', 404);
+      return x;
+    }
+    // The billing account their farm-in trips go on (Net 30), made once.
+    function affAccount(c, x) {
+      let acc = x.accountId && findAccount(c, x.accountId);
+      if (!acc) {
+        acc = { id: id('acct'), companyId: c.id, createdAt: now().toISOString(), name: `${x.name} (affiliate)`, contact: '', billingEmail: x.email, phone: x.phone, address: '', terms: 30, discountPct: 0, reward: 'discount', requirePo: false, notes: 'Outside affiliate: trips they send us.', active: true, affId: x.id };
+        db.accounts.push(acc); x.accountId = acc.id;
+      }
+      return acc;
+    }
+    const affMail = (c, x, t, kind, body, extra) => {
+      const msgs = [];
+      if (x.email) msgs.push({ recipient: x.email, channel: 'email' });
+      if (extra && extra.sms && x.phone) msgs.push({ recipient: x.phone, channel: 'sms', body: extra.sms });
+      for (const m of msgs) db.messages.unshift({ id: id('msg'), companyId: c.id, tripId: t ? t.id : null, ref: t ? t.ref : '', at: now().toISOString(), kind, body, ...m });
+    };
+    const officeMail = (c, t, kind, body) => { const o = officeEmail(c); if (o) db.messages.unshift({ id: id('msg'), companyId: c.id, tripId: t ? t.id : null, ref: t ? t.ref : '', at: now().toISOString(), recipient: o, channel: 'email', kind, body }); };
+    // The trip in the labeled-lines layout, for the affiliate's emails and PDF.
+    function affSheet(t, c, rate) {
+      const b = withStops(t, [
+        `Pickup Date and Time: ${fmtLocal(t.pickupAt, c, true)}`, `Pickup Address: ${t.pickup}`, ...(t.dropoff ? [`Destination: ${t.dropoff}`] : []),
+        ...(t.service === 'hourly' ? [`Service: By the hour, ${t.hours} h`] : []), ...(t.flight ? [`Flight: ${t.flight}`] : []),
+        `Vehicle: ${t.vehicleType}`, `Passengers: ${t.passengers}`, ...(t.bags ? [`Suitcases: ${t.bags}`] : []),
+        `Passenger: ${t.passengerName || '-'}`, ...(t.passengerPhone ? [`Passenger Mobile: ${t.passengerPhone}`] : []), ...(t.signName ? [`Sign: ${t.signName}`] : []),
+        ...(t.childSeats ? [`Child Seats: ${t.childSeats}`] : []), ...(t.meetGreet ? ['Meet and Greet: Yes'] : []), ...(t.notes ? [`Notes: ${t.notes.replace(/\n/g, ' ')}`] : []),
+        ...(rate != null ? [`You Are Paid: $${money(rate)}`] : []),
+      ].join('\n'));
+      return b;
+    }
+    function setAff(o, status, by, note) {
+      o.status = status; o.updatedAt = now().toISOString();
+      const t = db.trips.find((x) => x.id === o.tripId);
+      if (!t) return;
+      if (['offered', 'accepted'].includes(status)) t.farmout = { id: o.id, outside: true, toCompanyId: null, toName: o.toName, status, rate: o.rate };
+      else if (status === 'completed') t.farmout = { id: o.id, outside: true, toCompanyId: null, toName: o.toName, status, rate: o.rate, done: true };
+      else { t.farmout = null; t.affiliate = null; }
+      log(t, 'farm_' + status, by, note || o.toName);
+    }
+    const affOfferBy = (tok) => (db.affOffers || []).find((o) => o.token && o.token === str(tok, 80));
+    function affAct(o, by, what, ip) {
+      (o.log = o.log || []).push({ at: now().toISOString(), by, what, ...(ip ? { ip: String(ip).slice(0, 60) } : {}) });
+    }
+    function affRow(o) {
+      const t = db.trips.find((x) => x.id === o.tripId);
+      return { id: o.id, affId: o.affId, toName: o.toName, ref: o.ref, tripId: o.tripId, rate: o.rate, status: o.status, statusLabel: AFF_STATUS[o.status], answerBy: o.answerBy, confirmNo: o.confirmNo || '', reason: o.reason || '', chauffeur: o.chauffeur || null, extras: o.extras || null, createdAt: o.createdAt, updatedAt: o.updatedAt, settledAt: o.settledAt || null, changeAt: o.changeAt || null, gotItAt: o.gotItAt || null, pickupAt: t ? t.pickupAt : null, tripStatus: t ? t.status : null, link: `${siteOf(findCompany(o.companyId))}#aff.${o.token}` };
+    }
+
+    def('aff.list', STAFF, false, (ctx) => {
+      const c = ctx.company;
+      const offers = (db.affOffers || []).filter((o) => o.companyId === c.id).sort((a, b) => (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt));
+      const owed = {};
+      for (const o of offers) if (o.status === 'completed' && !o.settledAt) owed[o.affId] = round2((owed[o.affId] || 0) + o.rate + (o.extras && o.extras.approved ? o.extras.amount || 0 : 0));
+      const inTrips = db.trips.filter((t) => t.companyId === c.id && t.affIn && !t.officeDeleted);
+      return {
+        affiliates: affsOf(c).map((x) => ({ ...affView(x), owed: owed[x.id] || 0, sent: offers.filter((o) => o.affId === x.id).length, received: inTrips.filter((t) => t.affIn.affId === x.id).length })),
+        offers: offers.slice(0, 200).map(affRow),
+        incoming: inTrips.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 100).map((t) => ({ id: t.id, ref: t.ref, affId: t.affIn.affId, from: t.affIn.name, theirRef: t.affIn.theirRef, pending: !!t.affIn.pending, declined: !!t.affIn.declined, status: t.status, pickupAt: t.pickupAt, pickup: t.pickup, total: t.price.total })),
+      };
+    });
+    def('aff.save', STAFF, true, (ctx, a) => {
+      const c = ctx.company;
+      const name = str(a.name, 80);
+      if (!name) fail('Enter the company name.');
+      const email = str(a.email, 120).toLowerCase();
+      if (!emailOk(email)) fail('Enter their dispatch email. Trips are sent there.');
+      const pct = num(a.payPct, 80);
+      if (!(pct > 0 && pct <= 100)) fail('Pay must be between 1 and 100% of the fare.');
+      const fields = { name, email, phone: str(a.phone, 30), cities: str(a.cities, 200), software: str(a.software, 40) || 'Limo Anywhere', notes: str(a.notes, 400), payPct: round2(pct), passengerMsgs: a.passengerMsgs === true || a.passengerMsgs === 'true' || a.passengerMsgs === 'on' };
+      db.outsideAffs = db.outsideAffs || [];
+      let x;
+      if (a.id) { x = ownAff(ctx, a.id); Object.assign(x, fields); }
+      else { x = { id: id('aff'), companyId: c.id, key: randomId(16), createdAt: now().toISOString(), ...fields }; db.outsideAffs.push(x); }
+      affAccount(c, x);
+      return affView(x);
+    });
+    def('aff.remove', STAFF, true, (ctx, a) => {
+      const x = ownAff(ctx, a.id);
+      if ((db.affOffers || []).some((o) => o.affId === x.id && ['offered', 'accepted'].includes(o.status))) fail(`${x.name} has trips open. Take them back first.`);
+      x.removed = now().toISOString(); x.key = '';
+      return true;
+    });
+    def('aff.resetKey', STAFF, true, (ctx, a) => {
+      const x = ownAff(ctx, a.id);
+      x.key = randomId(16);
+      return affView(x);
+    });
+    // Send their "Send us a trip" link to the affiliate by email.
+    def('aff.sendLink', STAFF, true, (ctx, a) => {
+      const c = ctx.company, x = ownAff(ctx, a.id);
+      affMail(c, x, null, 'aff_link', [`${c.name}:`, `Hello ${x.name},`, '', `Use this link to send trips to ${c.name}. No login needed. Keep it private: anyone with the link can send us trips for your account.`, '', `${siteOf(c)}#affsend.${x.key}`, '', `We confirm each trip by email with our confirmation number, then send the chauffeur, vehicle and status updates.`, '', `Questions: ${c.phone || c.email || ''}`].join('\n'));
+      return true;
+    });
+
+    // ---- Send a trip out ----
+    def('aff.offer', STAFF, true, (ctx, a) => {
+      const c = ctx.company, t = ownTrip(ctx, a.tripId), x = ownAff(ctx, a.affId);
+      if (t.farmIn || t.affIn) fail('This trip came from a partner. Hand it back to them instead of passing it on.');
+      if (t.farmout) fail(`This trip is already with ${t.farmout.toName}.`);
+      if (t.netPost && ['open', 'closed'].includes(t.netPost.status)) fail('This trip is on the trip board. Take the post down first.');
+      if (!['confirmed', 'assigned'].includes(t.status)) fail('Only trips that have not started can go to an affiliate.');
+      if (t.pickupAt < now().toISOString()) fail('This pickup time has passed.');
+      const rate = round2(num(a.rate, 0));
+      if (!(rate > 0)) fail('Enter the amount you will pay them.');
+      const mins = Math.round(num(a.answerMin, 60));
+      if (!(mins >= 5 && mins <= 1440)) fail('Answer time must be between 5 minutes and 24 hours.');
+      const answerBy = new Date(Math.min(now().getTime() + mins * 60e3, new Date(t.pickupAt).getTime() - 5 * 60e3)).toISOString();
+      if (t.driverId) { t.driverId = null; t.vehicleId = null; t.status = 'confirmed'; log(t, 'unassigned', ctx.user.name); }
+      if (t.autoFarm) t.autoFarm.stopped = true;
+      db.affOffers = db.affOffers || [];
+      const o = { id: id('afo'), companyId: c.id, affId: x.id, toName: x.name, tripId: t.id, ref: t.ref, rate, note: str(a.note, 300), token: randomId(16), status: 'offered', answerBy, createdAt: now().toISOString(), by: ctx.user.name, log: [] };
+      db.affOffers.push(o);
+      t.needsDriver = null;
+      setAff(o, 'offered', ctx.user.name, `Offered to ${x.name} (outside affiliate) for $${money(rate)}`);
+      const link = `${siteOf(c)}#aff.${o.token}`;
+      affMail(c, x, t, 'aff_offer', [`${c.name}:`, `${c.name} is offering you trip ${t.ref}. Please accept or decline by ${fmtLocal(answerBy, c, true)}.`, '', affSheet(t, c, rate), ...(o.note ? ['', `Note: ${o.note}`] : []), '', `Accept or decline: ${link}`, '', 'On that page you can also add the chauffeur and vehicle, and press On the way, Arrived and Done so our passenger gets updates.'].join('\n'),
+        { sms: `${c.name}: trip offer ${t.ref} ${fmtLocal(t.pickupAt, c, true)}, ${t.vehicleType}, ${t.passengers} pax, pays $${money(rate)}. Accept or decline: ${link}` });
+      return affRow(o);
+    });
+    def('aff.takeBack', STAFF, true, (ctx, a) => {
+      const c = ctx.company;
+      const o = (db.affOffers || []).find((y) => y.id === a.id && y.companyId === c.id);
+      if (!o) fail('Offer not found.', 404);
+      if (!['offered', 'accepted'].includes(o.status)) fail(`This offer is already ${AFF_STATUS[o.status].toLowerCase()}.`);
+      const t = db.trips.find((y) => y.id === o.tripId);
+      if (t && ['on_board', 'completed'].includes(t.status)) fail('Their chauffeur has already picked up the passenger.');
+      const x = (db.outsideAffs || []).find((y) => y.id === o.affId);
+      setAff(o, 'cancelled', ctx.user.name, `Taken back from ${o.toName}`);
+      if (t && t.status !== 'cancelled') { t.status = 'confirmed'; delete t.tracking; }
+      if (x && t) affMail(c, x, t, 'aff_cancel', [`${c.name}:`, `Trip ${t.ref}${o.confirmNo ? ` (your ${o.confirmNo})` : ''} is cancelled. You don't need to cover it.`, '', affSheet(t, c, null)].join('\n'), { sms: `${c.name}: trip ${t.ref} is cancelled. You don't need to cover it.` });
+      return affRow(o);
+    });
+    def('aff.approveExtras', STAFF, true, (ctx, a) => {
+      const o = (db.affOffers || []).find((y) => y.id === a.id && y.companyId === ctx.company.id);
+      if (!o || !o.extras) fail('No extras to approve.', 404);
+      const t = db.trips.find((y) => y.id === o.tripId);
+      const e = o.extras;
+      if (a.approve === false) { e.declined = now().toISOString(); log(t, 'aff_extras', ctx.user.name, 'Affiliate extras not approved'); return affRow(o); }
+      e.approved = now().toISOString();
+      if (t) {
+        if (e.waitMin) t.waitMin = Math.min(600, Math.max(0, Math.round(num(t.waitMin, 0) + e.waitMin)));
+        const extra = round2(num(e.tolls, 0) + num(e.parking, 0));
+        if (extra) t.tolls = Math.min(1000, round2(num(t.tolls, 0) + extra));
+        reprice(t);
+        log(t, 'aff_extras', ctx.user.name, `Extras from ${o.toName} approved`);
+      }
+      return affRow(o);
+    });
+    def('aff.settle', STAFF, true, (ctx, a) => {
+      const list = (db.affOffers || []).filter((o) => o.companyId === ctx.company.id && o.affId === a.affId && o.status === 'completed' && !o.settledAt);
+      for (const o of list) o.settledAt = now().toISOString();
+      return { settled: list.length };
+    });
+    // Office changed a trip that's with an outside affiliate: tell them, and
+    // they press Got it on their page.
+    function affChanged(t, by) {
+      const o = t.farmout && t.farmout.outside && (db.affOffers || []).find((y) => y.id === t.farmout.id);
+      if (!o) return;
+      const c = findCompany(t.companyId), x = (db.outsideAffs || []).find((y) => y.id === o.affId);
+      o.changeAt = now().toISOString(); o.gotItAt = null;
+      if (x) affMail(c, x, t, 'aff_changed', [`${c.name}:`, `Trip ${t.ref}${o.confirmNo ? ` (your ${o.confirmNo})` : ''} was changed by ${by}. Please check the details and press Got it.`, '', affSheet(t, c, o.rate), '', `Trip page: ${siteOf(c)}#aff.${o.token}`].join('\n'),
+        { sms: `${c.name}: trip ${t.ref} was changed. Check it and press Got it: ${siteOf(c)}#aff.${o.token}` });
+    }
+
+    // ---- The affiliate's trip page (no login) ----
+    function affPage(o) {
+      const t = db.trips.find((y) => y.id === o.tripId), c = findCompany(o.companyId);
+      if (!t || !c) fail('This trip link is not valid.', 404);
+      const closed = new Date(t.pickupAt).getTime() + 7 * 86400e3 < now().getTime();
+      if (closed) fail('This trip link has expired.', 404);
+      const open = ['offered', 'accepted'].includes(o.status);
+      return {
+        company: pubCompany(c), ref: t.ref, offerStatus: o.status, offerLabel: AFF_STATUS[o.status], answerBy: o.answerBy, answerByText: o.answerBy ? fmtLocal(o.answerBy, c, true) : '', rate: o.rate, note: o.note || '',
+        tripStatus: t.status, tripLabel: t.noShow ? 'No-show' : STATUS_LABELS[t.status], next: o.status === 'accepted' ? (AFF_STEPS[t.status === 'confirmed' ? 'accepted' : t.status] || null) : null,
+        sheet: open || o.status === 'completed' ? affSheet(t, c, o.rate) : '', pickupAt: t.pickupAt, pickup: t.pickup, dropoff: t.dropoff, tz: c.timezone,
+        confirmNo: o.confirmNo || '', chauffeur: o.chauffeur || null, extras: o.extras || null, noShowAsk: t.noShowAsk ? { at: t.noShowAsk.at } : null,
+        changeAt: o.changeAt || null, gotItAt: o.gotItAt || null, canExtras: o.status === 'completed' || (o.status === 'accepted' && ['on_board', 'completed'].includes(t.status)),
+      };
+    }
+    function affOpen(a) {
+      const o = affOfferBy(a.token);
+      if (!o) fail('This trip link is not valid.', 404);
+      return o;
+    }
+    def('public.affTrip', 'public', false, (ctx, a) => affPage(affOpen(a)));
+    def('public.affAnswer', 'public', true, (ctx, a) => {
+      const o = affOpen(a);
+      if (o.status !== 'offered') fail(`This trip is already ${AFF_STATUS[o.status].toLowerCase()}.`);
+      const t = db.trips.find((y) => y.id === o.tripId), c = findCompany(o.companyId);
+      if (!t || t.status === 'cancelled') fail(`${c.name} cancelled this trip.`);
+      if (a.accept) {
+        o.confirmNo = str(a.confirmNo, 40); o.answeredAt = now().toISOString();
+        affAct(o, a.by || o.toName, `Accepted${o.confirmNo ? ` (their conf ${o.confirmNo})` : ''}`, a.__ip);
+        setAff(o, 'accepted', `${o.toName} (outside affiliate)`, o.confirmNo ? `Their confirmation ${o.confirmNo}` : '');
+        t.affiliate = { companyId: null, companyName: o.toName, companyPhone: '', ref: o.confirmNo || '', driver: null, vehicle: null, outside: true };
+        officeMail(c, t, 'aff_accepted', [`${o.toName} accepted ${t.ref}${o.confirmNo ? `. Their confirmation number is ${o.confirmNo}` : ''}.`, '', `Pickup: ${fmtLocal(t.pickupAt, c, true)}, ${t.pickup}`, `You pay them: $${money(o.rate)}`].join('\n'));
+      } else {
+        o.reason = str(a.reason, 200);
+        affAct(o, o.toName, `Declined${o.reason ? ': ' + o.reason : ''}`, a.__ip);
+        setAff(o, 'declined', `${o.toName} (outside affiliate)`, o.reason);
+        if (t.status !== 'cancelled') { t.status = 'confirmed'; t.needsDriver = { at: now().toISOString(), why: `${o.toName} declined${o.reason ? ': ' + o.reason : ''}` }; }
+        officeMail(c, t, 'aff_declined', [`${o.toName} declined ${t.ref}${o.reason ? `: ${o.reason}` : '.'}`, '', `Pickup: ${fmtLocal(t.pickupAt, c, true)}, ${t.pickup}`, 'The trip is back with you. Assign a driver or send it to another affiliate.'].join('\n'));
+      }
+      return affPage(o);
+    });
+    def('public.affChauffeur', 'public', true, (ctx, a) => {
+      const o = affOpen(a);
+      if (o.status !== 'accepted') fail('Accept the trip first.');
+      const t = db.trips.find((y) => y.id === o.tripId);
+      const name = str(a.name, 60);
+      if (!name) fail('Enter the chauffeur name.');
+      const had = !!(o.chauffeur && o.chauffeur.name);
+      o.chauffeur = { name, phone: str(a.phone, 30), vehicle: str(a.vehicle, 60) || t.vehicleType, plate: str(a.plate, 15).toUpperCase(), color: str(a.color, 20) };
+      t.affiliate = { ...(t.affiliate || {}), companyName: o.toName, ref: o.confirmNo || '', outside: true, driver: { name: o.chauffeur.name, phone: o.chauffeur.phone, photo: '' }, vehicle: { name: o.chauffeur.vehicle, type: t.vehicleType, plate: o.chauffeur.plate, capacity: t.passengers, color: o.chauffeur.color } };
+      affAct(o, o.toName, `Chauffeur ${name}${o.chauffeur.plate ? `, plate ${o.chauffeur.plate}` : ''}`, a.__ip);
+      log(t, 'aff_chauffeur', `${o.toName} (outside affiliate)`, `${name}, ${o.chauffeur.vehicle}${o.chauffeur.plate ? ' ' + o.chauffeur.plate : ''}`);
+      // The passenger hears about the chauffeur once, like when our own driver accepts.
+      if (!had && t.status === 'confirmed') { t.status = 'accepted'; notify(t, 'accepted'); }
+      return affPage(o);
+    });
+    def('public.affStatus', 'public', true, (ctx, a) => {
+      const o = affOpen(a);
+      if (o.status !== 'accepted') fail('Accept the trip first.');
+      const t = db.trips.find((y) => y.id === o.tripId);
+      if (!o.chauffeur) fail('Add the chauffeur and vehicle first.');
+      const want = str(a.status, 20);
+      const next = AFF_STEPS[t.status === 'confirmed' ? 'accepted' : t.status];
+      if (want !== next) fail('That step is already done. Refresh the page.');
+      t.status = want; delete t.noShowAsk;
+      log(t, want, `${o.chauffeur.name} (${o.toName})`);
+      affAct(o, o.toName, STATUS_LABELS[want], a.__ip);
+      if (want === 'en_route') startTracking(t);
+      notify(t, want);
+      if (want === 'completed') { o.completedAt = now().toISOString(); setAff(o, 'completed', o.toName); }
+      return affPage(o);
+    });
+    def('public.affNoShow', 'public', true, (ctx, a) => {
+      const o = affOpen(a);
+      const t = db.trips.find((y) => y.id === o.tripId), c = findCompany(o.companyId);
+      if (o.status !== 'accepted' || t.status !== 'arrived') fail('Press Arrived first.');
+      if (t.noShowAsk) fail('The office already has your no-show request.');
+      const w = waitInfo(t);
+      const waitedMin = Math.max(0, Math.round((now().getTime() - new Date(w.from).getTime()) / 60e3));
+      t.noShowAsk = { at: now().toISOString(), by: `${o.chauffeur ? o.chauffeur.name : o.toName} (${o.toName})`, waitedMin, note: str(a.note, 200) };
+      log(t, 'no_show_asked', t.noShowAsk.by, `Waited ${waitedMin} min`);
+      affAct(o, o.toName, 'No-show request', a.__ip);
+      officeMail(c, t, 'noshow_ask', [`${t.noShowAsk.by} reports a no-show on ${t.ref} and is waiting for your OK.`, '', `Passenger: ${t.passengerName || '-'} (${t.passengerPhone || 'no phone'})`, `Pickup: ${t.pickup}`, `Waited: ${waitedMin} min`, ...(t.noShowAsk.note ? [`Note: ${t.noShowAsk.note}`] : [])].join('\n'));
+      return affPage(o);
+    });
+    def('public.affLocation', 'public', true, (ctx, a) => {
+      const o = affOpen(a);
+      const t = db.trips.find((y) => y.id === o.tripId);
+      if (o.status !== 'accepted' || t.status !== 'en_route' || !t.tracking) return { ok: false };
+      const lat = Number(a.lat), lng = Number(a.lng);
+      if (!(Math.abs(lat) <= 90 && Math.abs(lng) <= 180)) fail('Bad location.');
+      t.tracking.gps = { lat, lng, acc: Math.round(num(a.accuracy, 0)), at: now().toISOString() };
+      return { ok: true };
+    });
+    def('public.affExtras', 'public', true, (ctx, a) => {
+      const o = affOpen(a);
+      const t = db.trips.find((y) => y.id === o.tripId), c = findCompany(o.companyId);
+      if (!(o.status === 'completed' || (o.status === 'accepted' && ['on_board', 'completed'].includes(t.status)))) fail('Extras can be sent once the passenger is in the car.');
+      if (o.extras && o.extras.approved) fail('The office already approved your extras.');
+      const waitMin = Math.min(600, Math.max(0, Math.round(num(a.waitMin, 0))));
+      const tolls = Math.min(1000, Math.max(0, round2(num(a.tolls, 0)))), parking = Math.min(1000, Math.max(0, round2(num(a.parking, 0))));
+      const r = findCompany(t.companyId).rates;
+      const amount = round2(waitMin * num(r.waitPerMin, 0) + tolls + parking);
+      o.extras = { waitMin, tolls, parking, note: str(a.note, 300), amount, at: now().toISOString() };
+      affAct(o, o.toName, `Extras sent: $${money(amount)}`, a.__ip);
+      log(t, 'aff_extras', `${o.toName} (outside affiliate)`, `Asked for extras: ${waitMin} min wait, $${money(tolls)} tolls, $${money(parking)} parking`);
+      officeMail(c, t, 'aff_extras', [`${o.toName} sent extras for ${t.ref}. Approve them in the trip window before the card is charged.`, '', `Extra wait: ${waitMin} min`, `Tolls: $${money(tolls)}`, `Parking: $${money(parking)}`, ...(o.extras.note ? [`Note: ${o.extras.note}`] : [])].join('\n'));
+      return affPage(o);
+    });
+    def('public.affGotIt', 'public', true, (ctx, a) => {
+      const o = affOpen(a);
+      if (!o.changeAt) fail('Nothing to confirm.');
+      o.gotItAt = now().toISOString();
+      affAct(o, o.toName, 'Got it (trip change)', a.__ip);
+      const t = db.trips.find((y) => y.id === o.tripId);
+      if (t) log(t, 'aff_gotit', `${o.toName} (outside affiliate)`, 'Saw the trip change');
+      return affPage(o);
+    });
+
+    // ---- Trips sent to us (farm-in) ----
+    const affByKey = (key) => (db.outsideAffs || []).find((x) => x.key && !x.removed && x.key === str(key, 80));
+    def('public.affSendInfo', 'public', false, (ctx, a) => {
+      const x = affByKey(a.key);
+      if (!x) fail('This link is not valid. Ask the company for a new one.', 404);
+      const c = findCompany(x.companyId);
+      return { company: pubCompany(c), slug: c.slug, affiliate: x.name, vehicleTypes: vehicleTypesFor(c), rates: c.rates, addons: c.pricing.addons };
+    });
+    def('public.affSend', 'public', true, (ctx, a) => {
+      const x = affByKey(a.key);
+      if (!x) fail('This link is not valid. Ask the company for a new one.', 404);
+      const c = findCompany(x.companyId);
+      const acc = affAccount(c, x);
+      const theirRef = str(a.theirRef, 40);
+      const made = [];
+      const raw = { ...(a.booking || {}), accountId: acc.id, payCash: false, landing: null, repeat: null };
+      const [b, rb] = bookingPair(c, raw, {});
+      if (!b.passengerName) fail('Enter the passenger name.');
+      const mb = moreBookings(c, raw, b, {});
+      const by = `${x.name} (outside affiliate)`;
+      const tag = (t) => { t.affIn = { affId: x.id, name: x.name, theirRef, pending: true, token: randomId(16), passengerMsgs: !!x.passengerMsgs, email: x.email }; made.push(t); return t; };
+      const first = tag(newTrip(c, b, null, 'affiliate', by, '', true));
+      if (rb) linkReturn(first, tag(newTrip(c, rb, null, 'affiliate', by, '', true)));
+      for (const m of bookMore(c, first, mb, null, 'affiliate', by)) tag(m);
+      const lines = made.map((t) => `${t.ref}: ${fmtLocal(t.pickupAt, c, true)}, ${t.pickup}${t.dropoff ? ' to ' + t.dropoff : ''}, ${t.vehicleType}, ${t.passengers} pax`);
+      officeMail(c, made[0], 'aff_in', [`${x.name} sent you ${made.length === 1 ? 'a trip' : made.length + ' trips'}${theirRef ? ` (their ref ${theirRef})` : ''}. Accept or decline on the Board.`, '', ...lines].join('\n'));
+      affMail(c, x, made[0], 'aff_in_got', [`${c.name}:`, `We received your ${made.length === 1 ? 'trip' : made.length + ' trips'}${theirRef ? ` (your ref ${theirRef})` : ''}. We will confirm shortly.`, '', ...made.map((t) => `${t.ref}: ${fmtLocal(t.pickupAt, c, true)}, ${t.pickup}`), '', ...made.map((t) => `Status page for ${t.ref}: ${siteOf(c)}#affin.${t.affIn.token}`)].join('\n'));
+      return { trips: made.map((t) => ({ ref: t.ref, pickupAt: t.pickupAt, pickup: t.pickup, total: t.price.total, statusLink: `${siteOf(c)}#affin.${t.affIn.token}` })) };
+    });
+    // Office answers a trip an affiliate sent us.
+    def('aff.inAnswer', STAFF, true, (ctx, a) => {
+      const c = ctx.company, t = ownTrip(ctx, a.id);
+      if (!t.affIn || !t.affIn.pending) fail('This trip is not waiting for an answer.');
+      const x = (db.outsideAffs || []).find((y) => y.id === t.affIn.affId);
+      t.affIn.pending = false;
+      if (a.accept) {
+        t.affIn.acceptedAt = now().toISOString();
+        log(t, 'aff_in_accepted', ctx.user.name, `Accepted from ${t.affIn.name}`);
+        if (x) affMail(c, x, t, 'aff_in_ok', [`${c.name}:`, `Confirmed: ${t.ref}${t.affIn.theirRef ? ` (your ref ${t.affIn.theirRef})` : ''}. Our confirmation number is ${t.ref}.`, '', affSheet(t, c, null), `Price: $${money(t.price.total)} (billed to your account)`, '', `Status page: ${siteOf(c)}#affin.${t.affIn.token}`].join('\n'));
+        if (t.affIn.passengerMsgs) notify(t, 'booked');
+        sweepDispatch(c, true);
+      } else {
+        t.affIn.declined = now().toISOString();
+        t.status = 'cancelled';
+        log(t, 'cancelled', ctx.user.name, `Declined trip from ${t.affIn.name}${a.reason ? ': ' + str(a.reason, 200) : ''}`);
+        if (x) affMail(c, x, t, 'aff_in_no', [`${c.name}:`, `Sorry, we can't take ${t.affIn.theirRef ? `your trip ${t.affIn.theirRef}` : 'this trip'} on ${fmtLocal(t.pickupAt, c, true)}${a.reason ? `: ${str(a.reason, 200)}` : '.'}`, '', affSheet(t, c, null)].join('\n'));
+      }
+      return tripView(t);
+    });
+    def('public.affInTrip', 'public', false, (ctx, a) => {
+      const tok = str(a.token, 80);
+      const t = tok && db.trips.find((y) => y.affIn && y.affIn.token === tok);
+      if (!t) fail('This trip link is not valid.', 404);
+      const c = findCompany(t.companyId), v = tripView(t);
+      return {
+        company: pubCompany(c), ref: t.ref, theirRef: t.affIn.theirRef, state: t.affIn.pending ? 'Waiting for confirmation' : t.affIn.declined ? 'Declined' : t.noShow ? 'No-show' : STATUS_LABELS[t.status],
+        status: t.status, pending: !!t.affIn.pending, declined: !!t.affIn.declined, pickupAt: t.pickupAt, pickup: t.pickup, dropoff: t.dropoff, passengerName: t.passengerName, total: t.price.total,
+        driver: v.driver && !t.affIn.pending ? { name: v.driver.name, phone: ['accepted', 'en_route', 'arrived', 'on_board'].includes(t.status) ? v.driver.phone : '' } : null,
+        vehicle: v.vehicle && !t.affIn.pending ? { name: v.vehicle.name, plate: v.vehicle.plate, color: v.vehicle.color || '' } : null,
+        track: t.trackToken && ['en_route', 'arrived'].includes(t.status) ? `${siteOf(c)}#track.${t.trackToken}` : '',
+      };
+    });
+    // Status emails to the affiliate for trips they sent us.
+    function affInNotify(t, kind) {
+      if (!t.affIn || t.affIn.pending || t.affIn.declined || !t.affIn.email) return;
+      const c = findCompany(t.companyId), v = tripView(t);
+      const label = { accepted: 'Chauffeur assigned', en_route: 'Chauffeur on the way', arrived: 'Chauffeur arrived', completed: 'Trip completed', cancelled: 'Trip cancelled', no_show: 'Passenger no-show' }[kind];
+      if (!label) return;
+      const body = [`${c.name}:`, `${label}: ${t.ref}${t.affIn.theirRef ? ` (your ref ${t.affIn.theirRef})` : ''}`, '',
+        ...(v.driver ? [`Chauffeur: ${v.driver.name}`, ...(v.driver.phone ? [`Chauffeur Mobile: ${v.driver.phone}`] : [])] : []),
+        ...(v.vehicle ? [`Vehicle: ${v.vehicle.name}`, ...(v.vehicle.plate ? [`License Plate: ${v.vehicle.plate}`] : [])] : []),
+        `Pickup Date and Time: ${fmtLocal(t.pickupAt, c, true)}`, `Pickup Address: ${t.pickup}`, ...(kind === 'completed' ? [`Total: $${money(t.price.total)}`] : []),
+        '', `Status page: ${siteOf(c)}#affin.${t.affIn.token}`].join('\n');
+      db.messages.unshift({ id: id('msg'), companyId: c.id, tripId: t.id, ref: t.ref, at: now().toISOString(), recipient: t.affIn.email, channel: 'email', kind: 'aff_in_status', body });
+    }
+    // Runs in the dispatch sweep: an offer nobody answered in time comes back.
+    function sweepAffiliates(c) {
+      let changed = false;
+      const n = now().toISOString();
+      for (const o of db.affOffers || []) {
+        if (o.companyId !== c.id || o.status !== 'offered') continue;
+        const t = db.trips.find((y) => y.id === o.tripId);
+        if (!t || t.status === 'cancelled') { setAff(o, 'cancelled', 'System', 'Trip cancelled'); changed = true; continue; }
+        if (o.answerBy > n) continue;
+        setAff(o, 'expired', 'System', `No answer from ${o.toName}`);
+        t.status = 'confirmed';
+        t.needsDriver = { at: n, why: `${o.toName} did not answer in time` };
+        officeMail(c, t, 'aff_expired', [`${o.toName} did not answer the offer for ${t.ref} in time. The trip is back with you.`, '', `Pickup: ${fmtLocal(t.pickupAt, c, true)}, ${t.pickup}`].join('\n'));
+        const x = (db.outsideAffs || []).find((y) => y.id === o.affId);
+        if (x) affMail(c, x, t, 'aff_cancel', [`${c.name}:`, `The offer for ${t.ref} has closed. You don't need to cover it.`].join('\n'));
+        changed = true;
+      }
+      // The office cancelled a trip that's with an affiliate: tell them once.
+      for (const o of db.affOffers || []) {
+        if (o.companyId !== c.id || o.status !== 'accepted') continue;
+        const t = db.trips.find((y) => y.id === o.tripId);
+        if (!t || t.status !== 'cancelled') continue;
+        setAff(o, t.noShow ? 'completed' : 'cancelled', 'System', t.noShow ? 'No-show' : 'Trip cancelled');
+        if (t.noShow) o.completedAt = n;
+        const x = (db.outsideAffs || []).find((y) => y.id === o.affId);
+        if (x && !t.noShow) affMail(c, x, t, 'aff_cancel', [`${c.name}:`, `Trip ${t.ref}${o.confirmNo ? ` (your ${o.confirmNo})` : ''} is cancelled. You don't need to cover it.`].join('\n'), { sms: `${c.name}: trip ${t.ref} is cancelled.` });
+        changed = true;
+      }
+      return changed;
+    }
+
     def('network.overview', STAFF, false, (ctx) => {
       const me = ctx.company;
       const members = db.companies.filter((c) => c.id !== me.id && isMember(c)).map((c) => memberCard(c, me));
@@ -4378,7 +4803,7 @@
         changed = true;
       }
       for (const t of db.trips) {
-        if (t.companyId !== c.id || t.farmIn || t.farmout || t.driverId || t.outOfTown || t.status !== 'confirmed') continue;
+        if (t.companyId !== c.id || t.farmIn || (t.affIn && t.affIn.pending) || t.farmout || t.driverId || t.outOfTown || t.status !== 'confirmed') continue;
         if (t.autoFarm && (t.autoFarm.stopped || t.autoFarm.exhausted)) continue;
         const pickMs = new Date(t.pickupAt).getTime();
         if (pickMs <= nowMs + 15 * 60e3) continue;

@@ -151,7 +151,7 @@ function limited(ip) {
 
 // Hosts put the app behind a proxy; only then is X-Forwarded-For the visitor.
 const clientIp = (req) => (TRUST_PROXY && String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()) || req.socket.remoteAddress;
-const LIMITED = new Set(['auth.login', 'auth.signup', 'public.requestQuote', 'public.acceptQuote', 'public.rate', 'public.requestTrial', 'auth.changeEmail', 'public.forgotPassword', 'public.setPassword', 'owner.testEmail', 'owner.testSms', 'public.companySignup', 'public.guestBook']);
+const LIMITED = new Set(['auth.login', 'auth.signup', 'public.requestQuote', 'public.acceptQuote', 'public.rate', 'public.requestTrial', 'auth.changeEmail', 'public.forgotPassword', 'public.setPassword', 'owner.testEmail', 'owner.testSms', 'public.companySignup', 'public.guestBook', 'public.affAnswer', 'public.affChauffeur', 'public.affStatus', 'public.affNoShow', 'public.affExtras', 'public.affGotIt', 'public.affSend']);
 
 // ---- Outside services ---------------------------------------------------------
 
@@ -422,6 +422,7 @@ const server = http.createServer((req, res) => {
     if (LIMITED.has(method) && limited(clientIp(req) + method)) {
       return send(res, 429, { ok: false, error: 'Too many attempts. Wait a few minutes and try again.' });
     }
+    if (method.startsWith('public.aff') && args && typeof args === 'object') args.__ip = String(clientIp(req) || '').slice(0, 64);
     const auth = req.headers.authorization || '';
     const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
     try {
