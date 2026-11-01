@@ -4143,7 +4143,8 @@
       v.innerHTML = `<div class="pagehead"><h1>Trips</h1><div class="row"><button class="btn" type="button" id="t-import">Import from a spreadsheet</button><button class="btn primary" type="button" id="t-new">New booking</button></div></div>
         <div class="row" style="margin-bottom:14px"><input class="input" style="max-width:320px" id="t-q" type="search" placeholder="Search name, reference, address, flight">
           <div class="seg" id="t-when">${[['upcoming', 'Upcoming'], ['past', 'Past'], ['all', 'All']].map(([k, l]) => `<button type="button" data-when="${k}" aria-pressed="${k === 'upcoming'}">${l}</button>`).join('')}</div>
-          <select class="input" style="width:auto" id="t-status"><option value="">All statuses</option><option value="active">In progress</option>${Object.entries(C.STATUS_LABELS).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select></div>
+          <select class="input" style="width:auto" id="t-status"><option value="">All statuses</option><option value="active">In progress</option>${Object.entries(C.STATUS_LABELS).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select>
+          <button class="btn sm" type="button" id="t-delall" hidden>Delete all cancelled</button></div>
         <div id="t-list"></div>`;
       let last = '';
       async function refresh(silent) {
@@ -4156,6 +4157,7 @@
         const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
         const w = f.q || f.status ? 'all' : when;
         const all = trips.length;
+        const cancelledCount = trips.filter((t) => t.status === 'cancelled').length;
         if (w === 'upcoming') trips = trips.filter((t) => open(t) || new Date(t.pickupAt) >= dayStart).sort((x, y) => x.pickupAt.localeCompare(y.pickupAt));
         else if (w === 'past') trips = trips.filter((t) => !open(t) && new Date(t.pickupAt) < dayStart).sort((x, y) => y.pickupAt.localeCompare(x.pickupAt));
         const more = trips.length - shown;
@@ -4163,13 +4165,22 @@
         $('#t-list', v).innerHTML = trips.length ? `<div class="tablewrap"><table><thead><tr><th>Pickup</th><th>Ref</th><th>Passenger</th><th>Route</th><th>Vehicle</th><th>Driver</th><th>Status</th><th class="r">Total</th><th></th></tr></thead><tbody>
           ${trips.map((t) => `<tr class="click" data-id="${t.id}"><td class="mono small" style="white-space:nowrap">${esc(fmtDT(t.pickupAt))}</td><td class="mono small">${esc(t.ref)}</td><td>${esc(t.passengerName)}</td>
             <td class="small" style="min-width:220px">${esc(t.pickup)}${t.dropoff ? `<br><span class="faint">→ ${esc(t.dropoff)}</span>` : ''}${t.flight ? `<br><span class="mono faint">✈ ${esc(t.flight)}</span>` : ''}</td><td class="small">${esc(t.vehicle ? t.vehicle.name : t.vehicleType)}</td>
-            <td class="small">${t.driver ? esc(t.driver.name) : '<span class="warntext">Unassigned</span>'}</td><td>${pill(t)}</td><td class="r num">${money(t.price.total)}<br>${payPill(t)}</td><td>${canReturn(t) ? `<button class="btn sm nowrap" type="button" data-ret="${t.id}" title="Book the ride back for ${esc(t.passengerName)}">↩ Return</button>` : ''}</td></tr>`).join('')}
+            <td class="small">${t.driver ? esc(t.driver.name) : '<span class="warntext">Unassigned</span>'}</td><td>${pill(t)}</td><td class="r num">${money(t.price.total)}<br>${payPill(t)}</td><td>${canReturn(t) ? `<button class="btn sm nowrap" type="button" data-ret="${t.id}" title="Book the ride back for ${esc(t.passengerName)}">↩ Return</button>` : ''}${t.status === 'cancelled' ? `<button class="btn sm nowrap" type="button" data-del="${t.id}" title="Delete ${esc(t.ref)} from the trips list">Delete</button>` : ''}</td></tr>`).join('')}
           </tbody></table></div>${more > 0 ? `<div class="row" style="justify-content:center;margin-top:12px"><button class="btn" type="button" id="t-more">Show ${Math.min(more, 50)} more</button></div>` : ''}` : `<div class="panel muted">${all && w !== 'all' ? `No ${w} trips. <button type="button" class="linkbtn" data-when="all">See all trips</button>` : 'No trips match.'}</div>`;
         $$('tr[data-id]', v).forEach((r) => { r.onclick = () => tripModal(r.dataset.id, () => { last = ''; refresh(); }); });
         $$('[data-ret]', v).forEach((b) => { b.onclick = (e) => {
           e.stopPropagation();
           returnModal(trips.find((x) => x.id === b.dataset.ret), (r) => { closeModal(); toast(`Return trip ${r.ref} booked. We sent ${r.passengerName || 'the passenger'} a confirmation.${r.landingTrip ? ` The pickup where they land is ${r.landingTrip.ref}.` : ''}`); last = ''; refresh(); tripModal(r.id, () => { last = ''; refresh(); }); });
         }; });
+        // Cancelled trips can be deleted from the list (reports keep them).
+        const delTrips = async (args, msg) => {
+          if (!confirm(msg)) return;
+          try { const r = await api('dispatch.deleteCancelled', args); toast(`Deleted ${r.deleted} cancelled trip${r.deleted === 1 ? '' : 's'}.`); last = ''; refresh(); } catch (e) { toast(e.message, true); }
+        };
+        $$('[data-del]', v).forEach((b) => { b.onclick = (e) => { e.stopPropagation(); const t = trips.find((x) => x.id === b.dataset.del); delTrips({ ids: [t.id] }, `Delete cancelled trip ${t.ref}? It disappears from the trips list.`); }; });
+        const nCancelled = cancelledCount;
+        const da = $('#t-delall', v); da.hidden = !nCancelled;
+        da.onclick = () => delTrips({ all: true }, 'Delete all cancelled trips? They disappear from the trips list.');
         const mb = $('#t-more', v); if (mb) mb.onclick = () => { shown += 50; refresh(); };
         $$('#t-list [data-when]', v).forEach((b) => { b.onclick = () => setWhen(b.dataset.when); });
       }

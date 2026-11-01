@@ -2084,7 +2084,7 @@
     };
     const PERM_OF = {};
     for (const [perm, names] of Object.entries({
-      bookings: ['dispatch.createTrip', 'dispatch.updateTrip', 'dispatch.resendConfirmation', 'dispatch.sendReceipt', 'dispatch.setStatus', 'dispatch.cancelSeries', 'dispatch.noShow', 'dispatch.noShowNo', 'dispatch.importTrips', 'dispatch.applyFlight', 'dispatch.sendCardLink', 'dispatch.inboxSend', 'dispatch.saveQuote', 'dispatch.sendQuote', 'dispatch.quoteAction'],
+      bookings: ['dispatch.createTrip', 'dispatch.deleteCancelled', 'dispatch.updateTrip', 'dispatch.resendConfirmation', 'dispatch.sendReceipt', 'dispatch.setStatus', 'dispatch.cancelSeries', 'dispatch.noShow', 'dispatch.noShowNo', 'dispatch.importTrips', 'dispatch.applyFlight', 'dispatch.sendCardLink', 'dispatch.inboxSend', 'dispatch.saveQuote', 'dispatch.sendQuote', 'dispatch.quoteAction'],
       assign: ['dispatch.assign', 'dispatch.autoAssign', 'network.offer', 'network.respond', 'network.cancelOffer', 'network.handBack'],
       payments: ['dispatch.chargeCard', 'dispatch.markPaid', 'network.settle'],
       customers: ['dispatch.saveCustomer', 'dispatch.sendCustomerLogin', 'dispatch.saveAccount', 'dispatch.accountBooker', 'dispatch.bizRequests', 'dispatch.reviewBiz', 'dispatch.createInvoice', 'dispatch.invoiceAction', 'dispatch.invoices', 'dispatch.invoice'],
@@ -3048,7 +3048,7 @@
       if (monitorFlights(ctx.company)) ctx.dirty = true;
       const from = new Date(a.from), to = new Date(a.to);
       if (isNaN(from) || isNaN(to)) fail('Choose a day.');
-      const trips = db.trips.filter((t) => t.companyId === ctx.company.id && t.pickupAt >= from.toISOString() && t.pickupAt < to.toISOString())
+      const trips = db.trips.filter((t) => t.companyId === ctx.company.id && !t.officeDeleted && t.pickupAt >= from.toISOString() && t.pickupAt < to.toISOString())
         .sort((x, y) => x.pickupAt.localeCompare(y.pickupAt)).map(tripView);
       const day = localParts(new Date((from.getTime() + to.getTime()) / 2).toISOString(), ctx.company.timezone).date;
       const drivers = db.users.filter((u) => u.companyId === ctx.company.id && u.role === 'driver' && u.active !== false)
@@ -3092,13 +3092,24 @@
       else fail('Unknown step.');
       return setupSteps(c);
     });
+    // Delete cancelled trips from the office lists (one, some, or all of them).
+    // The trip stays in the records, so reports, cancel fees and refunds still add up.
+    def('dispatch.deleteCancelled', STAFF, true, (ctx, a) => {
+      const ids = a.all ? null : new Set((Array.isArray(a.ids) ? a.ids : [a.id]).map((x) => str(x, 40)));
+      const list = db.trips.filter((t) => t.companyId === ctx.company.id && !t.officeDeleted && (!ids || ids.has(t.id)));
+      if (ids && list.some((t) => t.status !== 'cancelled')) fail('Only cancelled trips can be deleted.');
+      const gone = list.filter((t) => t.status === 'cancelled');
+      const at = now().toISOString();
+      for (const t of gone) { t.officeDeleted = at; log(t, 'cancelled', ctx.user.name, 'Deleted from the trips list'); }
+      return { deleted: gone.length };
+    });
     def('dispatch.trips', STAFF, false, (ctx, a) => {
       const q = str(a.q, 80).toLowerCase();
       const status = str(a.status, 20);
       const iso = (x) => { const d = new Date(x); return x && !isNaN(d) ? d.toISOString() : null; };
       const range = iso(a.from) && iso(a.to) ? [iso(a.from), iso(a.to)] : null;
       if (range && new Date(range[1]) - new Date(range[0]) > 62 * 86400e3) fail('Pick a range of two months or less.');
-      return db.trips.filter((t) => t.companyId === ctx.company.id)
+      return db.trips.filter((t) => t.companyId === ctx.company.id && !t.officeDeleted)
         .filter((t) => !status || (status === 'active' ? ACTIVE.includes(t.status) : t.status === status))
         .filter((t) => !q || [t.ref, t.passengerName, t.pickup, t.dropoff, t.flight, t.passengerPhone].join(' ').toLowerCase().includes(q))
         // A date range (the calendar) returns every trip in it; otherwise the newest 300.
@@ -3123,7 +3134,7 @@
       const users = db.users.filter((u) => u.companyId === cid);
       const nameOf = (id) => (users.find((u) => u.id === id) || {}).name || '';
       // Upcoming trips first (soonest first), then past trips (newest first).
-      out.trips = db.trips.filter((t) => t.companyId === cid && hit([t.ref, t.passengerName, t.passengerEmail, t.pickup, t.dropoff, t.flight, t.signName, nameOf(t.driverId)], [t.passengerPhone]))
+      out.trips = db.trips.filter((t) => t.companyId === cid && !t.officeDeleted && hit([t.ref, t.passengerName, t.passengerEmail, t.pickup, t.dropoff, t.flight, t.signName, nameOf(t.driverId)], [t.passengerPhone]))
         .sort((x, y) => { const ux = x.pickupAt >= nowIso, uy = y.pickupAt >= nowIso; return ux !== uy ? (ux ? -1 : 1) : ux ? x.pickupAt.localeCompare(y.pickupAt) : y.pickupAt.localeCompare(x.pickupAt); })
         .slice(0, 8).map((t) => ({ id: t.id, ref: t.ref, passengerName: t.passengerName, pickupAt: t.pickupAt, pickup: t.pickup, dropoff: t.dropoff, status: t.status, statusLabel: t.noShow ? 'No-show' : STATUS_LABELS[t.status] }));
       out.customers = users.filter((u) => u.role === 'customer' && hit([u.name, u.email, u.agent && u.agent.agency], [u.phone])).slice(0, 6).map((u) => ({ id: u.id, name: u.name, email: u.email || '', phone: u.phone || '', agent: !!u.agent }));
