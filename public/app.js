@@ -4142,20 +4142,31 @@
       const f = { q: '', status: '' };
       v.innerHTML = `<div class="pagehead"><h1>Trips</h1><div class="row"><button class="btn" type="button" id="t-import">Import from a spreadsheet</button><button class="btn primary" type="button" id="t-new">New booking</button></div></div>
         <div class="row" style="margin-bottom:14px"><input class="input" style="max-width:320px" id="t-q" type="search" placeholder="Search name, reference, address, flight">
-          <div class="seg" id="t-when">${[['upcoming', 'Upcoming'], ['past', 'Past'], ['all', 'All']].map(([k, l]) => `<button type="button" data-when="${k}" aria-pressed="${k === 'upcoming'}">${l}</button>`).join('')}</div>
+          <div class="seg" id="t-when">${[['today', 'Today'], ['week', 'This week'], ['month', 'This month'], ['upcoming', 'Upcoming'], ['past', 'Past'], ['all', 'All']].map(([k, l]) => `<button type="button" data-when="${k}" aria-pressed="${k === 'upcoming'}">${l}</button>`).join('')}</div>
           <select class="input" style="width:auto" id="t-status"><option value="">All statuses</option><option value="active">In progress</option>${Object.entries(C.STATUS_LABELS).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select>
           <button class="btn sm" type="button" id="t-delall" hidden>Delete all cancelled</button></div>
         <div id="t-list"></div>`;
       let last = '';
+      // Today, this week (Monday to Sunday) and this month ask for that date range.
+      const rangeOf = (k) => {
+        const a = new Date(); a.setHours(0, 0, 0, 0);
+        if (k === 'week') a.setDate(a.getDate() - ((a.getDay() + 6) % 7));
+        if (k === 'month') a.setDate(1);
+        const b = new Date(a);
+        if (k === 'today') b.setDate(b.getDate() + 1); else if (k === 'week') b.setDate(b.getDate() + 7); else b.setMonth(b.getMonth() + 1);
+        return { from: a.toISOString(), to: b.toISOString() };
+      };
       async function refresh(silent) {
         let trips;
-        try { trips = await api('dispatch.trips', f); } catch (e) { if (!silent) showErr($('#t-list', v), e); return; }
+        const inRange = ['today', 'week', 'month'].includes(when);
+        try { trips = await api('dispatch.trips', inRange ? { ...f, ...rangeOf(when) } : f); } catch (e) { if (!silent) showErr($('#t-list', v), e); return; }
         const sig = JSON.stringify(trips) + when + shown; if (sig === last) return; last = sig;
         // Upcoming (soonest first) by default; past trips newest first. A search or
         // status filter looks through everything.
         const open = (t) => !['completed', 'cancelled'].includes(t.status);
         const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
-        const w = f.q || f.status ? 'all' : when;
+        const w = inRange ? 'range' : f.q || f.status ? 'all' : when;
+        if (w === 'range') trips.sort((x, y) => x.pickupAt.localeCompare(y.pickupAt));
         const all = trips.length;
         const cancelledCount = trips.filter((t) => t.status === 'cancelled').length;
         if (w === 'upcoming') trips = trips.filter((t) => open(t) || new Date(t.pickupAt) >= dayStart).sort((x, y) => x.pickupAt.localeCompare(y.pickupAt));
@@ -4166,7 +4177,7 @@
           ${trips.map((t) => `<tr class="click" data-id="${t.id}"><td class="mono small" style="white-space:nowrap">${esc(fmtDT(t.pickupAt))}</td><td class="mono small">${esc(t.ref)}</td><td>${esc(t.passengerName)}</td>
             <td class="small" style="min-width:220px">${esc(t.pickup)}${t.dropoff ? `<br><span class="faint">→ ${esc(t.dropoff)}</span>` : ''}${t.flight ? `<br><span class="mono faint">✈ ${esc(t.flight)}</span>` : ''}</td><td class="small">${esc(t.vehicle ? t.vehicle.name : t.vehicleType)}</td>
             <td class="small">${t.driver ? esc(t.driver.name) : '<span class="warntext">Unassigned</span>'}</td><td>${pill(t)}</td><td class="r num">${money(t.price.total)}<br>${payPill(t)}</td><td>${canReturn(t) ? `<button class="btn sm nowrap" type="button" data-ret="${t.id}" title="Book the ride back for ${esc(t.passengerName)}">↩ Return</button>` : ''}<button class="btn sm nowrap" type="button" data-del="${t.id}" title="Delete ${esc(t.ref)}">Delete</button></td></tr>`).join('')}
-          </tbody></table></div>${more > 0 ? `<div class="row" style="justify-content:center;margin-top:12px"><button class="btn" type="button" id="t-more">Show ${Math.min(more, 50)} more</button></div>` : ''}` : `<div class="panel muted">${all && w !== 'all' ? `No ${w} trips. <button type="button" class="linkbtn" data-when="all">See all trips</button>` : 'No trips match.'}</div>`;
+          </tbody></table></div>${more > 0 ? `<div class="row" style="justify-content:center;margin-top:12px"><button class="btn" type="button" id="t-more">Show ${Math.min(more, 50)} more</button></div>` : ''}` : `<div class="panel muted">${w === 'range' ? `No trips ${{ today: 'today', week: 'this week', month: 'this month' }[when]}.` : all && w !== 'all' ? `No ${w} trips. <button type="button" class="linkbtn" data-when="all">See all trips</button>` : 'No trips match.'}</div>`;
         $$('tr[data-id]', v).forEach((r) => { r.onclick = () => tripModal(r.dataset.id, () => { last = ''; refresh(); }); });
         $$('[data-ret]', v).forEach((b) => { b.onclick = (e) => {
           e.stopPropagation();
