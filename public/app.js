@@ -4466,7 +4466,7 @@
     // Trips ------------------------------------------------------------------
     function drawTrips(v) {
       const f = { q: '', status: '' };
-      v.innerHTML = `<div class="pagehead"><h1>Trips</h1><div class="row"><button class="btn" type="button" id="t-bin">&#128465; Deleted trips</button><button class="btn" type="button" id="t-import">Import from a spreadsheet</button><button class="btn primary" type="button" id="t-new">New booking</button></div></div>
+      v.innerHTML = `<div class="pagehead"><div class="row" style="gap:12px;align-items:baseline"><h1>Trips</h1><span class="tcount" id="t-count"></span></div><div class="row"><button class="btn" type="button" id="t-bin">&#128465; Deleted trips</button><button class="btn" type="button" id="t-import">Import from a spreadsheet</button><button class="btn primary" type="button" id="t-new">New booking</button></div></div>
         <div class="row" style="margin-bottom:14px"><input class="input" style="max-width:320px" id="t-q" type="search" placeholder="Search name, reference, address, flight">
           <div class="seg" id="t-when">${[['today', 'Today'], ['week', 'This week'], ['month', 'This month'], ['upcoming', 'Upcoming'], ['past', 'Past'], ['all', 'All']].map(([k, l]) => `<button type="button" data-when="${k}" aria-pressed="${k === 'upcoming'}">${l}</button>`).join('')}</div>
           <select class="input" style="width:auto" id="t-status"><option value="">All statuses</option><option value="active">In progress</option>${Object.entries(C.STATUS_LABELS).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select>
@@ -4498,6 +4498,10 @@
         if (w === 'upcoming') trips = trips.filter((t) => open(t) || new Date(t.pickupAt) >= dayStart).sort((x, y) => x.pickupAt.localeCompare(y.pickupAt));
         else if (w === 'past') trips = trips.filter((t) => !open(t) && new Date(t.pickupAt) < dayStart).sort((x, y) => y.pickupAt.localeCompare(x.pickupAt));
         const more = trips.length - shown;
+        // Reservation count for what is on screen (the chosen dates, filter or search).
+        const cap = !inRange && all >= 300 && w !== 'upcoming' ? '+' : '';
+        const label = { range: { today: 'today', week: 'this week', month: 'this month' }[when], upcoming: 'upcoming', past: 'past', all: f.q || f.status ? 'found' : 'in total' }[w];
+        $('#t-count', v).innerHTML = `<b>${trips.length}${cap}</b> reservation${trips.length === 1 ? '' : 's'} ${esc(label)}`;
         trips = trips.slice(0, shown);
         $('#t-list', v).innerHTML = trips.length ? `<div class="tablewrap"><table><thead><tr><th>Pickup</th><th>Ref</th><th>Passenger</th><th>Route</th><th>Vehicle</th><th>Driver</th><th>Status</th><th class="r">Total</th><th></th></tr></thead><tbody>
           ${trips.map((t) => `<tr class="click" data-id="${t.id}"><td class="mono small" style="white-space:nowrap">${esc(fmtDT(t.pickupAt))}</td><td class="mono small">${esc(t.ref)}</td><td>${esc(t.passengerName)}</td>
