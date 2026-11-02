@@ -4466,7 +4466,7 @@
     // Trips ------------------------------------------------------------------
     function drawTrips(v) {
       const f = { q: '', status: '' };
-      v.innerHTML = `<div class="pagehead"><h1>Trips</h1><div class="row"><button class="btn" type="button" id="t-import">Import from a spreadsheet</button><button class="btn primary" type="button" id="t-new">New booking</button></div></div>
+      v.innerHTML = `<div class="pagehead"><h1>Trips</h1><div class="row"><button class="btn" type="button" id="t-bin">&#128465; Deleted trips</button><button class="btn" type="button" id="t-import">Import from a spreadsheet</button><button class="btn primary" type="button" id="t-new">New booking</button></div></div>
         <div class="row" style="margin-bottom:14px"><input class="input" style="max-width:320px" id="t-q" type="search" placeholder="Search name, reference, address, flight">
           <div class="seg" id="t-when">${[['today', 'Today'], ['week', 'This week'], ['month', 'This month'], ['upcoming', 'Upcoming'], ['past', 'Past'], ['all', 'All']].map(([k, l]) => `<button type="button" data-when="${k}" aria-pressed="${k === 'upcoming'}">${l}</button>`).join('')}</div>
           <select class="input" style="width:auto" id="t-status"><option value="">All statuses</option><option value="active">In progress</option>${Object.entries(C.STATUS_LABELS).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select>
@@ -4512,7 +4512,7 @@
         // Any trip can be deleted, after asking twice (reports keep it).
         const delTrips = async (args, msg) => {
           if (!confirm(msg)) return;
-          if (!confirm('Are you sure? This can\'t be undone.')) return;
+          if (!confirm('Are you sure? It goes to Deleted trips, where you can restore it for 14 days. After that it is deleted for good.')) return;
           try { const r = await api('dispatch.deleteTrips', args); toast(`Deleted ${r.deleted} trip${r.deleted === 1 ? '' : 's'}.`); last = ''; refresh(); } catch (e) { toast(e.message, true); }
         };
         $$('[data-del]', v).forEach((b) => { b.onclick = (e) => { e.stopPropagation(); const t = trips.find((x) => x.id === b.dataset.del); delTrips({ ids: [t.id] }, `Delete trip ${t.ref} for ${t.passengerName}?` + (['completed', 'cancelled'].includes(t.status) ? '' : ' This ride is not finished: it will be cancelled with no fee, the card refunded if it was charged, and it comes off the driver\'s app. The passenger is not messaged.')); }; });
@@ -4522,6 +4522,18 @@
         const mb = $('#t-more', v); if (mb) mb.onclick = () => { shown += 50; refresh(); };
         $$('#t-list [data-when]', v).forEach((b) => { b.onclick = () => setWhen(b.dataset.when); });
       }
+      // Deleted trips: kept 14 days with Restore, then deleted for good.
+      $('#t-bin', v).onclick = async () => {
+        let list;
+        try { list = await api('dispatch.deletedTrips'); } catch (e) { toast(e.message, true); return; }
+        const m = openModal({ title: 'Deleted trips', wide: true, onClose: () => { last = ''; refresh(); }, body: `<p class="small muted" style="margin-top:0">Deleted trips stay here for 14 days, then they are deleted for good.</p>
+          ${list.length ? `<div class="tablewrap"><table><thead><tr><th>Pickup</th><th>Ref</th><th>Passenger</th><th>Route</th><th>Status</th><th class="r">Total</th><th>Deleted for good</th><th></th></tr></thead><tbody>
+          ${list.map((t) => `<tr><td class="mono small" style="white-space:nowrap">${esc(fmtDT(t.pickupAt))}</td><td class="mono small">${esc(t.ref)}</td><td>${esc(t.passengerName)}</td><td class="small">${esc(t.pickup)}${t.dropoff ? `<br><span class="faint">→ ${esc(t.dropoff)}</span>` : ''}</td><td class="small">${esc(C.STATUS_LABELS[t.status] || t.status)}</td><td class="r num">${money(t.total)}</td><td class="small nowrap">${esc(fmtDate(t.goneAt))}</td><td><button class="btn sm nowrap" type="button" data-restore="${t.id}">Restore</button></td></tr>`).join('')}
+          </tbody></table></div>` : '<div class="panel muted">No deleted trips.</div>'}` });
+        $$('[data-restore]', m).forEach((b) => { b.onclick = async () => {
+          try { await api('dispatch.restoreTrips', { ids: [b.dataset.restore] }); toast('Trip restored. It is back in the trips list.'); b.closest('tr').remove(); } catch (e) { toast(e.message, true); }
+        }; });
+      };
       let when = 'upcoming', shown = 50;
       const setWhen = (k) => { when = k; shown = 50; $$('#t-when button', v).forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.when === k))); refresh(); };
       $$('#t-when button', v).forEach((b) => { b.onclick = () => setWhen(b.dataset.when); });

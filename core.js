@@ -3176,6 +3176,31 @@
       }
       return { deleted: list.length };
     });
+    // Deleted trips: kept in one place for BIN_DAYS so the office can bring one
+    // back, then removed for good by purgeDeleted() (runs with the dispatch tick).
+    const BIN_DAYS = 14;
+    const goneAt = (t) => new Date(new Date(t.officeDeleted).getTime() + BIN_DAYS * 86400e3).toISOString();
+    def('dispatch.deletedTrips', STAFF, false, (ctx) => db.trips.filter((t) => t.companyId === ctx.company.id && t.officeDeleted)
+      .sort((x, y) => y.officeDeleted.localeCompare(x.officeDeleted))
+      .map((t) => ({ id: t.id, ref: t.ref, passengerName: t.passengerName, pickupAt: t.pickupAt, pickup: t.pickup, dropoff: t.dropoff, status: t.status, total: t.price ? t.price.total : 0, deletedAt: t.officeDeleted, goneAt: goneAt(t) })));
+    def('dispatch.restoreTrips', STAFF, true, (ctx, a) => {
+      const ids = new Set((Array.isArray(a.ids) ? a.ids : [a.id]).map((x) => str(x, 40)));
+      const list = db.trips.filter((t) => t.companyId === ctx.company.id && t.officeDeleted && ids.has(t.id));
+      for (const t of list) { delete t.officeDeleted; log(t, t.status, ctx.user.name, 'Restored from Deleted trips'); }
+      return { restored: list.length };
+    });
+    function purgeDeleted() {
+      const cut = now().getTime() - BIN_DAYS * 86400e3;
+      const gone = new Set(db.trips.filter((t) => t.officeDeleted && new Date(t.officeDeleted).getTime() <= cut).map((t) => t.id));
+      if (!gone.size) return false;
+      db.trips = db.trips.filter((t) => !gone.has(t.id));
+      // Links from the trips that stay (a group of rides, a return, a landing pickup).
+      for (const t of db.trips) {
+        if (t.groupIds) t.groupIds = t.groupIds.filter((x) => !gone.has(x));
+        if (gone.has(t.groupOf)) t.groupOf = null;
+      }
+      return true;
+    }
     def('dispatch.trips', STAFF, false, (ctx, a) => {
       const q = str(a.q, 80).toLowerCase();
       const status = str(a.status, 20);
@@ -4960,7 +4985,7 @@
         netNote(me, from, `${me.name} declined ${f.ref}${f.reason ? ': ' + f.reason : '.'}`, f.id);
         return farmRow(f, me);
       }
-      if (parent.status === 'cancelled') fail('The sending company cancelled this trip.');
+      if (!parent || parent.status === 'cancelled') fail('The sending company cancelled this trip.');
       const child = acceptFarm(f, me, ctx.user.name);
       return { ...farmRow(f, me), childTripId: child.id };
     });
@@ -7132,6 +7157,7 @@
         let changed = false;
         for (const c of db.companies) if (c.status === 'active' && sweepDispatch(c, true)) changed = true;
         if (billingTick()) changed = true;
+        if (purgeDeleted()) changed = true;
         if (changed) { syncFarmouts(); syncCredits(); meterTexts(); save(db); }
         return changed;
       },
