@@ -602,7 +602,7 @@
       const flat = flatFor(company, b, type);
       if (flat) {
         fare = flat.price;
-        lines.push({ label: `${flat.name} flat rate (${type})`, amount: round2(fare), kind: 'fare', flat: true });
+        lines.push({ label: `${flat.name} flat rate, all inclusive (${type})`, amount: round2(fare), kind: 'fare', flat: true });
       } else {
         // Other rides (airport ones too) price by base fare + miles.
         const baseF = rateBy(r, 'base', type), perMi = rateBy(r, 'perMile', type);
@@ -631,8 +631,10 @@
     const ad = p.addons || DEFAULT_PRICING.addons;
     const childSeats = Math.max(0, Math.min(4, Math.round(num(b.childSeats, 0))));
     const stops = via.length || Math.max(0, Math.min(10, Math.round(num(b.stops, 0))));
-    if (childSeats) { const a = round2(childSeats * ad.childSeat); addons += a; lines.push({ label: `Child seat × ${childSeats}`, amount: a, kind: 'addon' }); }
-    if (b.meetGreet) { addons += ad.meetGreet; lines.push({ label: 'Meet & greet inside', amount: round2(ad.meetGreet), kind: 'addon' }); }
+    // A flat rate is all inclusive (Dawit 2026-11-02): gratuity, tax, surcharges and add-ons are in the
+    // price. Only changes to the trip are added: stops on the way and waiting time.
+    if (childSeats) { const a = isFlat ? 0 : round2(childSeats * ad.childSeat); addons += a; lines.push({ label: `Child seat × ${childSeats}${isFlat ? ' (included)' : ''}`, amount: a, kind: 'addon' }); }
+    if (b.meetGreet) { const a = isFlat ? 0 : round2(ad.meetGreet); addons += a; lines.push({ label: `Meet & greet inside${isFlat ? ' (included)' : ''}`, amount: a, kind: 'addon' }); }
     if (stops && service !== 'hourly') {
       const defWait = num(ad.stopWait, 10), fee = num(ad.extraStop, 0);
       if (via.length) {
@@ -662,10 +664,10 @@
       lines.push({ label: `Promo ${ctx.promo.code}`, amount: -a, kind: 'discount' });
     }
     const subtotal = round2(pre - discounts);
-    const gratuity = round2(subtotal * r.gratuityPct / 100);
-    const tax = round2(subtotal * r.taxPct / 100);
+    const gratuity = isFlat ? 0 : round2(subtotal * r.gratuityPct / 100);
+    const tax = isFlat ? 0 : round2(subtotal * r.taxPct / 100);
     const waitMin = Math.max(0, num(b.waitMin, 0));
-    const tolls = Math.max(0, num(b.tolls, 0));
+    const tolls = isFlat ? 0 : Math.max(0, num(b.tolls, 0));
     const extras = round2(waitMin * r.waitPerMin + tolls);
     if (gratuity) lines.push({ label: `Gratuity ${r.gratuityPct}%`, amount: gratuity, kind: 'gratuity' });
     if (tax) lines.push({ label: `Tax ${r.taxPct}%`, amount: tax, kind: 'tax' });

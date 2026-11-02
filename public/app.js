@@ -5725,7 +5725,7 @@
             <h3 style="margin-top:6px">Suitcases per vehicle</h3><p class="small muted">Customers see this when they choose a vehicle, and can't book more suitcases than fit.</p>
             <div class="grid3">${(s.typeOrder || C.VEHICLE_TYPES).map((t) => `<label class="field"><span>${t}</span><input data-bags="${t}" type="number" min="0" max="40" step="1" value="${s.company.bags[t]}" ${ro}></label>`).join('')}</div>
           </div>
-          <div class="panel stack" id="rs-flatp"><h2>Flat rates</h2><p class="small muted">A set price per vehicle for rides to or from an area, instead of base fare and miles. Stops, extras and gratuity are still added; late night, weekend and busy-time surcharges are not. Leave a price blank to use your normal rates for that vehicle.</p>
+          <div class="panel stack" id="rs-flatp"><h2>Flat rates</h2><p class="small muted">An all-inclusive price per vehicle for rides to or from an area, instead of base fare and miles. Gratuity, tax, surcharges and extras are included. Only changes to the trip are added: stops on the way and waiting time. Leave a price blank to use your normal rates for that vehicle.</p>
             <div id="rs-flats" class="stack"></div>
             ${isAdmin ? '<div><button class="btn sm" type="button" id="rs-flatadd">+ Add a flat-rate area</button></div>' : ''}</div>
           <div class="panel stack"><h2>Cancellation, waiting and no-shows</h2><p class="small muted">Shown to customers when they book and on their trips.</p>
