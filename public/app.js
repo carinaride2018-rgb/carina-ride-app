@@ -1912,8 +1912,9 @@
           <label class="field"><span id="bk-drop-label">Drop-off address</span><input id="bk-dropoff" name="dropoff" autocomplete="off" placeholder="Where are you going?" value="${esc(state.dropoff)}"></label>
           <fieldset class="fs flightbox" id="bk-flightf"><legend><span aria-hidden="true">&#9992;</span> Flight information</legend>
             <div class="grid2" id="bk-flightmain">
-              <label class="field"><span>Flight number <span class="faint">(required for airport pickups)</span></span><input id="bk-flight" name="flight" class="mono" placeholder="AA 1342" value="${esc(state.flight)}" autocomplete="off"></label>
-              <label class="field"><span>Arriving from <span class="faint">(optional)</span></span><input id="bk-ffrom" name="flightFrom" placeholder="City, for example Denver" value="${esc(state.flightFrom || '')}" autocomplete="off"></label>
+              <label class="field"><span id="bk-flight-label">Flight number <span class="faint">(required)</span></span><input id="bk-flight" name="flight" class="mono" placeholder="AA 1342" value="${esc(state.flight)}" autocomplete="off"></label>
+              <label class="field" id="bk-ffromf"><span>Arriving from <span class="faint">(optional)</span></span><input id="bk-ffrom" name="flightFrom" placeholder="City, for example Denver" value="${esc(state.flightFrom || '')}" autocomplete="off"></label>
+              <label class="field" id="bk-ftof" hidden><span>Flying to <span class="faint">(destination city)</span></span><input id="bk-fto" name="flightTo" placeholder="City, for example Denver" value="${esc(state.flightTo || '')}" autocomplete="off"></label>
             </div>
             <p class="hint" id="bk-flight-hint" style="margin:0">For pickups at the airport, set the pickup time to when the flight lands. We track the flight and move the pickup if it's late.</p>
           </fieldset>
@@ -2052,9 +2053,15 @@
       if (twoStep) {
         // Flight details are asked on page 2: the arrival flight for an airport
         // pickup, and the return flight when the return picks up at the airport.
+        // Rides to the airport ask for the departing flight too (required), and where it goes,
+        // so a pickup at the destination can be set up.
         const fIn = C.isAirport(state.pickup), fRet = !!state.retOn && state.service !== 'hourly' && C.isAirport(state.dropoff);
-        $('#bk-flightmain', form).hidden = !fIn; $('#bk-flight-hint', form).hidden = !fIn;
-        $('#bk-flightf', form).hidden = !fIn && !fRet;
+        const fOut = !fIn && state.service !== 'hourly' && C.isAirport(state.dropoff);
+        $('#bk-flightmain', form).hidden = !fIn && !fOut; $('#bk-flight-hint', form).hidden = !fIn && !fOut;
+        $('#bk-flightf', form).hidden = !fIn && !fOut && !fRet;
+        $('#bk-flight-label', form).innerHTML = fOut ? 'Departing flight <span class="faint">(required)</span>' : 'Arriving flight <span class="faint">(required)</span>';
+        $('#bk-ffromf', form).hidden = fOut; $('#bk-ftof', form).hidden = !fOut;
+        $('#bk-flight-hint', form).textContent = fOut ? 'We plan your drop-off around your flight. Need a ride when you land? Add it below.' : "For pickups at the airport, set the pickup time to when the flight lands. We track the flight and move the pickup if it's late.";
       }
       stopList = $$('[data-stop]', form).map((i) => i.value);
       stopWaits = $$('[data-swait]', form).map((i) => Number(i.value));
@@ -2388,7 +2395,7 @@
       $('#bk-tonext', host).onclick = () => {
         sync(); const err = $('#bk-err', host); err.innerHTML = '';
         const ge = $('#bk-gemail', host);
-        const miss = C.isAirport(state.pickup) && !String(state.flight || '').trim() ? 'Pickups at the airport need the flight number, for example AS 331, so we can follow the landing.' : state.retOn && state.service !== 'hourly' && C.isAirport(state.dropoff) && !String(state.retFlight || '').trim() ? 'Round trip: the return picks up at the airport, so we need the return flight number.' : !String(state.passengerName || '').trim() ? 'Enter the passenger name.' : !String(state.passengerPhone || '').trim() ? 'Enter the passenger mobile number.' : ge && !ge.value.trim() ? 'Enter your email so we can send your confirmation.' : '';
+        const miss = C.isAirport(state.pickup) && !String(state.flight || '').trim() ? 'Pickups at the airport need the flight number, for example AS 331, so we can follow the landing.' : state.service !== 'hourly' && C.isAirport(state.dropoff) && !C.isAirport(state.pickup) && !String(state.flight || '').trim() ? 'Rides to the airport need your departing flight number, for example AS 330.' : state.retOn && state.service !== 'hourly' && C.isAirport(state.dropoff) && !String(state.retFlight || '').trim() ? 'Round trip: the return picks up at the airport, so we need the return flight number.' : !String(state.passengerName || '').trim() ? 'Enter the passenger name.' : !String(state.passengerPhone || '').trim() ? 'Enter the passenger mobile number.' : ge && !ge.value.trim() ? 'Enter your email so we can send your confirmation.' : '';
         if (miss) { flagErr(err, new Error(miss)); return; }
         const aside = $('#bk-aside', host);
         aside.style.scrollMarginTop = '90px'; aside.scrollIntoView({ block: 'start', behavior: 'smooth' });
