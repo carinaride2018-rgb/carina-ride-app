@@ -542,10 +542,11 @@
   // 'within' = both ends in the area. An address is in the area when it has
   // one of the area's words or ZIP codes, or (with Google Maps on) it lies
   // within the radius of the area's center.
-  const AIRPORT_NAMES = { SEA: /sea-?tac|seattle[- ]tacoma/i };
+  // Other ways an airport is written (compared after fold(), so dashes don't matter).
+  const AIRPORT_NAMES = { SEA: ['seatac', 'sea tac', 'seattle tacoma', '17801 international blvd', '98158'] };
   const DOWNTOWN_SEATTLE = { name: 'Downtown Seattle', mode: 'airport', airport: 'SEA', center: { lat: 47.6080, lng: -122.3352 }, radiusMi: 1.2,
     words: ['98101', '98104', '98111', '98121', '98154', '98161', '98164', '98174', '98191', 'downtown seattle'] };
-  const atAirport = (addr, code) => airportCode(addr) === code || !!(AIRPORT_NAMES[code] && AIRPORT_NAMES[code].test(str(addr)));
+  const atAirport = (addr, code) => { if (airportCode(addr) === code) return true; const f = ' ' + fold(addr) + ' '; return (AIRPORT_NAMES[code] || []).some((w) => f.includes(' ' + w + ' ')); };
   function inArea(z, addr) {
     const f = ' ' + fold(addr) + ' ';
     if ((z.words || []).some((w) => w && f.includes(' ' + fold(w) + ' '))) return true;
@@ -757,7 +758,7 @@
       // "Party Bus" became "22 PAX Mini Bus" (v137): every stored value and key.
       { const j = JSON.stringify(d); if (j.includes('"Party Bus"')) Object.assign(d, JSON.parse(j.split('"Party Bus"').join('"22 PAX Mini Bus"'))); }
       // Dawit 2026-11-02: Carina Ride's downtown Seattle flat rates, set once (editable in Rates & brand).
-      for (const c of d.companies) if (c.rates && !c.rates.flatSeeded && /^carina ride$/i.test(String(c.name || '').trim())) {
+      for (const c of d.companies) if (c.rates && !c.rates.flatSeeded && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
         c.rates.flatSeeded = true;
         if (!(c.rates.flatRates || []).length) c.rates.flatRates = [{ id: 'flat_downtown', ...clone(DOWNTOWN_SEATTLE), prices: { 'Sedan': 110, 'SUV': 145, 'Business Van': 220, 'Sprinter Van': 275, '22 PAX Mini Bus': 450 } }];
       }
