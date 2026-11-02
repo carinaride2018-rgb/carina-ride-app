@@ -1525,7 +1525,7 @@
   // The fare shows as one "Ride fare" line everywhere, office included (Dawit:
   // no "mi at $/mi + base" formula on quotes). Rates are under Rates & brand.
   function quoteLines(q, simple = true) {
-    return q.lines.map((l) => `<div class="qline ${l.kind === 'discount' || l.kind === 'credit' ? 'disc' : ''}"><span>${esc(!simple ? l.label : l.kind === 'fare' ? 'Ride fare' : l.stop != null ? l.label.replace(/ \(.*\)$/, '') : l.label)}</span><span class="num">${l.amount == null ? '' : (l.amount < 0 ? '−' + money(-l.amount) : money(l.amount))}</span></div>`).join('');
+    return q.lines.map((l) => `<div class="qline ${l.kind === 'discount' || l.kind === 'credit' ? 'disc' : ''}"><span>${esc(!simple ? l.label : l.kind === 'fare' ? (l.flat ? l.label.replace(/ \(.*\)$/, '') : 'Ride fare') : l.stop != null ? l.label.replace(/ \(.*\)$/, '') : l.label)}</span><span class="num">${l.amount == null ? '' : (l.amount < 0 ? '−' + money(-l.amount) : money(l.amount))}</span></div>`).join('');
   }
   // Address autofill. Suggestions come from places.suggest (simulated today,
   // Google Places later). Picking one fills the field and fires 'input'.
@@ -5725,6 +5725,9 @@
             <h3 style="margin-top:6px">Suitcases per vehicle</h3><p class="small muted">Customers see this when they choose a vehicle, and can't book more suitcases than fit.</p>
             <div class="grid3">${(s.typeOrder || C.VEHICLE_TYPES).map((t) => `<label class="field"><span>${t}</span><input data-bags="${t}" type="number" min="0" max="40" step="1" value="${s.company.bags[t]}" ${ro}></label>`).join('')}</div>
           </div>
+          <div class="panel stack" id="rs-flatp"><h2>Flat rates</h2><p class="small muted">A set price per vehicle for rides to or from an area, instead of base fare and miles. Stops, extras and gratuity are still added; late night, weekend and busy-time surcharges are not. Leave a price blank to use your normal rates for that vehicle.</p>
+            <div id="rs-flats" class="stack"></div>
+            ${isAdmin ? '<div><button class="btn sm" type="button" id="rs-flatadd">+ Add a flat-rate area</button></div>' : ''}</div>
           <div class="panel stack"><h2>Cancellation, waiting and no-shows</h2><p class="small muted">Shown to customers when they book and on their trips.</p>
             <div class="grid2">
               <label class="field"><span>Customers can change a ride online until (hours before pickup)</span><input name="pol_editHours" type="number" min="0" max="168" value="${s.company.policy.editHours == null ? 24 : s.company.policy.editHours}" ${ro}></label>
@@ -5763,6 +5766,29 @@
         try { await navigator.clipboard.writeText(inp.value); toast('Link copied.'); } catch (e) { inp.select(); toast('Press Ctrl+C or ⌘C to copy.'); }
       };
       const pw = $('#pol-when', v); if (pw) pw.onchange = () => { $('#pol-hoursf', v).hidden = pw.value !== 'before'; };
+      // Flat-rate areas: drawn from a list kept here until Save.
+      let flats = JSON.parse(JSON.stringify(r.flatRates || []));
+      const types = s.typeOrder || C.VEHICLE_TYPES;
+      const readFlats = () => $$('[data-flat]', v).map((box) => ({
+        id: box.dataset.flat, name: $('[data-f=name]', box).value, mode: $('[data-f=mode]', box).value, airport: $('[data-f=airport]', box).value,
+        words: $('[data-f=words]', box).value, off: !$('[data-f=on]', box).checked,
+        prices: Object.fromEntries($$('[data-fp]', box).map((i) => [i.dataset.fp, i.value])),
+      }));
+      const drawFlats = () => {
+        const host = $('#rs-flats', v);
+        host.innerHTML = flats.length ? flats.map((z, i) => `<fieldset class="fs stack flatbox" data-flat="${esc(z.id || '')}" data-i="${i}">
+          <div class="grid3"><label class="field"><span>Area name</span><input data-f="name" maxlength="60" value="${esc(z.name || '')}" placeholder="Downtown Seattle" ${ro}></label>
+            <label class="field"><span>Which rides</span><select data-f="mode" ${ro}><option value="airport" ${z.mode !== 'any' && z.mode !== 'within' ? 'selected' : ''}>Between the airport and the area</option><option value="any" ${z.mode === 'any' ? 'selected' : ''}>Any ride to or from the area</option><option value="within" ${z.mode === 'within' ? 'selected' : ''}>Rides within the area</option></select></label>
+            <label class="field" data-airf ${z.mode === 'any' || z.mode === 'within' ? 'hidden' : ''}><span>Airport code</span><input data-f="airport" maxlength="4" class="mono" value="${esc(z.airport || 'SEA')}" ${ro}></label></div>
+          <label class="field"><span>ZIP codes or place names in the area, separated by commas</span><input data-f="words" value="${esc((z.words || []).join(', '))}" placeholder="98101, 98104, 98121, downtown seattle" ${ro}><span class="hint">An address counts when it has one of these.${z.center ? ' With Google Maps on, addresses within about ' + esc(z.radiusMi) + ' miles of the center count too.' : ''}</span></label>
+          <div class="tablewrap"><table class="ratetable"><thead><tr>${types.map((t) => `<th>${esc(t)} ($)</th>`).join('')}</tr></thead><tbody><tr>${types.map((t) => `<td><input class="input" data-fp="${esc(t)}" type="number" min="0" step="1" value="${z.prices && z.prices[t] ? z.prices[t] : ''}" placeholder="Normal" ${ro}></td>`).join('')}</tr></tbody></table></div>
+          <div class="row"><label class="switch"><input type="checkbox" data-f="on" ${z.off ? '' : 'checked'} ${ro}><span>On</span></label>${isAdmin ? `<button class="linkbtn small" type="button" data-flatrm="${i}" style="margin-left:auto">Remove this area</button>` : ''}</div>
+        </fieldset>`).join('') : '<p class="small faint">No flat rates. All rides use the rates by vehicle above.</p>';
+        $$('[data-f=mode]', host).forEach((sel) => { sel.onchange = () => { $('[data-airf]', sel.closest('[data-flat]')).hidden = sel.value !== 'airport'; }; });
+        $$('[data-flatrm]', host).forEach((b) => { b.onclick = () => { flats = readFlats(); flats.splice(+b.dataset.flatrm, 1); drawFlats(); }; });
+      };
+      drawFlats();
+      const fa = $('#rs-flatadd', v); if (fa) fa.onclick = () => { flats = readFlats(); flats.push({ name: '', mode: 'airport', airport: 'SEA', words: [], prices: {} }); drawFlats(); };
       const setLogo = async (logo) => {
         try { const res = await api('dispatch.setLogo', { logo }); setSession({ ...session, company: { ...session.company, ...res.company } }); toast(logo ? 'Logo saved.' : 'Logo removed.'); draw(); } catch (err) { toast(err.message, true); }
       };
@@ -5793,6 +5819,7 @@
         const rates = {};
         for (const k of ['minHours', 'gratuityPct', 'taxPct', 'waitPerMin']) rates[k] = f[k];
         rates.bags = {}; $$('[data-bags]', v).forEach((i) => { rates.bags[i.dataset.bags] = i.value; });
+        rates.flatRates = readFlats();
         for (const k of ['base', 'perMile', 'minFare', 'hourly']) rates[k + 'By'] = {};
         $$('[data-rate]', v).forEach((i) => { rates[i.dataset.rate + 'By'][i.dataset.type] = i.value; });
         const policy = { editHours: f.pol_editHours, cancelHours: f.pol_cancelHours, cancelFeePct: f.pol_cancelFeePct, waitAirport: f.pol_waitAirport, waitOther: f.pol_waitOther, noShowFeePct: f.pol_noShowFeePct, chargeWhen: f.pol_chargeWhen, chargeHours: f.pol_chargeHours };

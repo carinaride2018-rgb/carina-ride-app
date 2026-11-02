@@ -18,7 +18,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { createCore, setProviders, normFlight } = require('./core.js');
+const { createCore, setProviders, normFlight, isAirport } = require('./core.js');
 const { createProviders } = require('./providers.js');
 const { createWebPush } = require('./webpush.js');
 const { createNativePush, isNative } = require('./nativepush.js');
@@ -200,6 +200,8 @@ async function warmFor(args) {
   collect(args, out, 0);
   await Promise.all([
     live.on.maps && out.pairs.length ? live.warmRoutes(out.pairs, 4000) : null,
+    // Where each address is, so flat-rate areas (downtown) can be recognized.
+    live.on.maps && out.pairs.length ? live.warmGeo([...new Set(out.pairs.flat())].filter((a) => a && !isAirport(a)), 4000) : null,
     live.on.flights && out.flights.length ? live.prefetchFlights(out.flights, 4000) : null,
   ]);
 }

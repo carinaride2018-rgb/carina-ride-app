@@ -536,6 +536,35 @@
 
   // ---- Pricing -------------------------------------------------------------
 
+  // Flat rates for an area (for example downtown Seattle): a set price per
+  // vehicle instead of base + miles. mode 'airport' = between that airport and
+  // the area (both ways); 'any' = any ride that starts or ends in the area;
+  // 'within' = both ends in the area. An address is in the area when it has
+  // one of the area's words or ZIP codes, or (with Google Maps on) it lies
+  // within the radius of the area's center.
+  const AIRPORT_NAMES = { SEA: /sea-?tac|seattle[- ]tacoma/i };
+  const DOWNTOWN_SEATTLE = { name: 'Downtown Seattle', mode: 'airport', airport: 'SEA', center: { lat: 47.6080, lng: -122.3352 }, radiusMi: 1.2,
+    words: ['98101', '98104', '98111', '98121', '98154', '98161', '98164', '98174', '98191', 'downtown seattle'] };
+  const atAirport = (addr, code) => airportCode(addr) === code || !!(AIRPORT_NAMES[code] && AIRPORT_NAMES[code].test(str(addr)));
+  function inArea(z, addr) {
+    const f = ' ' + fold(addr) + ' ';
+    if ((z.words || []).some((w) => w && f.includes(' ' + fold(w) + ' '))) return true;
+    if (providers.geo && z.center && z.radiusMi > 0 && !isAirport(addr)) { const g = providers.geo(str(addr)); if (g) return milesBetween(g, z.center) <= z.radiusMi; }
+    return false;
+  }
+  function flatFor(company, b, type) {
+    if (!b.pickup || !b.dropoff) return null;
+    for (const z of (company.rates && company.rates.flatRates) || []) {
+      const price = num(z.prices && z.prices[type], 0);
+      if (!(price > 0) || z.off) continue;
+      const a = inArea(z, b.pickup), c = inArea(z, b.dropoff);
+      const ok = z.mode === 'within' ? a && c : z.mode === 'any' ? a || c
+        : (a && atAirport(b.dropoff, z.airport)) || (c && atAirport(b.pickup, z.airport));
+      if (ok) return { name: z.name, price: round2(price) };
+    }
+    return null;
+  }
+
   // ctx carries what is decided once at booking: busy-time pricing, the
   // customer's account discount and any promo code.
   function quote(company, b, ctx) {
@@ -569,16 +598,23 @@
       fare = hours * perHr;
       lines.push({ label: `${hours} hours × $${money(perHr)}/hr (${type})`, amount: round2(fare), kind: 'fare' });
     } else {
-      // Airport rides price like any ride from A to B (no airport flat rate).
-      const baseF = rateBy(r, 'base', type), perMi = rateBy(r, 'perMile', type);
-      fare = Math.max(baseF + fareMiles * perMi, rateBy(r, 'minFare', type));
-      lines.push({ label: `${fareMiles} mi at $${money(perMi)}/mi + $${money(baseF)} base (${type})`, amount: round2(fare), kind: 'fare' });
+      const flat = flatFor(company, b, type);
+      if (flat) {
+        fare = flat.price;
+        lines.push({ label: `${flat.name} flat rate (${type})`, amount: round2(fare), kind: 'fare', flat: true });
+      } else {
+        // Other rides (airport ones too) price by base fare + miles.
+        const baseF = rateBy(r, 'base', type), perMi = rateBy(r, 'perMile', type);
+        fare = Math.max(baseF + fareMiles * perMi, rateBy(r, 'minFare', type));
+        lines.push({ label: `${fareMiles} mi at $${money(perMi)}/mi + $${money(baseF)} base (${type})`, amount: round2(fare), kind: 'fare' });
+      }
     }
     fare = round2(fare);
+    const isFlat = lines.some((l) => l.flat);
 
     // Automatic surcharges on the fare
     let surcharges = 0;
-    const add = (label, pct) => { if (!pct) return; const a = round2(fare * pct / 100); surcharges += a; lines.push({ label, amount: a, kind: 'surcharge' }); };
+    const add = (label, pct) => { if (!pct || isFlat) return; /* a flat rate stays flat */ const a = round2(fare * pct / 100); surcharges += a; lines.push({ label, amount: a, kind: 'surcharge' }); };
     if (b.pickupAt && !isNaN(new Date(b.pickupAt))) {
       const lp = localParts(b.pickupAt, company.timezone);
       const night = p.nightStart > p.nightEnd ? (lp.hour >= p.nightStart || lp.hour < p.nightEnd) : (lp.hour >= p.nightStart && lp.hour < p.nightEnd);
@@ -720,6 +756,11 @@
     function normalize(d) {
       // "Party Bus" became "22 PAX Mini Bus" (v137): every stored value and key.
       { const j = JSON.stringify(d); if (j.includes('"Party Bus"')) Object.assign(d, JSON.parse(j.split('"Party Bus"').join('"22 PAX Mini Bus"'))); }
+      // Dawit 2026-11-02: Carina Ride's downtown Seattle flat rates, set once (editable in Rates & brand).
+      for (const c of d.companies) if (c.rates && !c.rates.flatSeeded && /^carina ride$/i.test(String(c.name || '').trim())) {
+        c.rates.flatSeeded = true;
+        if (!(c.rates.flatRates || []).length) c.rates.flatRates = [{ id: 'flat_downtown', ...clone(DOWNTOWN_SEATTLE), prices: { 'Sedan': 110, 'SUV': 145, 'Business Van': 220, 'Sprinter Van': 275, '22 PAX Mini Bus': 450 } }];
+      }
       // Business discount, added later: Carina Ride starts at 6%, others at 0.
       for (const c of d.companies || []) if (c.pricing && c.pricing.bizPct == null) c.pricing.bizPct = c.slug === 'carina-ride' ? 6 : 0;
       d.accounts = d.accounts || [];
@@ -890,7 +931,7 @@
       lines.push('');
       for (const l of (t.price && t.price.lines) || []) {
         if (l.amount == null) continue;
-        const label = l.kind === 'fare' ? 'Ride fare' : l.stop != null ? l.label.replace(/ \(.*\)$/, '') : l.label;
+        const label = l.kind === 'fare' ? (l.flat ? l.label.replace(/ \(.*\)$/, '') : 'Ride fare') : l.stop != null ? l.label.replace(/ \(.*\)$/, '') : l.label;
         lines.push(`${label}: ${l.amount < 0 ? '-$' + money(-l.amount) : '$' + money(l.amount)}`);
       }
       lines.push(`Total: $${money((t.price && t.price.total) || 0)}`, '');
@@ -5654,6 +5695,23 @@
         c.rates[key + 'By'] = hb;
         // The Sedan's own rate is also the plain rate other vehicles fall back on.
         if (hb.Sedan) c.rates[key] = hb.Sedan;
+      }
+      if (Array.isArray(r.flatRates)) {
+        const had = c.rates.flatRates || [];
+        c.rates.flatRates = r.flatRates.slice(0, 10).map((z) => {
+          const name = str(z && z.name, 60);
+          if (!name) fail('Give each flat-rate area a name, for example Downtown Seattle.');
+          const mode = ['airport', 'any', 'within'].includes(z.mode) ? z.mode : 'airport';
+          const airport = str(z.airport, 4).toUpperCase();
+          if (mode === 'airport' && !/^[A-Z]{3}$/.test(airport)) fail(`${name}: enter the 3-letter airport code, for example SEA.`);
+          const words = (Array.isArray(z.words) ? z.words : String(z.words || '').split(/[,\n]/)).map((w) => str(w, 40)).filter(Boolean).slice(0, 40);
+          if (!words.length) fail(`${name}: list the ZIP codes or place names in the area.`);
+          const prices = {};
+          for (const t of VEHICLE_TYPES) if (z.prices && z.prices[t] != null && String(z.prices[t]).trim() !== '') { const n = num(z.prices[t], NaN); if (!(n >= 0 && n <= 10000)) fail(`${name}: check the price for ${t}.`); if (n > 0) prices[t] = round2(n); }
+          const old = had.find((y) => y.id === z.id);
+          return { id: (old && old.id) || id('flat'), name, mode, airport, words, prices, center: old ? old.center || null : null, radiusMi: old ? old.radiusMi || 0 : 0, off: !!z.off };
+        });
+        c.rates.flatSeeded = true;
       }
       if (r.bags) {
         c.rates.bags = bagsCfg(c);
