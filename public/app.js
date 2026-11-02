@@ -6005,9 +6005,22 @@
   function viewOwner() {
     let tab = 'companies';
     const draw = () => {
-      const v = shell({ tabs: [{ key: 'companies', label: 'Companies' }, { key: 'national', label: 'Nationwide booking' }, { key: 'billing', label: 'Billing' }, { key: 'connections', label: 'Connections' }], active: tab, onTab: (t) => { tab = t; draw(); } });
-      ({ companies: drawCompanies, national: drawNational, billing: drawBilling, connections: drawConnections })[tab](v);
+      const v = shell({ tabs: [{ key: 'companies', label: 'Companies' }, { key: 'contacts', label: 'Company list' }, { key: 'national', label: 'Nationwide booking' }, { key: 'billing', label: 'Billing' }, { key: 'connections', label: 'Connections' }], active: tab, onTab: (t) => { tab = t; draw(); } });
+      ({ companies: drawCompanies, contacts: drawContacts, national: drawNational, billing: drawBilling, connections: drawConnections })[tab](v);
     };
+    // A plain list of every company on LimoRelay: name, email, company phone.
+    async function drawContacts(v) {
+      current = { poll: false };
+      let list;
+      try { list = (await api('owner.companies')).filter((c) => !c.house).sort((x, y) => x.name.localeCompare(y.name)); } catch (e) { return showErr(v, e); }
+      const rows = list.map((c) => ({ name: c.name, email: c.email || c.adminEmail || '', phone: c.phone || c.adminPhone || '' }));
+      v.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Company list</h1><p class="muted">${rows.length} compan${rows.length === 1 ? 'y' : 'ies'} on LimoRelay.</p></div><button class="btn" type="button" id="cl-csv">Download CSV</button></div>
+        <div class="tablewrap"><table><thead><tr><th>Company</th><th>Email</th><th>Company phone</th></tr></thead><tbody>
+        ${rows.map((r) => `<tr><td><b>${esc(r.name)}</b></td><td>${r.email ? `<a class="mono small" href="mailto:${esc(r.email)}">${esc(r.email)}</a>` : '<span class="faint">None</span>'}</td><td class="nowrap">${r.phone ? `<a href="tel:${esc(r.phone.replace(/[^\d+]/g, ''))}">${esc(fmtPhone(r.phone))}</a>` : '<span class="faint">None</span>'}</td></tr>`).join('') || '<tr><td colspan="3" class="faint">No companies yet.</td></tr>'}
+        </tbody></table></div>`;
+      const q = (x) => /[",\r\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x;
+      $('#cl-csv', v).onclick = () => saveFile('limorelay-companies.csv', [['Company', 'Email', 'Company phone'], ...rows.map((r) => [r.name, r.email, fmtPhone(r.phone)])].map((r) => r.map(q).join(',')).join('\r\n'), 'text/csv');
+    }
     // booking.limorelay.com: LimoRelay's own booking page for every US city.
     async function drawNational(v) {
       current = { poll: false };
