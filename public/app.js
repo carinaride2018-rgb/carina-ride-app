@@ -1871,7 +1871,7 @@
             <div><button class="linkbtn" type="button" id="bk-addstop">+ Add a stop on the way <span class="faint">(priced by the extra miles and the wait${opts.info.rates && opts.info.rates.waitPerMin ? `, ${money(opts.info.rates.waitPerMin)}/min` : ''})</span></button></div></div>
           <label class="field"><span id="bk-drop-label">Drop-off address</span><input id="bk-dropoff" name="dropoff" autocomplete="off" placeholder="Where are you going?" value="${esc(state.dropoff)}"></label>
           <fieldset class="fs flightbox" id="bk-flightf"><legend><span aria-hidden="true">&#9992;</span> Flight information</legend>
-            <div class="grid2">
+            <div class="grid2" id="bk-flightmain">
               <label class="field"><span>Flight number <span class="faint">(required for airport pickups)</span></span><input id="bk-flight" name="flight" class="mono" placeholder="AA 1342" value="${esc(state.flight)}" autocomplete="off"></label>
               <label class="field"><span>Arriving from <span class="faint">(optional)</span></span><input id="bk-ffrom" name="flightFrom" placeholder="City, for example Denver" value="${esc(state.flightFrom || '')}" autocomplete="off"></label>
             </div>
@@ -2009,7 +2009,13 @@
       const pol = $('#bk-po-label', form); if (pol) pol.innerHTML = acc && acc.requirePo ? 'PO number <span class="faint">(required)</span>' : 'PO number <span class="faint">(optional)</span>';
       const airport = C.isAirport(state.pickup) || C.isAirport(state.dropoff);
       // Only an arrival flight is asked: the box shows for an airport pickup, never for a drop-off.
-      if (twoStep) $('#bk-flightf', form).hidden = !C.isAirport(state.pickup);
+      if (twoStep) {
+        // Flight details are asked on page 2: the arrival flight for an airport
+        // pickup, and the return flight when the return picks up at the airport.
+        const fIn = C.isAirport(state.pickup), fRet = !!state.retOn && state.service !== 'hourly' && C.isAirport(state.dropoff);
+        $('#bk-flightmain', form).hidden = !fIn; $('#bk-flight-hint', form).hidden = !fIn;
+        $('#bk-flightf', form).hidden = !fIn && !fRet;
+      }
       stopList = $$('[data-stop]', form).map((i) => i.value);
       stopWaits = $$('[data-swait]', form).map((i) => Number(i.value));
       $('#bk-addstop', form).hidden = stopList.length >= C.MAX_STOPS;
@@ -2023,7 +2029,7 @@
         $('#bk-rep-hint', form).textContent = n ? `${n + 1} rides in all, the first one plus ${n} more at the same time${state.retOn ? ', each with its return' : ''}. The first ride is charged now and each later one 24 hours before its pickup. You can cancel the rest of the series at any time.` : 'Pick the days and a last date after the first ride.';
       }
       $('#bk-landf', form).hidden = !state.landOn;
-      $('#bk-rflightf', form).hidden = !C.isAirport(state.dropoff);
+      $('#bk-rflightf', form).hidden = !C.isAirport(state.dropoff) || (twoStep && !(state.retOn && state.service !== 'hourly'));
       const rh = $('#bk-ret-hint', form); rh.hidden = !state.retOn; rh.textContent = state.dropoff ? `Picks up at ${state.dropoff.split(',')[0]} and goes back to ${(state.pickup || 'the pickup').split(',')[0]}${stopList.filter(Boolean).length ? ', with the same stops in reverse' : ''}.` : '';
       const vt0 = vt.find((x) => x.type === state.vehicleType);
       const bh = $('#bk-bags-hint', form); if (bh) bh.textContent = vt0 && vt0.bags != null ? `${/^(SUV|[AEIOU])/.test(vt0.type) ? "An" : "A"} ${vt0.type} takes up to ${vt0.bags}.` : '';
@@ -2317,8 +2323,6 @@
       $('#bk-step2', host).hidden = n !== 2; $('#bk-head2', host).hidden = n !== 2;
       $('#bk-sum', host).hidden = n !== 2; $('#bk-aside', host).hidden = n !== 2;
       $('.booking', host).classList.toggle('step1', n === 1);
-      const ff = $('#bk-flightf', host);
-      if (n === 2 && !C.isAirport(state.pickup)) $('#bk-step2', host).prepend(ff); else if (n === 1) $('#bk-err1', host).before(ff);
       sync();
       if (n === 2) {
         const b = booking(), stops = (b.stopList || []).length;
@@ -2331,7 +2335,7 @@
       $('#bk-next', host).onclick = (e) => busy(e.currentTarget, async () => {
         sync(); const err = $('#bk-err1', host); err.innerHTML = ''; $$('.must-fix', host).forEach((f) => f.classList.remove('must-fix'));
         const addrOk = [checkAddr($('#bk-pickup', host), true), checkAddr($('#bk-dropoff', host), state.service !== 'hourly')].every(Boolean);
-        const miss = !state.date || !state.time ? 'Choose the pickup date and time.' : !state.pickup.trim() ? 'Enter the pickup address.' : state.service !== 'hourly' && !state.dropoff.trim() ? 'Enter the drop-off address.' : !addrOk ? 'Check the addresses marked in red: we need the exact pickup and drop-off, not just the city.' : C.isAirport(state.pickup) && !String(state.flight || '').trim() ? 'Pickups at the airport need the flight number, for example AS 331, so we can follow the landing.' : '';
+        const miss = !state.date || !state.time ? 'Choose the pickup date and time.' : !state.pickup.trim() ? 'Enter the pickup address.' : state.service !== 'hourly' && !state.dropoff.trim() ? 'Enter the drop-off address.' : !addrOk ? 'Check the addresses marked in red: we need the exact pickup and drop-off, not just the city.' : '';
         const mi = state.service === 'hourly' ? -1 : moreList.findIndex((m) => !m.date || !m.time || !m.pickup.trim() || !m.dropoff.trim());
         const miss2 = mi >= 0 ? `Ride ${mi + 2}: add the date, time, pickup and drop-off, or remove it.` : '';
         const rw = state.retOn && state.service !== 'hourly' ? (state.retDate && state.retTime ? new Date(`${state.retDate}T${state.retTime}`) : null) : undefined;
@@ -2344,7 +2348,7 @@
       $('#bk-tonext', host).onclick = () => {
         sync(); const err = $('#bk-err', host); err.innerHTML = '';
         const ge = $('#bk-gemail', host);
-        const miss = !String(state.passengerName || '').trim() ? 'Enter the passenger name.' : !String(state.passengerPhone || '').trim() ? 'Enter the passenger mobile number.' : ge && !ge.value.trim() ? 'Enter your email so we can send your confirmation.' : '';
+        const miss = C.isAirport(state.pickup) && !String(state.flight || '').trim() ? 'Pickups at the airport need the flight number, for example AS 331, so we can follow the landing.' : state.retOn && state.service !== 'hourly' && C.isAirport(state.dropoff) && !String(state.retFlight || '').trim() ? 'Round trip: the return picks up at the airport, so we need the return flight number.' : !String(state.passengerName || '').trim() ? 'Enter the passenger name.' : !String(state.passengerPhone || '').trim() ? 'Enter the passenger mobile number.' : ge && !ge.value.trim() ? 'Enter your email so we can send your confirmation.' : '';
         if (miss) { flagErr(err, new Error(miss)); return; }
         const aside = $('#bk-aside', host);
         aside.style.scrollMarginTop = '90px'; aside.scrollIntoView({ block: 'start', behavior: 'smooth' });
@@ -2353,6 +2357,7 @@
     }
     const to = $('#bk-terms-open', host);
     if (to) to.onclick = (e) => { e.preventDefault(); termsModal(opts.info.terms, (opts.info.company && opts.info.company.name) || ''); };
+    if (twoStep) { const ff = $('#bk-flightf', host); $('#bk-step2', host).prepend(ff); ff.append($('#bk-rflightf', host)); }
     sync(); requote();
     return { state };
   }
