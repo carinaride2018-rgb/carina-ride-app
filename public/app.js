@@ -637,6 +637,7 @@
         <label class="field"><span>Company name</span><input id="bz-co" name="company" autocomplete="organization"></label>
         <div class="grid2"><label class="field"><span>Email for invoices</span><input id="bz-email" name="billingEmail" type="email" value="${esc(u.email || '')}"></label>
           <label class="field"><span>Company phone <span class="faint">(optional)</span></span><input id="bz-phone" name="phone" type="tel"></label></div>
+        <label class="field"><span>Tax ID / EIN <span class="faint">(optional)</span></span><input id="bz-tax" name="taxId" placeholder="12-3456789" autocomplete="off"><span class="hint">Shown on your invoices.</span></label>
         <label class="field"><span>Note <span class="faint">(optional)</span></span><input id="bz-note" name="note" placeholder="For example: who approves invoices, PO numbers"></label><div id="bz-err"></div></form>`,
       footer: '<button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="bz-go">Send request</button>',
     });
@@ -710,6 +711,7 @@
     if (route.startsWith('track.')) return viewTrack(route.slice(6));
     if (route.startsWith('review.')) return viewReview(route.slice(7));
     if (route.startsWith('card.')) return viewCard(route.slice(5));
+    if (route.startsWith('acard.')) return viewAcctCard(route.slice(6));
     if (route.startsWith('terms.')) return viewTerms(route.slice(6));
     if (route.startsWith('sms.')) return viewSms(route.slice(4));
     if (route.startsWith('affsend.')) return viewAffSend(route.slice(8));
@@ -1275,6 +1277,44 @@
             d = await api('public.saveCard', { token, card: formData(f) });
             draw(d.failed ? '' : `Card saved.${d.fareCharged ? ` ${money(d.paid)} charged.` : ''}`);
           } catch (err) { showErr($('#cd-err', v), err); }
+        });
+      };
+    };
+    draw('');
+  }
+
+  // A company account's backup card: the billing contact adds it from this link.
+  async function viewAcctCard(token) {
+    current = null;
+    let d;
+    try { d = await api('public.acctCardInfo', { token }); } catch (e) { const v = shell({}); v.innerHTML = `<div class="panel stack"><h2>Card link not found</h2><p class="muted">${esc(e.message)}</p></div>`; return; }
+    const keep = session; session = { company: d.company, user: null }; brandTitle(d.company, 'Backup card');
+    const v = shell({ narrow: true });
+    session = keep;
+    document.documentElement.style.setProperty('--brand', d.company.color);
+    const draw = (msg) => {
+      const stripe = d.company.payMode === 'stripe';
+      v.innerHTML = `<div class="stack">
+        <div><h1 style="font-size:24px">Backup card for ${esc(d.account)}</h1><p class="muted small">${esc(d.company.name)}</p></div>
+        ${msg ? `<div class="note ok">${esc(msg)}</div>` : ''}
+        ${d.card ? `<div class="note ok">${esc(cardName(d.card))} is on file.</div>` : ''}
+        <form class="panel stack" id="ac-form" novalidate>
+          <p class="small muted">Nothing is charged now. You still get your invoices as usual. ${esc(d.company.name)} only uses this card if an invoice goes unpaid.</p>
+          ${stripe ? '<p class="small muted">You\'ll enter the card on a secure Stripe page, then come straight back here.</p>' : `
+          <label class="field"><span>Card number</span><input name="number" class="mono" inputmode="numeric" autocomplete="cc-number" value="4242 4242 4242 4242"></label>
+          <label class="field"><span>Expiry (MM/YY)</span><input name="exp" class="mono" autocomplete="cc-exp" value="12/30"></label>
+          ${d.company.payMode === 'demo' ? '<p class="small faint">Demo: no real card is charged; a card ending 0341 shows a decline.</p>' : ''}`}
+          <div id="ac-err"></div>
+          <button class="btn brand big" type="submit">${d.card ? 'Save new card' : 'Save card'}</button></form></div>`;
+      const f = $('#ac-form', v);
+      f.onsubmit = async (e) => {
+        e.preventDefault();
+        await busy($('button[type=submit]', f), async () => {
+          try {
+            if (stripe) { const r = await payApi('checkout', { kind: 'acctcard', token }); location.href = r.url; await new Promise(() => {}); }
+            d = await api('public.saveAcctCard', { token, card: formData(f) });
+            draw('Card saved. Thank you.');
+          } catch (err) { showErr($('#ac-err', v), err); }
         });
       };
     };
@@ -5322,7 +5362,7 @@
       const owed = list.reduce((s2, a) => s2 + a.openBalance, 0), late = list.reduce((s2, a) => s2 + a.overdueBalance, 0), ub = list.reduce((s2, a) => s2 + a.unbilledTotal, 0);
       host.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Company accounts</h1><p class="muted">Businesses that book on account and pay by monthly invoice. Their bookers' trips are billed to the account, with an optional PO number and cost center.</p></div><button class="btn primary" type="button" id="ac-add">Add account</button></div>
         ${reqs.length ? `<div class="panel stack" id="biz-reqs" style="margin-bottom:14px"><b>Business rides requests</b><p class="small muted" style="margin:0">Customers who want rides billed to their company. Approve opens a company account (or uses one with the same name) and links them as a booker; you can set terms and discounts after.</p>
-          ${reqs.map((r) => `<div class="bizreq spread" data-uid="${r.userId}"><div class="stack" style="gap:2px"><b>${esc(r.company)}</b><span class="small">${esc(r.name)} · ${esc(r.email)}${r.phone ? ' · ' + esc(r.phone) : ''}</span><span class="small faint">Invoices to ${esc(r.billingEmail)} · ${esc(fmtDate(r.at))}${r.note ? ' · ' + esc(r.note) : ''}</span></div>
+          ${reqs.map((r) => `<div class="bizreq spread" data-uid="${r.userId}"><div class="stack" style="gap:2px"><b>${esc(r.company)}</b><span class="small">${esc(r.name)} · ${esc(r.email)}${r.phone ? ' · ' + esc(r.phone) : ''}</span><span class="small faint">Invoices to ${esc(r.billingEmail)}${r.taxId ? ' · Tax ID ' + esc(r.taxId) : ''} · ${esc(fmtDate(r.at))}${r.note ? ' · ' + esc(r.note) : ''}</span></div>
             <div class="row"><button class="btn sm" type="button" data-bizno="${r.userId}">Decline</button><button class="btn primary sm" type="button" data-bizok="${r.userId}">Approve</button></div></div>`).join('')}</div>` : ''}
         <div class="tiles" style="margin-bottom:14px"><div class="tile"><span class="label">Not invoiced yet</span><b class="num">${money(ub)}</b></div><div class="tile"><span class="label">Invoiced, unpaid</span><b class="num">${money(owed)}</b></div><div class="tile"><span class="label">Overdue</span><b class="num ${late ? 'bad' : ''}">${money(late)}</b></div></div>
         <div class="tablewrap"><table><thead><tr><th>Company</th><th>Terms</th><th class="r">Reward</th><th class="r">Bookers</th><th class="r">Upcoming</th><th class="r">Not invoiced</th><th class="r">Unpaid</th><th></th></tr></thead><tbody>
@@ -5353,7 +5393,8 @@
             <label class="field"><span>Billing email</span><input name="billingEmail" type="email" value="${esc(a.billingEmail || '')}"><span class="hint">Invoices are emailed here.</span></label></div>
           <div class="grid2"><label class="field"><span>Phone</span><input name="phone" value="${esc(a.phone || '')}"></label>
             <label class="field"><span>Billing address</span><input name="address" value="${esc(a.address || '')}"></label></div>
-          <label class="field" style="max-width:260px"><span>Payment terms</span><select name="terms">${Object.entries(TERMS).map(([k, l]) => `<option value="${k}" ${Number(k) === a.terms ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <div class="grid2"><label class="field"><span>Tax ID / EIN <span class="faint">(optional)</span></span><input name="taxId" value="${esc(a.taxId || '')}" placeholder="12-3456789" autocomplete="off"><span class="hint">Shown on invoices.</span></label>
+          <label class="field"><span>Payment terms</span><select name="terms">${Object.entries(TERMS).map(([k, l]) => `<option value="${k}" ${Number(k) === a.terms ? 'selected' : ''}>${l}</option>`).join('')}</select></label></div>
           <div class="grid2"><label class="field"><span>Business reward</span><select name="reward" id="af-reward"><option value="discount" ${a.reward !== 'credit' ? 'selected' : ''}>Discount on business rides</option><option value="credit" ${a.reward === 'credit' ? 'selected' : ''}>Credit for the booker’s personal rides</option></select></label>
             <label class="field"><span>Reward (%)</span><input name="discountPct" type="number" min="0" max="50" step="0.5" value="${a.discountPct || 0}"><span class="hint" id="af-rhint"></span></label></div>
           <label class="switch"><input type="checkbox" name="requirePo" ${a.requirePo ? 'checked' : ''}><span>Require a PO number on every booking</span></label>
@@ -5378,7 +5419,9 @@
       const m = openModal({
         title: a.name, wide: true, onClose: done,
         body: `<div class="stack">
-          <div class="spread"><div class="small muted">${esc(TERMS[a.terms])} · ${esc(rewardText(a))}${a.requirePo ? ' · PO required' : ''} · ${esc(a.billingEmail || 'no billing email')}${a.contact ? ' · ' + esc(a.contact) : ''}</div><button class="btn sm" type="button" id="am-edit">Edit account</button></div>
+          <div class="spread"><div class="small muted">${esc(TERMS[a.terms])} · ${esc(rewardText(a))}${a.requirePo ? ' · PO required' : ''} · ${esc(a.billingEmail || 'no billing email')}${a.contact ? ' · ' + esc(a.contact) : ''}${a.taxId ? ' · Tax ID ' + esc(a.taxId) : ''}</div><button class="btn sm" type="button" id="am-edit">Edit account</button></div>
+          <div class="panel stack" id="am-card"><div class="spread"><div class="stack" style="gap:2px"><b>Backup card</b><span class="small muted">${a.card ? `${esc(cardName(a.card))}${a.card.exp ? ', expires ' + esc(a.card.exp) : ''}. You can charge it for an unpaid invoice.` : 'No card on file. Send the billing contact a link to add one. It is only charged if you choose to, for an unpaid invoice.'}</span></div>
+            <div class="row"><button class="btn sm" type="button" id="am-cardsend">${a.card ? 'Email link for a new card' : 'Email card link'}</button><button class="btn sm" type="button" id="am-cardcopy">Copy link</button>${a.card ? '<button class="btn sm danger" type="button" id="am-cardrm">Remove card</button>' : ''}</div></div></div>
           <div class="tiles"><div class="tile"><span class="label">Not invoiced yet</span><b class="num">${money(a.unbilledTotal)}</b></div><div class="tile"><span class="label">Invoiced, unpaid</span><b class="num">${money(a.openBalance)}</b></div><div class="tile"><span class="label">Overdue</span><b class="num ${a.overdueBalance ? 'bad' : ''}">${money(a.overdueBalance)}</b></div></div>
           <div class="panel stack"><div class="spread"><h2>Completed trips not invoiced</h2>
             ${d.unbilled.length ? `<div class="row"><label class="small muted" for="am-thru">Up to</label><input class="input" style="width:auto" type="date" id="am-thru" value="${today}"><label class="switch small"><input type="checkbox" id="am-send" checked><span>Email it</span></label><button class="btn primary sm" type="button" id="am-inv">Create invoice</button></div>` : ''}</div>
@@ -5399,6 +5442,10 @@
         try { const inv = await api('dispatch.createInvoice', { accountId: aid, through: $('#am-thru', m).value, send: $('#am-send', m).checked }); toast(`${inv.number} created for ${money(inv.total)}${inv.sentTo ? `, emailed to ${inv.sentTo}` : ''}.`); m._onClose = null; closeModal(); invoiceModal(inv.id, () => accountModal(aid, done)); } catch (err) { toast(err.message, true); }
       });
       $$('[data-inv]', m).forEach((r) => { r.onclick = () => { m._onClose = null; closeModal(); invoiceModal(r.dataset.inv, () => accountModal(aid, done)); }; });
+      $('#am-cardsend', m).onclick = (e) => busy(e.currentTarget, async () => { try { const r = await api('dispatch.accountCardLink', { id: aid, send: true }); toast(`Card link emailed to ${r.sentTo}.`); } catch (err) { toast(err.message, true); } });
+      $('#am-cardcopy', m).onclick = (e) => busy(e.currentTarget, async () => { try { const r = await api('dispatch.accountCardLink', { id: aid }); try { await navigator.clipboard.writeText(r.url); toast('Card link copied.'); } catch (x) { prompt('Copy this link', r.url); } } catch (err) { toast(err.message, true); } });
+      const crm = $('#am-cardrm', m);
+      if (crm) crm.onclick = () => { if (!crm.dataset.armed) { crm.dataset.armed = '1'; crm.textContent = 'Click again to remove'; return; } busy(crm, async () => { try { await api('dispatch.removeAccountCard', { id: aid }); toast('Backup card removed.'); reopen(); } catch (err) { toast(err.message, true); } }); };
       $$('[data-rmb]', m).forEach((b) => { b.onclick = () => busy(b, async () => { try { await api('dispatch.accountBooker', { accountId: aid, remove: b.dataset.rmb }); reopen(); } catch (err) { toast(err.message, true); } }); });
       $('#am-addb', m).onsubmit = (e) => { e.preventDefault(); busy($('button', e.target), async () => {
         try { const u = await api('dispatch.accountBooker', { accountId: aid, ...formData(e.target) }); toast(`${u.name} can now book on this account.`); reopen(); } catch (err) { showErr($('#am-err', m), err); }
@@ -5413,23 +5460,26 @@
         body: `<div class="invoice" id="inv-print">
           <div class="spread" style="align-items:flex-start"><div><h2 style="margin:0">${esc(c.name)}</h2><div class="small muted">${esc(c.phone || '')}${c.email ? ' · ' + esc(c.email) : ''}</div></div>
             <div style="text-align:right"><div class="label">Invoice</div><b class="mono">${esc(i.number)}</b><div>${invPill(i)}</div></div></div>
-          <div class="grid2"><div><span class="label">Bill to</span><div><b>${esc(a.name || i.accountName)}</b></div><div class="small">${esc(a.contact || '')}</div><div class="small">${esc(a.address || '')}</div><div class="small mono">${esc(a.billingEmail || '')}</div></div>
+          <div class="grid2"><div><span class="label">Bill to</span><div><b>${esc(a.name || i.accountName)}</b></div><div class="small">${esc(a.contact || '')}</div><div class="small">${esc(a.address || '')}</div><div class="small mono">${esc(a.billingEmail || '')}</div>${a.taxId ? `<div class="small">Tax ID / EIN: ${esc(a.taxId)}</div>` : ''}</div>
             <dl class="kv small"><dt>Issued</dt><dd>${esc(fmtDate(i.issuedAt))}</dd><dt>Terms</dt><dd>${esc(TERMS[i.terms] || '')}</dd><dt>Due</dt><dd>${esc(fmtDate(i.dueAt))}</dd>${i.sentAt ? `<dt>Emailed</dt><dd>${esc(fmtDate(i.sentAt))} to ${esc(i.sentTo)}</dd>` : ''}${i.paidAt ? `<dt>Paid</dt><dd>${esc(fmtDate(i.paidAt))}${i.paidMethod ? ' by ' + esc(i.paidMethod.toUpperCase()) : ''}</dd>` : ''}</dl></div>
           <div class="tablewrap"><table><thead><tr><th>Date</th><th>Ref</th><th>Passenger</th><th>Trip</th><th>PO</th><th>Cost center</th><th class="r">Amount</th></tr></thead><tbody>
             ${i.lines.map((l) => `<tr><td class="small">${esc(fmtDate(l.date))}</td><td class="mono small">${esc(l.ref)}</td><td>${esc(l.passenger)}</td><td class="small">${esc(l.route)} · ${esc(l.vehicle)}</td><td class="small mono">${esc(l.po)}</td><td class="small">${esc(l.costCenter)}</td><td class="r num">${money(l.amount)}</td></tr>`).join('')}
             <tr><td colspan="6" class="r"><b>Total due</b></td><td class="r num"><b>${money(i.total)}</b></td></tr></tbody></table></div>
-          <p class="small faint">Amounts include gratuity and any discounts shown on each trip's receipt.</p></div>`,
+          <p class="small faint">Amounts include gratuity and any discounts shown on each trip's receipt.</p></div>
+          ${i.charge && i.charge.status === 'failed' && i.status === 'open' ? `<div class="note warn">Charging the card ending ${esc(i.charge.last4)} failed: ${esc(i.charge.error)}.</div>` : ''}${i.charge && i.charge.status === 'pending' ? `<div class="note">Charging the card ending ${esc(i.charge.last4)}…</div>` : ''}${i.charge && i.charge.status === 'paid' ? `<p class="small muted">Paid with the backup card ending ${esc(i.charge.last4)} (${esc(fmtDate(i.charge.at))}, ${esc(i.charge.by)}).</p>` : ''}`,
         footer: `<button class="btn" type="button" id="inv-print-btn">Print or save PDF</button>
+          ${i.status === 'open' && a.card && !(i.charge && i.charge.status === 'pending') ? `<button class="btn" type="button" data-ia="chargecard">Charge backup card (${esc(cardName(a.card))})</button>` : ''}
           ${i.status === 'open' ? '<button class="btn" type="button" data-ia="send">Email again</button><button class="btn danger" type="button" data-ia="void">Void</button><select class="input" id="inv-method" style="width:auto"><option value="check">Check</option><option value="ach">ACH</option><option value="wire">Wire</option><option value="card">Card</option></select><button class="btn primary" type="button" data-ia="paid">Mark paid</button>' : ''}
           ${i.status === 'paid' ? '<button class="btn" type="button" data-ia="unpaid">Mark unpaid</button>' : ''}`,
       });
       $('#inv-print-btn', m).onclick = () => { document.body.classList.add('printing-invoice'); window.print(); setTimeout(() => document.body.classList.remove('printing-invoice'), 500); };
       $$('[data-ia]', m).forEach((b) => { b.onclick = () => {
         if (b.dataset.ia === 'void' && !b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'Click again to void'; return; }
+        if (b.dataset.ia === 'chargecard' && !b.dataset.armed) { b.dataset.armed = '1'; b.textContent = `Click again to charge ${money(i.total)}`; return; }
         busy(b, async () => {
           try {
             const r = await api('dispatch.invoiceAction', { id: iid, action: b.dataset.ia, method: ($('#inv-method', m) || {}).value });
-            toast({ paid: `${r.number} marked paid.`, unpaid: `${r.number} is open again.`, void: `${r.number} voided. Its trips can go on a new invoice.`, send: `${r.number} emailed to ${r.sentTo}.` }[b.dataset.ia]);
+            toast({ paid: `${r.number} marked paid.`, unpaid: `${r.number} is open again.`, void: `${r.number} voided. Its trips can go on a new invoice.`, send: `${r.number} emailed to ${r.sentTo}.`, chargecard: r.status === 'paid' ? `${r.number} paid with the backup card.` : r.charge && r.charge.status === 'failed' ? `The card was declined: ${r.charge.error}.` : 'Charging the card. The invoice shows paid when it goes through.' }[b.dataset.ia], r.charge && r.charge.status === 'failed' && b.dataset.ia === 'chargecard');
             m._onClose = null; closeModal(); invoiceModal(iid, done);
           } catch (err) { toast(err.message, true); }
         });

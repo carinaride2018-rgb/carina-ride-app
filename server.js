@@ -151,7 +151,7 @@ function limited(ip) {
 
 // Hosts put the app behind a proxy; only then is X-Forwarded-For the visitor.
 const clientIp = (req) => (TRUST_PROXY && String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()) || req.socket.remoteAddress;
-const LIMITED = new Set(['auth.login', 'auth.signup', 'public.requestQuote', 'public.acceptQuote', 'public.rate', 'public.requestTrial', 'auth.changeEmail', 'public.forgotPassword', 'public.setPassword', 'owner.testEmail', 'owner.testSms', 'public.companySignup', 'public.guestBook', 'public.affAnswer', 'public.affChauffeur', 'public.affStatus', 'public.affNoShow', 'public.affExtras', 'public.affGotIt', 'public.affSend', 'public.affDriverLink']);
+const LIMITED = new Set(['auth.login', 'auth.signup', 'public.requestQuote', 'public.acceptQuote', 'public.rate', 'public.requestTrial', 'auth.changeEmail', 'public.forgotPassword', 'public.setPassword', 'owner.testEmail', 'owner.testSms', 'public.companySignup', 'public.guestBook', 'public.affAnswer', 'public.affChauffeur', 'public.affStatus', 'public.affNoShow', 'public.affExtras', 'public.affGotIt', 'public.affSend', 'public.affDriverLink', 'public.saveAcctCard']);
 
 // ---- Outside services ---------------------------------------------------------
 
@@ -307,7 +307,7 @@ async function runCharges() {
       for (const x of await core.pay.pendingCharges()) {
         const r = await live.pay.charge(x);
         if (r.retry) { if (r.error) console.error(`card ${x.id}: ${r.error}, will retry`); continue; }
-        await core.pay.chargeResult({ tripId: x.tripId, invoiceId: x.invoiceId, id: x.id, ...r });
+        await core.pay.chargeResult({ tripId: x.tripId, invoiceId: x.invoiceId, clientInvoiceId: x.clientInvoiceId, id: x.id, ...r });
       }
     } while (chargeAgain);
   } catch (e) { console.error('card charges', e.message); }
