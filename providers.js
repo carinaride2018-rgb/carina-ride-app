@@ -379,7 +379,10 @@ function createProviders(rawEnv, opts) {
       const pm = session && session.setup_intent && session.setup_intent.payment_method;
       const card = pm && pm.card;
       if (!pm || !pm.id || !session.customer) return null;
-      return { customer: typeof session.customer === 'string' ? session.customer : session.customer.id, pm: pm.id, brand: card ? card.brand.charAt(0).toUpperCase() + card.brand.slice(1) : 'Card', last4: card ? card.last4 : '', exp: card ? `${String(card.exp_month).padStart(2, '0')}/${String(card.exp_year).slice(-2)}` : '' };
+      const customer = typeof session.customer === 'string' ? session.customer : session.customer.id;
+      // Cash App Pay (turned on in the company's Stripe settings): saved like a card, shown by its $cashtag.
+      if (pm.type === 'cashapp') return { customer, pm: pm.id, brand: 'Cash App Pay', last4: '', label: (pm.cashapp && pm.cashapp.cashtag) || '', exp: '' };
+      return { customer, pm: pm.id, brand: card ? card.brand.charAt(0).toUpperCase() + card.brand.slice(1) : 'Card', last4: card ? card.last4 : '', exp: card ? `${String(card.exp_month).padStart(2, '0')}/${String(card.exp_year).slice(-2)}` : '' };
     },
     // Charges a saved card with nobody at the screen. The charge id doubles as
     // Stripe's idempotency key, so a retry after a timeout can't charge twice.

@@ -20,7 +20,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { createCore, setProviders, normFlight, isAirport } = require('./core.js');
 const { createProviders } = require('./providers.js');
-const { gateway } = require('./gateways.js');
+const { gateway, squareOAuth, onSquareTokens } = require('./gateways.js');
 const { createWebPush } = require('./webpush.js');
 const { createNativePush, isNative } = require('./nativepush.js');
 
@@ -80,6 +80,7 @@ function unseal(s) {
 
 const core = createCore({
   seal, unseal,
+  squareOn: squareOAuth.on(),
   // Connecting Authorize.net or PayPal: the keys must work before they're saved.
   async verifyGateway(g) {
     try { await gateway(g).verify(); } catch (e) { const m = String(e.message).replace(/\.+$/, ''); const err = new Error(e.status && e.status < 500 ? `${m}. Check the keys and the test mode switch.` : `${m}. Try again in a minute.`); err.status = 400; throw err; }
@@ -247,7 +248,11 @@ const bearer = (req) => { const a = req.headers.authorization || ''; return a.st
 // LimoRelay's own membership payments use the platform's Stripe account (no Stripe-Account header).
 const acctOf = (a) => (a === 'platform' ? null : a);
 
-// Authorize.net / PayPal hosted-page visits in progress (an hour each).
+onSquareTokens((companyId, kind, cred) => core.pay.updateGatewayCred(companyId, kind, cred));
+// Square sign-ins in progress (state -> company, ten minutes each).
+const sqStates = new Map();
+
+// Authorize.net / PayPal / Square card-page visits in progress (an hour each).
 const gwSessions = new Map();
 const htmlEsc = (s) => String(s).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 async function gwStart(what) {
@@ -257,13 +262,13 @@ async function gwStart(what) {
   const gw = gateway(what.gw);
   const s = await gw.setup(what, back, cancel);
   gwSessions.set(sid, { ...s, what, kind: what.gw.kind, at: Date.now() });
-  return what.gw.kind === 'authnet' ? `${base}pay/anet-go?s=${sid}` : s.url;
+  return what.gw.kind === 'authnet' ? `${base}pay/anet-go?s=${sid}` : what.gw.kind === 'square' ? `${base}pay/sq-go?s=${sid}` : s.url;
 }
 
 async function payRoute(req, res, url, raw) {
   const p = url.pathname;
-  const fail = (e) => send(res, e.status && e.status < 500 ? e.status : 502, { ok: false, error: (e.status && e.status < 500 && !e.data) || /^(PayPal|Authorize\.net)/.test(e.message) ? e.message : `Stripe: ${e.message}` });
-  const otherGw = p === '/pay/checkout' || p === '/pay/gw-return' || p === '/pay/anet-go';
+  const fail = (e) => send(res, e.status && e.status < 500 ? e.status : 502, { ok: false, error: (e.status && e.status < 500 && !e.data) || /^(PayPal|Authorize\.net|Square)/.test(e.message) ? e.message : `Stripe: ${e.message}` });
+  const otherGw = p === '/pay/checkout' || p === '/pay/gw-return' || p === '/pay/anet-go' || p.startsWith('/pay/sq-');
   if (!live.on.cards && !otherGw && p !== '/pay/webhook') return send(res, 404, { ok: false, error: 'Card payments are not switched on.' });
   try {
     if (p === '/pay/checkout' && req.method === 'POST') {
@@ -303,15 +308,95 @@ async function payRoute(req, res, url, raw) {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', ...SECURITY_HEADERS, 'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; form-action https://accept.authorize.net https://test.authorize.net; style-src 'unsafe-inline'" });
       return res.end(html);
     }
+    if (p === '/pay/sq-go' && req.method === 'GET') {
+      // Square's card box on our own page; the card number goes straight to Square.
+      const sid = url.searchParams.get('s') || '';
+      const g = gwSessions.get(sid);
+      if (!g || g.kind !== 'square') return redirect(res, `${base}?payment=error`);
+      const what = g.what, setup = what.mode === 'setup';
+      const sdk = g.sandbox ? 'https://sandbox.web.squarecdn.com/v1/square.js' : 'https://web.squarecdn.com/v1/square.js';
+      const cancel = `${base}?payment=cancelled${what.back || ''}`;
+      const amt = setup ? '' : `$${(what.amount / 100).toFixed(2)}`;
+      const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Secure card page</title>
+<style>body{font-family:system-ui,-apple-system,sans-serif;background:#fff;color:#111;margin:0;padding:24px 16px}main{max-width:460px;margin:0 auto}h1{font-size:20px;margin:0 0 4px}p{color:#444;margin:0 0 16px;font-size:15px}
+#card{min-height:90px}button{width:100%;padding:14px;font-size:16px;font-weight:600;border:0;border-radius:10px;background:#111;color:#fff;cursor:pointer}button[disabled]{opacity:.5}#err{color:#b00020;font-size:14px;min-height:20px;margin:8px 0}a{color:#444;font-size:14px}.lock{font-size:13px;color:#666;margin-top:14px}</style>
+<script src="${sdk}"></script></head><body><main>
+<h1>${setup ? 'Add your card' : `Pay ${amt}`}</h1><p>${htmlEsc(what.description || '')}</p>
+<div id="card"></div><div id="err" role="alert"></div>
+<button id="go" type="button" disabled>${setup ? 'Save card' : `Pay ${amt}`}</button>
+<p class="lock">🔒 Your card goes straight to Square.${setup ? ' Nothing is charged now.' : ''}</p><a href="${htmlEsc(cancel)}">Cancel</a>
+</main><script>
+(async function () {
+  var err = document.getElementById('err'), go = document.getElementById('go');
+  try {
+    var payments = Square.payments(${JSON.stringify(g.appId)}, ${JSON.stringify(g.locationId)});
+    var card = await payments.card();
+    await card.attach('#card');
+    go.disabled = false;
+    go.onclick = async function () {
+      go.disabled = true; err.textContent = '';
+      try {
+        var r = await card.tokenize();
+        if (r.status !== 'OK') throw new Error((r.errors && r.errors[0] && r.errors[0].message) || 'Check the card details.');
+        var res = await fetch(${JSON.stringify(`${base}pay/sq-card?s=${sid}`)}, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: r.token }) });
+        var d = await res.json();
+        if (!d.ok) throw new Error(d.error || 'Something went wrong.');
+        location.href = d.data.url;
+      } catch (e) { err.textContent = e.message; go.disabled = false; }
+    };
+  } catch (e) { err.textContent = 'The card box did not load. Refresh the page.'; }
+})();
+</script></body></html>`;
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', ...SECURITY_HEADERS, 'Content-Security-Policy': "default-src 'self'; script-src 'unsafe-inline' https://*.squarecdn.com https://*.squareup.com https://*.squareupsandbox.com; style-src 'unsafe-inline' https://*.squarecdn.com https://*.cloudfront.net; font-src https://*.squarecdn.com https://*.cloudfront.net data:; img-src https: data:; connect-src 'self' https://*.squareup.com https://*.squareupsandbox.com https://*.squarecdn.com https://*.sentry.io; frame-src https://*.squarecdn.com https://*.squareup.com https://*.squareupsandbox.com" });
+      return res.end(html);
+    }
+    if (p === '/pay/sq-card' && req.method === 'POST') {
+      // The card token from Square's box; the card is saved at /pay/gw-return.
+      const sid = url.searchParams.get('s') || '';
+      const g = gwSessions.get(sid);
+      const token = String((raw ? JSON.parse(raw) : {}).token || '').slice(0, 500);
+      if (!g || g.kind !== 'square' || g.done || !token) return send(res, 400, { ok: false, error: 'This card page has expired. Go back and try again.' });
+      g.nonce = token;
+      // Saved here so a declined card shows on the card page and can be fixed.
+      try { g.card = await gateway(g.what.gw).cardOf(g); } catch (e) { return send(res, 400, { ok: false, error: String(e.message).replace(/^Square: /, '') }); }
+      if (!g.card) return send(res, 400, { ok: false, error: 'Square did not save the card. Try again.' });
+      return send(res, 200, { ok: true, data: { url: `${base}pay/gw-return?s=${sid}` } });
+    }
+    if (p === '/pay/sq-connect' && req.method === 'POST') {
+      if (!squareOAuth.on()) return send(res, 404, { ok: false, error: 'Square is not switched on for LimoRelay yet.' });
+      const c = await core.pay.company(bearer(req));
+      for (const [k, v] of sqStates) if (Date.now() - v.at > 600e3) sqStates.delete(k);
+      const state = crypto.randomBytes(16).toString('hex');
+      sqStates.set(state, { companyId: c.id, at: Date.now() });
+      return send(res, 200, { ok: true, data: { url: squareOAuth.authorizeUrl(state) } });
+    }
+    if (p === '/pay/sq-callback' && req.method === 'GET') {
+      // Back from signing in at Square.
+      const key = url.searchParams.get('state') || '';
+      const st = sqStates.get(key);
+      sqStates.delete(key);
+      const code = url.searchParams.get('code');
+      if (!st || Date.now() - st.at > 600e3) return redirect(res, `${base}?square=expired`);
+      if (!code) return redirect(res, `${base}?square=cancelled`);
+      try {
+        const r = await squareOAuth.finish(code);
+        await core.pay.setGateway(st.companyId, 'square', r);
+        runCharges();
+        return redirect(res, `${base}?square=ready`);
+      } catch (e) {
+        console.error('square connect', e.message);
+        return redirect(res, `${base}?square=error&m=${encodeURIComponent(String(e.message).slice(0, 160))}`);
+      }
+    }
     if (p === '/pay/gw-return' && req.method === 'GET') {
-      // Back from Authorize.net or PayPal: read the saved card, then save it
+      // Back from Authorize.net, PayPal or Square: read the saved card, then save it
       // (setup) or charge it once (paying a ride).
       const sid = url.searchParams.get('s') || '';
       const g = gwSessions.get(sid);
       if (!g) return redirect(res, `${base}?payment=error`);
       if (g.done) return redirect(res, g.done);
       const what = g.what, gw = gateway(what.gw);
-      const card = await gw.cardOf(g);
+      const card = g.card || await gw.cardOf(g);
       if (!card) return redirect(res, `${base}?payment=unpaid${what.back || ''}`);
       let to;
       if (what.mode === 'setup') {

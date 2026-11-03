@@ -5844,7 +5844,7 @@
             <p class="small muted">Payment always goes through ${esc(s.company.name)}, never to the chauffeur. Turn on one or both; with both on, the customer picks when booking.</p>
             <label class="switch"><input type="checkbox" name="payCard" id="rs-paycard" ${s.company.cardChoice !== false ? 'checked' : ''} ${ro}><span>Card (charged through your card service, set up below)</span></label>
             <label class="switch"><input type="checkbox" name="payCash" id="rs-paycash" ${s.company.cash ? 'checked' : ''} ${ro}><span>Cash, paid to the office (mark the ride paid in Trips)</span></label>
-            <p class="small faint">Square: coming soon. It needs LimoRelay's Square app to be set up first.</p></div>
+</div>
           <div class="panel stack" id="rs-cards"><h2>Card payments</h2><p class="small faint">Loading…</p></div>
           <div id="rs-err"></div>
           ${isAdmin ? '<div class="savebar"><button class="btn primary" type="submit">Save rates and brand</button></div>' : ''}
@@ -5856,7 +5856,7 @@
         const g = s.company.gateway || { kind: 'stripe' };
         const pick = drawCards.pick || g.kind;
         box.innerHTML = `<div class="spread"><h2>Card payments</h2>${lockNowBtn('rs-lock')}</div>
-          <div class="stack" style="gap:6px"><span class="label">Card service</span><div class="seg" id="rs-gw">${[['stripe', 'Stripe'], ['authnet', 'Authorize.net'], ['paypal', 'PayPal']].map(([k, l]) => `<button type="button" data-gw="${k}" aria-pressed="${pick === k}">${l}${g.kind === k ? ' ✓' : ''}</button>`).join('')}</div>
+          <div class="stack" style="gap:6px"><span class="label">Card service</span><div class="seg" id="rs-gw">${[['stripe', 'Stripe'], ['square', 'Square'], ['authnet', 'Authorize.net'], ['paypal', 'PayPal']].map(([k, l]) => `<button type="button" data-gw="${k}" aria-pressed="${pick === k}">${l}${g.kind === k ? ' ✓' : ''}</button>`).join('')}</div>
           <span class="small faint">Pick the service your company already uses. Customers' cards are charged there and the money goes to your account.${g.kind !== 'stripe' ? ` In use now: <b>${esc(g.name)}</b>.` : ''}</span></div>
           <div id="rs-gwbody">${pick === 'stripe' ? cardsPanel(s.company) : gwPanel(pick, g, drawCards.replace)}</div>`;
         $('#rs-lock', box).onclick = async () => { try { await api('company.lockPayments'); } catch (e) { /* already locked */ } drawCards(); };
@@ -5874,6 +5874,13 @@
         }
         const us = $('#rs-usestripe', box);
         if (us) us.onclick = () => { if (!us.dataset.armed) { us.dataset.armed = '1'; us.textContent = 'Click again to switch back to Stripe'; return; } busy(us, async () => { try { const gp = await api('company.useStripe'); after(gp, 'Switched back to Stripe.'); } catch (err) { toast(err.message, true); } }); };
+        const sq = $('#rs-sqgo', box);
+        if (sq) sq.onclick = () => busy(sq, async () => {
+          try {
+            if (s.company.payMode === 'demo') { const gp = await api('company.connectGateway', { kind: 'square' }); after(gp, "Square is connected. Customers' cards now go through Square."); return; }
+            const r = await payApi('sq-connect'); location.href = r.url; await new Promise(() => {});
+          } catch (err) { toast(err.message, true); }
+        });
         const rk = $('#rs-gwreplace', box);
         if (rk) rk.onclick = () => { drawCards.replace = pick; drawCards(); };
         const sc = $('#rs-stripe', box);
@@ -5955,6 +5962,14 @@
     // Authorize.net or PayPal: the company's own keys.
     function gwPanel(kind, g, replace) {
       const cur = g[kind], inUse = g.kind === kind && cur && cur.ready;
+      if (kind === 'square') {
+        if (inUse) return `<p><span class="pill s-on_board">Connected</span> Square${cur.hint ? `, ${esc(cur.hint)}` : ''}${cur.sandbox ? ' · <b>Test mode</b> (no real money)' : ''}. Card payments go to your Square account and from there to your bank.</p>
+          <div class="row"><button class="btn" type="button" id="rs-sqgo">Connect a different Square account</button><button class="btn" type="button" id="rs-usestripe">Switch back to Stripe</button><a class="btn" href="https://squareup.com/dashboard" target="_blank" rel="noopener">Open Square</a></div>
+          <p class="small faint">Cards saved before a switch need adding again; their charges say so on the trip.</p>`;
+        if (!g.squareOn) return '<p class="muted">Square is not switched on for LimoRelay yet. Ask the LimoRelay team to turn it on.</p>';
+        return `<p class="muted">Sign in to your Square account and allow LimoRelay to take card payments for you. Customers type their card in Square's secure card box, and every charge goes to your Square account. Square charges its own card fees; we take nothing.</p>
+          <div><button class="btn primary" type="button" id="rs-sqgo">Connect Square</button></div>`;
+      }
       const name = kind === 'authnet' ? 'Authorize.net' : 'PayPal';
       if (inUse && replace !== kind) return `<p><span class="pill s-on_board">Connected</span> ${name}${cur.hint ? `, ${kind === 'authnet' ? 'API Login ID' : 'Client ID'} ending ${esc(cur.hint)}` : ''}${cur.sandbox ? ' · <b>Test mode</b> (no real money)' : ''}.</p>
           <div class="row"><button class="btn" type="button" id="rs-gwreplace">Replace keys</button><button class="btn" type="button" id="rs-usestripe">Switch back to Stripe</button></div>
@@ -5974,7 +5989,7 @@
       if (c.payMode === 'demo') return '<p class="muted">Card payments are simulated on this copy. Customers pay with a pretend card and nothing is charged.</p>';
       if (c.payMode === 'off') return `<p class="muted">Online card payments are off until the platform owner adds Stripe. Customers pay the chauffeur, or you bill company accounts.</p>`;
       const st = c.stripe;
-      if (st && st.ready) return `<p><span class="pill s-on_board">Connected</span> Card payments go to your own Stripe account and from there to your bank.</p><div><a class="btn" href="https://dashboard.stripe.com" target="_blank" rel="noopener">Open Stripe</a></div>`;
+      if (st && st.ready) return `<p><span class="pill s-on_board">Connected</span> Card payments go to your own Stripe account and from there to your bank.</p><p class="small muted">Want customers to pay with <b>Cash App Pay</b> too? In Stripe, open Settings, Payment methods and turn on Cash App Pay. It then shows on the secure page next to the card, and it is charged and refunded like a card.</p><div><a class="btn" href="https://dashboard.stripe.com" target="_blank" rel="noopener">Open Stripe</a></div>`;
       if (!isAdmin) return '<p class="muted">Not set up yet. The company admin can connect Stripe here.</p>';
       return `<p class="muted">${st ? 'Stripe still needs a few details before customers can pay by card.' : 'Connect a Stripe account so customers save a card when they book and every charge goes straight to your bank. Stripe charges its own card fees; we take nothing.'}</p>
         <div><button class="btn primary" type="button" id="rs-stripe">${st ? 'Finish Stripe setup' : 'Connect Stripe'}</button></div>`;
@@ -6392,6 +6407,9 @@
       : qs.get('cardsaved') ? [`Card saved for ${qs.get('cardsaved')}. Nothing is charged until shortly before pickup.`]
       : qs.get('payment') === 'cancelled' ? ['Payment cancelled. Nothing was charged.']
       : qs.get('payment') ? ['The payment did not go through. Nothing was charged.', true]
+      : qs.get('square') === 'ready' ? ['Square is connected. Customers can now pay by card.']
+      : qs.get('square') === 'cancelled' ? ['Square was not connected.', true]
+      : qs.get('square') ? [qs.get('m') || 'Square did not connect. Try again.', true]
       : qs.get('stripe') === 'ready' ? ['Stripe is connected. Customers can now pay by card.']
       : qs.get('stripe') ? ['Stripe still needs a few details. Open Rates & brand to finish.', true] : null;
     if (back) { history.replaceState(null, '', location.pathname + location.hash); toast(back[0], back[1], 6000); }

@@ -879,14 +879,15 @@
     // (the customer picks when booking). Chauffeurs never collect payment.
     const payOpts = (c) => ({ card: true, cash: false, ...((c && c.payOptions) || {}) });
     // Card gateway per company: Stripe (default), or the company's own
-    // Authorize.net or PayPal account (Dawit 2026-11-03).
-    const GATEWAYS = { stripe: 'Stripe', authnet: 'Authorize.net', paypal: 'PayPal' };
-    const gwKind = (c) => (c && (c.gateway === 'authnet' || c.gateway === 'paypal') && c[c.gateway] ? c.gateway : 'stripe');
+    // Authorize.net, PayPal or Square account (Dawit 2026-11-03).
+    const GATEWAYS = { stripe: 'Stripe', authnet: 'Authorize.net', paypal: 'PayPal', square: 'Square' };
+    const OTHER_GW = ['authnet', 'paypal', 'square'];
+    const gwKind = (c) => (c && OTHER_GW.includes(c.gateway) && c[c.gateway] ? c.gateway : 'stripe');
     const gwReady = (c) => { const k = gwKind(c); return k === 'stripe' ? payMode === 'stripe' && !!(c.stripe && c.stripe.ready) : !!c[k].ready; };
     // Where payments for this company go: the Stripe account id, or "<gateway>:<company>".
     const acctRef = (c) => (gwKind(c) === 'stripe' ? (c.stripe && c.stripe.accountId) || '' : `${gwKind(c)}:${c.id}`);
     // What the server needs to reach the gateway (credentials stay on the server).
-    const gwFor = (c) => { const k = gwKind(c); if (k === 'stripe') return { kind: 'stripe' }; const g = c[k]; return { kind: k, cred: { ...(opts.unseal ? opts.unseal(g.sealed) || {} : {}), sandbox: !!g.sandbox } }; };
+    const gwFor = (c) => { const k = gwKind(c); if (k === 'stripe') return { kind: 'stripe' }; const g = c[k]; return { kind: k, companyId: c.id, cred: { ...(opts.unseal ? opts.unseal(g.sealed) || {} : {}), sandbox: !!g.sandbox } }; };
     // How the pages take a card: 'demo' (pretend form), 'stripe' (any secure hosted page), or 'off'.
     const coPayMode = (c) => (payMode === 'demo' ? 'demo' : c && gwKind(c) !== 'stripe' && gwReady(c) ? 'stripe' : payMode);
     const cardsOn = (c) => payOpts(c).card !== false && (payMode === 'demo' || gwReady(c));
@@ -5743,12 +5744,20 @@
       return pubUser(who);
     });
     // The company's card gateway as the office sees it (never the keys).
-    const gwPub = (c) => ({ kind: gwKind(c), name: GATEWAYS[gwKind(c)], ...Object.fromEntries(['authnet', 'paypal'].map((k) => [k, c[k] ? { ready: !!c[k].ready, sandbox: !!c[k].sandbox, hint: c[k].hint || '', since: c[k].connectedAt || null } : null])) });
+    const gwPub = (c) => ({ kind: gwKind(c), name: GATEWAYS[gwKind(c)], squareOn: payMode === 'demo' || !!opts.squareOn, ...Object.fromEntries(OTHER_GW.map((k) => [k, c[k] ? { ready: !!c[k].ready, sandbox: !!c[k].sandbox, hint: c[k].hint || '', since: c[k].connectedAt || null } : null])) });
     // Authorize.net or PayPal: the master login enters the company's own keys.
     // They are checked with the gateway, then kept sealed on the server.
     def('company.connectGateway', ['admin'], true, async (ctx, a) => {
       payGate(ctx.user, ctx.token);
       const c = ctx.company, kind = a.kind;
+      if (kind === 'square') {
+        // Square connects by signing in at Square (server route /pay/sq-connect);
+        // the sample-data copy pretends.
+        if (payMode !== 'demo') fail('Use the Connect Square button.');
+        c.square = { ready: true, sandbox: true, sealed: '', hint: c.name, connectedAt: now().toISOString(), by: ctx.user.name };
+        c.gateway = 'square';
+        return gwPub(c);
+      }
       if (kind !== 'authnet' && kind !== 'paypal') fail('Pick Authorize.net or PayPal.');
       const id = str(kind === 'authnet' ? a.loginId : a.clientId, 200).trim(), key = str(kind === 'authnet' ? a.key : a.secret, 300).trim();
       if (!id) fail(kind === 'authnet' ? 'Enter the API Login ID.' : 'Enter the Client ID.');
@@ -5768,7 +5777,7 @@
     def('company.useStripe', ['admin'], true, (ctx) => {
       payGate(ctx.user, ctx.token);
       const c = ctx.company;
-      for (const k of ['authnet', 'paypal']) delete c[k];
+      for (const k of OTHER_GW) delete c[k];
       delete c.gateway;
       return gwPub(c);
     });
@@ -7184,6 +7193,25 @@
         payGate(u, token);
         const c = findCompany(u.companyId);
         return { id: c.id, name: c.name, email: c.email || u.email, stripe: c.stripe ? clone(c.stripe) : null };
+      },
+      // Square signed in (OAuth done on the server): keep the tokens sealed.
+      async setGateway(companyId, kind, g) {
+        await ensure();
+        const c = findCompany(companyId);
+        if (!c || !GATEWAYS[kind] || kind === 'stripe') fail('Company not found.', 404);
+        c[kind] = { ready: true, sandbox: !!g.sandbox, sealed: opts.seal ? opts.seal(g.cred) : '', hint: str(g.hint, 60), connectedAt: now().toISOString(), by: str(g.by, 80) };
+        c.gateway = kind;
+        save(db);
+        return gwPub(c);
+      },
+      // Renewed Square tokens.
+      async updateGatewayCred(companyId, kind, cred) {
+        await ensure();
+        const c = findCompany(companyId);
+        if (!c || !c[kind] || !opts.seal) return false;
+        c[kind].sealed = opts.seal(cred);
+        save(db);
+        return true;
       },
       async setStripe(companyId, patch) {
         await ensure();

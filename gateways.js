@@ -9,7 +9,13 @@
  *                   The customer approves on PayPal (vault, "save for later");
  *                   we keep the vault token and charge it later.
  *
- * Both work like the Stripe flow: save the card on the gateway's page, come
+ *   Square         the company connects its Square account (OAuth, through
+ *                   LimoRelay's Square app: SQUARE_APP_ID + SQUARE_APP_SECRET).
+ *                   The customer types the card in Square's card box on our
+ *                   page (Web Payments SDK); we save it as a Square card on
+ *                   file and charge it later.
+ *
+ * All work like the Stripe flow: save the card on the gateway's page, come
  * back, charge it off-session (fare, extras, fees), refund it on cancel.
  * Credentials never leave the server; core.js keeps them sealed (see server.js).
  * No dependencies: Node 18+ fetch only.
@@ -163,10 +169,103 @@ function paypal(cred) {
   };
 }
 
+// ---- Square (OAuth + Cards API) -------------------------------------------------
+// LimoRelay's Square app (one for the whole platform; each company connects to it).
+const squareApp = () => ({ id: process.env.SQUARE_APP_ID || '', secret: process.env.SQUARE_APP_SECRET || '', sandbox: /^(1|true|yes|sandbox)$/i.test(process.env.SQUARE_SANDBOX || '') || /^sandbox-/.test(process.env.SQUARE_APP_ID || '') });
+const sqBase = (sandbox) => (sandbox ? 'https://connect.squareupsandbox.com' : 'https://connect.squareup.com');
+const SQ_VERSION = '2025-01-23';
+const SQ_SCOPES = ['MERCHANT_PROFILE_READ', 'PAYMENTS_READ', 'PAYMENTS_WRITE', 'CUSTOMERS_READ', 'CUSTOMERS_WRITE'];
+let saveTokens = null; // set by the server: keeps refreshed Square tokens
+const sqErr = (d, status) => {
+  const e = d && d.errors && d.errors[0];
+  return e ? (e.detail || e.code) : `Square answered ${status}`;
+};
+async function sqCall(base, accessToken, method, path, body) {
+  const r = await http(`${base}${path}`, { method, headers: { Authorization: `Bearer ${accessToken}`, 'Square-Version': SQ_VERSION, 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  if (r.status >= 400) throw new GatewayError(`Square: ${sqErr(r.data, r.status)}`, r.status, r.data);
+  return r.data || {};
+}
+const sqBrand = (b) => ({ VISA: 'Visa', MASTERCARD: 'Mastercard', AMERICAN_EXPRESS: 'Amex', DISCOVER: 'Discover', DISCOVER_DINERS: 'Diners', JCB: 'JCB', CHINA_UNIONPAY: 'UnionPay' }[b] || 'Card');
+// OAuth: the Square page the company admin signs in on, then the code swap.
+const squareOAuth = {
+  on: () => !!(squareApp().id && squareApp().secret),
+  authorizeUrl(state) {
+    const a = squareApp();
+    return `${sqBase(a.sandbox)}/oauth2/authorize?client_id=${encodeURIComponent(a.id)}&scope=${SQ_SCOPES.join('+')}&session=false&state=${encodeURIComponent(state)}`;
+  },
+  // Code -> tokens, then the main location (it must take cards).
+  async finish(code) {
+    const a = squareApp(), base = sqBase(a.sandbox);
+    const r = await http(`${base}/oauth2/token`, { method: 'POST', headers: { 'Square-Version': SQ_VERSION, 'Content-Type': 'application/json' }, body: JSON.stringify({ client_id: a.id, client_secret: a.secret, code, grant_type: 'authorization_code' }) });
+    if (r.status >= 400 || !r.data || !r.data.access_token) throw new GatewayError(`Square: ${(r.data && (r.data.message || sqErr(r.data, r.status))) || 'sign-in failed'}`, 400);
+    const t = r.data;
+    const loc = (await sqCall(base, t.access_token, 'GET', '/v2/locations/main')).location || {};
+    if (!loc.id) throw new GatewayError('Square: no business location found.', 400);
+    if (!(loc.capabilities || []).includes('CREDIT_CARD_PROCESSING')) throw new GatewayError('Square: this account cannot take cards yet. Finish setting it up in Square first.', 400);
+    return { cred: { accessToken: t.access_token, refreshToken: t.refresh_token || '', expiresAt: t.expires_at || '', merchantId: t.merchant_id || loc.merchant_id || '', locationId: loc.id }, sandbox: a.sandbox, hint: String(loc.business_name || loc.name || '').slice(0, 60) };
+  },
+};
+function square(cred, companyId) {
+  const app = squareApp(), base = sqBase(!!cred.sandbox);
+  let tok = { accessToken: cred.accessToken, refreshToken: cred.refreshToken, expiresAt: cred.expiresAt };
+  // Square access tokens last 30 days; renew a week before.
+  async function access(force) {
+    const left = tok.expiresAt ? Date.parse(tok.expiresAt) - Date.now() : Infinity;
+    if ((force || left < 7 * 864e5) && tok.refreshToken && app.id && app.secret) {
+      const r = await http(`${base}/oauth2/token`, { method: 'POST', headers: { 'Square-Version': SQ_VERSION, 'Content-Type': 'application/json' }, body: JSON.stringify({ client_id: app.id, client_secret: app.secret, grant_type: 'refresh_token', refresh_token: tok.refreshToken }) });
+      if (r.status < 400 && r.data && r.data.access_token) {
+        tok = { accessToken: r.data.access_token, refreshToken: r.data.refresh_token || tok.refreshToken, expiresAt: r.data.expires_at || '' };
+        if (saveTokens) { try { await saveTokens(companyId, 'square', { ...cred, ...tok }); } catch (e) { console.error('square tokens', e.message); } }
+      } else if (r.status >= 400 && r.status < 500) throw new GatewayError('Square: the connection ended. Connect Square again in Rates & brand.', 401);
+    }
+    return tok.accessToken;
+  }
+  async function call(method, path, body) {
+    try { return await sqCall(base, await access(), method, path, body); } catch (e) {
+      if (e.status === 401 && tok.refreshToken) return sqCall(base, await access(true), method, path, body);
+      throw e;
+    }
+  }
+  return {
+    async verify() { await call('GET', `/v2/locations/${encodeURIComponent(cred.locationId)}`); return true; },
+    // Our own page shows Square's card box; nothing to set up at Square yet.
+    async setup() { return { appId: app.id, locationId: cred.locationId, sandbox: !!cred.sandbox }; },
+    // The card token from Square's card box -> a Square customer with the card on file.
+    async cardOf(s) {
+      if (!s.nonce) return null;
+      const w = s.what || {};
+      const parts = String(w.name || '').trim().split(/\s+/);
+      const cust = (await call('POST', '/v2/customers', { idempotency_key: crypto.randomUUID(), ...(parts[0] ? { given_name: cut(parts[0], 100) } : {}), ...(parts.length > 1 ? { family_name: cut(parts.slice(1).join(' '), 100) } : {}), ...(w.email ? { email_address: cut(w.email, 254) } : {}), note: cut(w.description, 500) })).customer;
+      if (!cust || !cust.id) throw new GatewayError('Square did not save the customer.', 502);
+      const card = (await call('POST', '/v2/cards', { idempotency_key: crypto.randomUUID(), source_id: s.nonce, ...(s.verification ? { verification_token: s.verification } : {}), card: { customer_id: cust.id, ...(w.name ? { cardholder_name: cut(w.name, 96) } : {}) } })).card;
+      if (!card || !card.id) return null;
+      return { customer: cust.id, pm: card.id, brand: sqBrand(card.card_brand), last4: String(card.last_4 || ''), exp: card.exp_month ? `${String(card.exp_month).padStart(2, '0')}/${String(card.exp_year || '').slice(-2)}` : '' };
+    },
+    async charge(x) {
+      const key = cut(x.id, 45);
+      try {
+        if (x.kind === 'refund') {
+          const d = await call('POST', '/v2/refunds', { idempotency_key: key, payment_id: x.refundOf, amount_money: { amount: Math.round(x.amount), currency: 'USD' }, reason: cut(x.description || 'Refund', 192) });
+          const st = d.refund && d.refund.status;
+          return st === 'COMPLETED' || st === 'PENDING' ? { ok: true, ref: d.refund.id } : { ok: false, error: `Refund ${String(st || 'failed').toLowerCase()}` };
+        }
+        const d = await call('POST', '/v2/payments', { idempotency_key: key, source_id: x.pm, customer_id: x.customer, amount_money: { amount: Math.round(x.amount), currency: 'USD' }, location_id: cred.locationId, autocomplete: true, note: cut(x.description, 500), ...(x.meta && (x.meta.ref || x.meta.trip || x.meta.invoice) ? { reference_id: cut(x.meta.ref || x.meta.trip || x.meta.invoice, 40) } : {}) });
+        const pmt = d.payment;
+        if (pmt && (pmt.status === 'COMPLETED' || pmt.status === 'APPROVED')) return { ok: true, ref: pmt.id };
+        return { ok: false, error: `Payment ${String((pmt && pmt.status) || 'failed').toLowerCase()}` };
+      } catch (e) {
+        if (!e.status || e.status >= 500 || e.status === 429) return { retry: true, error: e.message };
+        return { ok: false, error: e.message };
+      }
+    },
+  };
+}
+
 const GATEWAYS = { authnet, paypal };
 const gateway = (g) => {
+  if (g && g.kind === 'square') return square(g.cred || {}, g.companyId);
   const make = g && GATEWAYS[g.kind];
   if (!make) throw new GatewayError('Unknown payment service.', 400);
   return make(g.cred || {});
 };
-module.exports = { gateway, GatewayError };
+module.exports = { gateway, GatewayError, squareOAuth, squareApp, onSquareTokens: (fn) => { saveTokens = fn; } };
