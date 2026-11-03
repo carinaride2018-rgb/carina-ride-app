@@ -2259,10 +2259,13 @@
       const t = { vehicleType: VEHICLE_TYPES.includes(raw.vehicleType) ? raw.vehicleType : 'Sedan', passengers: Math.max(1, Math.round(num(raw.passengers, 1))) };
       const partner = home ? null : landingPartner(c, dest, t);
       const by = home ? c : partner || c;
-      const q = quote(by, { service: 'transfer', pickup: `${ap.name}, ${ap.address}`, dropoff: str(raw.landing && raw.landing.dropoff, 200), vehicleType: t.vehicleType, passengers: t.passengers }, {});
+      // No price until the passenger says where to go in that city (Dawit 2026-11-03).
+      const drop = str(raw.landing && raw.landing.dropoff, 200);
+      const q = drop ? quote(by, { service: 'transfer', pickup: `${ap.name}, ${ap.address}`, dropoff: drop, vehicleType: t.vehicleType, passengers: t.passengers }, {}) : null;
       return {
         flight, origin, dest: { code: dest, name: ap.name, city: ap.city }, arrivesAt, estimated: est, localTime: fmtLocal(est, { timezone: ap.tz }, true),
-        home, partner: partner ? { id: partner.id, name: partner.name } : null, price: q.total, estimate: !home && !partner,
+        home, partner: partner ? { id: partner.id, name: partner.name } : null, estimate: !home && !partner,
+        price: q ? q.total : null, gratuity: q ? q.gratuity : null, fare: q ? round2(q.total - q.gratuity) : null,
         fromFlightData: !!(fs.arrives && dest === fs.destination),
         airports: Object.keys(AIRPORTS).filter((k) => k !== origin).map((k) => ({ code: k, name: AIRPORTS[k][0], city: AIRPORTS[k][2] })),
       };

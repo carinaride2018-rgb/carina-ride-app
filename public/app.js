@@ -109,6 +109,9 @@
   }
   const pill = (t) => `<span class="pill s-${t.status}">${esc(t.statusLabel || C.STATUS_LABELS[t.status])}</span>`;
   // Card on file: what the card has done or will do for this trip.
+  // The ride when they land: fare, chauffeur gratuity and total, once the drop-off there is entered.
+  const landPrice = (lp, ask) => lp.price == null ? `<p class="small faint" style="margin:0">${esc(ask)}</p>`
+    : `<div class="qline"><span>Ride fare${lp.estimate ? ' (estimate)' : ''}</span><span class="num">${money(lp.fare)}</span></div>${lp.gratuity ? `<div class="qline"><span>Chauffeur gratuity</span><span class="num">${money(lp.gratuity)}</span></div>` : ''}<div class="qline qsum"><span><b>Total</b></span><span class="num"><b>${money(lp.price)}</b></span></div>`;
   const cardName = (k) => k ? `${k.brand || 'Card'} ending ${k.last4}` : '';
   const cardPill = (t) => { const p = t.pay; if (!p) return ''; if (p.failed) return '<span class="pill s-cancelled">Card declined</span>'; if (t.status === 'cancelled') return p.paid > 0 ? `<span class="pill paid">Fee ${esc(money(p.paid))} charged</span>` : ''; if (p.needsCard) return '<span class="pill unpaid">Needs a card</span>'; if (t.payment.status === 'paid') return '<span class="pill paid">Paid · card</span>'; if (p.fareCharged) return `<span class="pill unpaid">${esc(money(p.balance))} extras due</span>`; return '<span class="pill s-accepted">Card on file</span>'; };
   function cardLine(t, who) {
@@ -1936,7 +1939,7 @@
             <div class="grid2" id="bk-landf" hidden>
               <label class="field"><span>Landing at</span><select id="bk-land-dest" name="landDest"></select></label>
               <label class="field"><span id="bk-land-droplabel">Where to</span><input id="bk-land-drop" name="landDrop" autocomplete="off" placeholder="Hotel or street address" value="${esc(state.landDrop || '')}"></label>
-            </div></fieldset>
+            </div><div id="bk-land-price" class="landprice"></div></fieldset>
           <div class="field"><span>Vehicle</span>
             <div class="vehicles">${vt.map((v) => `<button type="button" class="vcard" data-vehicle="${esc(v.type)}" aria-pressed="${state.vehicleType === v.type}">${carPic(v.type, v.photo)}<b>${esc(v.type)}</b><span>${v.capacity} passengers${v.bags != null ? ` · ${v.bags} suitcase${v.bags === 1 ? '' : 's'}` : ''}</span>${v.models ? `<span class="vmodel">${esc(v.models)}</span>` : ''}<span class="vprice" data-vprice="${esc(v.type)}"></span></button>`).join('') || '<p class="faint small">No vehicles yet. Add vehicles in the dispatch office first.</p>'}</div>
           </div>
@@ -2219,8 +2222,11 @@
       $('#bk-land-title', host).textContent = `${dispatch ? 'Add a pickup when they land' : 'Add a ride when you land'} in ${lp.dest.city}`;
       $('#bk-land-droplabel', host).textContent = `Where to in ${lp.dest.city}`;
       $('#bk-land-info', host).innerHTML = `Flight ${esc(lp.flight)} lands at ${esc(lp.dest.code)} about <b>${esc(lp.localTime)}</b> ${esc(lp.dest.city)} time${lp.fromFlightData ? '' : `. Check the airport is right; ${you} can change it`}. `
-        + (lp.home ? `Our own chauffeur meets ${dispatch ? 'them' : 'you'}.` : lp.partner ? `${esc(lp.partner.name)}, our partner in ${esc(lp.dest.city)}, drives it for ${money(lp.price)}.` : `We don't have a partner in ${esc(lp.dest.city)} yet, so our office books a local car. About ${money(lp.price)}; we confirm the price.`)
+        + (lp.home ? `Our own chauffeur meets ${dispatch ? 'them' : 'you'}.` : lp.partner ? `${esc(lp.partner.name)}, our partner in ${esc(lp.dest.city)}, drives it.` : `We don't have a partner in ${esc(lp.dest.city)} yet, so our office books a local car and confirms the price.`)
         + ` We follow the flight and move the pickup if it lands late.`;
+      const pb = $('#bk-land-price', host);
+      if (pb) pb.hidden = !state.landOn;
+      if (pb) pb.innerHTML = landPrice(lp, dispatch ? 'Enter where to take them to see the price.' : 'Enter where you are going to see the price.');
       return lp;
     }
     const returnOf = (b) => ({ ...b, pickup: b.dropoff, dropoff: b.pickup, stopList: (b.stopList || []).slice().reverse(), stopWaits: (b.stopWaits || []).slice().reverse(), pickupAt: b.returnAt, flight: b.returnFlight || '', returnAt: undefined });
@@ -2241,7 +2247,9 @@
           const lp = drawLanding(q.landing), lpOn = lp && state.landOn;
           const sbtn = $('#bk-submit', host); if (sbtn && !opts.submitLabel) sbtn.textContent = mr.length ? `Book these ${mr.length + 1} rides` : 'Book this ride';
           const moreTot = mq.reduce((s2, x) => s2 + (x && !x.error ? x.total : 0), 0);
-          const grand = q.total + (rq ? rq.total : 0) + (lpOn ? lp.price : 0) + moreTot;
+          const grand = q.total + (rq ? rq.total : 0) + (lpOn ? lp.price || 0 : 0) + moreTot;
+          const landLines = (x) => `<div class="qline"><span>${dispatch ? 'Pickup' : 'Ride'} when ${dispatch ? 'they land' : 'you land'} in ${esc(x.dest.city)}${x.estimate ? ' (estimate)' : ''}</span><span class="num">${x.price == null ? '' : money(x.fare)}</span></div>`
+            + (x.price == null ? `<div class="small faint">Enter where to go in ${esc(x.dest.city)} to see this price.</div>` : x.gratuity ? `<div class="qline"><span>Chauffeur gratuity, ride in ${esc(x.dest.city)}</span><span class="num">${money(x.gratuity)}</span></div>` : '');
           // Several rides: each ride's price on its own line, the total at the bottom.
           if (mr.length) {
             const place = (x) => esc(String(x || '').split(',')[0]);
@@ -2251,18 +2259,19 @@
               <details class="small"><summary>Ride 1 price details</summary>${quoteLines(q)}</details>
               ${rq ? `<div class="qline"><span><b>Return ride</b></span><span class="num">${money(rq.total)}</span></div>` : ''}
               ${mr.map((m, i) => `<div class="qline"><span><b>Ride ${m.n}</b>${m.pickup && m.dropoff ? `: ${place(m.pickup)} to ${place(m.dropoff)}` : ''}${mq[i] && mq[i].error ? `<br><span class="err small">${esc(mq[i].error)}</span>` : !mq[i] ? '<br><span class="small faint">Add the date, time and both addresses</span>' : ''}</span><span class="num">${mq[i] && !mq[i].error ? money(mq[i].total) : ''}</span></div>`).join('')}
-              ${lpOn ? `<div class="qline"><span>${dispatch ? 'Pickup' : 'Ride'} when ${dispatch ? 'they land' : 'you land'} in ${esc(lp.dest.city)}${lp.estimate ? ' (estimate)' : ''}</span><span class="num">${money(lp.price)}</span></div>` : ''}
+              ${lpOn ? landLines(lp) : ''}
               <div class="qline qsum"><span><b>Total for ${n + (lpOn ? 1 : 0)} rides</b></span><span class="num"><b>${money(grand)}</b></span></div>
               ${q.promoError ? `<div class="err small">${esc(q.promoError)}</div>` : ''}`;
             fbox.innerHTML = flightBox(q.flight, {});
             return;
           }
           const moreHtml = '';
-          out.innerHTML = `<div class="total">${money(q.total + (rq ? rq.total : 0) + (lpOn ? lp.price : 0) + moreTot)}</div>
+          out.innerHTML = `<div class="total">${money(grand)}</div>
             <div class="small muted">${esc(C.SERVICES[q.service])} · ${esc(q.vehicleType)}${q.miles ? ` · about ${q.miles} mi, ${q.minutes} min` : ''}${stopList.filter(Boolean).length ? ` · ${stopList.filter(Boolean).length} stop${stopList.filter(Boolean).length > 1 ? 's' : ''}` : ''}</div>
             ${rq ? `<div class="qline"><span>First ride</span><span class="num">${money(q.total)}</span></div><div class="qline"><span>Return ride${rq.miles ? `, about ${rq.miles} mi` : ''}</span><span class="num">${money(rq.total)}</span></div><details class="small"><summary>First ride details</summary>${quoteLines(q)}</details>` : `<div>${quoteLines(q)}</div>`}
             ${moreHtml}
-            ${lpOn ? `<div class="qline"><span>${dispatch ? 'Pickup' : 'Ride'} when ${dispatch ? 'they land' : 'you land'} in ${esc(lp.dest.city)}${lp.estimate ? ' (estimate)' : ''}</span><span class="num">${money(lp.price)}</span></div>` : ''}
+            ${lpOn ? landLines(lp) : ''}
+            ${lpOn || rq ? `<div class="qline qsum"><span><b>Total</b></span><span class="num"><b>${money(grand)}</b></span></div>` : ''}
             ${state.repOn && repeatCount() ? `<div class="qline"><span>Repeats ${repeatCount()} more time${repeatCount() === 1 ? '' : 's'} (about ${money(q.total + (rq ? rq.total : 0))} each, charged 24 hours before each ride)</span><span class="num">${money((q.total + (rq ? rq.total : 0)) * repeatCount())}</span></div>` : ''}
             ${(() => { const ac = accts.find((a) => a.id === state.accountId); return ac && ac.reward === 'credit' && ac.pct ? `<p class="small note ok" id="bk-earns">This business ride saves you <b>${money(Math.round(q.subtotal * ac.pct) / 100)}</b> credit (${ac.pct}%) for your own personal rides, once it's done.</p>` : ''; })()}
             ${q.promoError ? `<div class="err small">${esc(q.promoError)}</div>` : ''}`;
@@ -3777,7 +3786,7 @@
             <div class="grid2" id="rt-landf" hidden>
               <label class="field"><span>Landing at</span><select id="rt-land-dest"></select></label>
               <label class="field"><span id="rt-land-droplabel">Where to</span><input id="rt-land-drop" autocomplete="off" placeholder="Hotel or street address"></label>
-            </div></fieldset>` : ''}
+            </div><div id="rt-land-price" class="landprice" hidden></div></fieldset>` : ''}
           <div id="rt-err"></div></form>`,
         footer: '<button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="rt-go">Book return trip</button>',
       });
@@ -3811,12 +3820,13 @@
           $('#rt-land-title', m2).textContent = `Add a pickup when they land in ${lp.dest.city}`;
           $('#rt-land-droplabel', m2).textContent = `Where to in ${lp.dest.city}`;
           $('#rt-land-info', m2).innerHTML = `Flight ${esc(lp.flight)} lands at ${esc(lp.dest.code)} about <b>${esc(lp.localTime)}</b> ${esc(lp.dest.city)} time${lp.fromFlightData ? '' : '. Check the airport is right; they can change it'}. `
-            + (lp.home ? 'Our own chauffeur meets them.' : lp.partner ? `${esc(lp.partner.name)}, our partner in ${esc(lp.dest.city)}, drives it for ${money(lp.price)}.` : `We don't have a partner in ${esc(lp.dest.city)} yet, so our office books a local car. About ${money(lp.price)}; we confirm the price.`)
+            + (lp.home ? 'Our own chauffeur meets them.' : lp.partner ? `${esc(lp.partner.name)}, our partner in ${esc(lp.dest.city)}, drives it.` : `We don't have a partner in ${esc(lp.dest.city)} yet, so our office books a local car and confirms the price.`)
             + ' We follow the flight and move the pickup if it lands late.';
+          $('#rt-land-price', m2).innerHTML = landPrice(lp, 'Enter where to take them to see the price.');
         }, 350); };
-        ['#rt-date', '#rt-time', '#rt-flight'].forEach((x) => { $(x, m2).addEventListener('input', look); $(x, m2).addEventListener('change', look); });
+        ['#rt-date', '#rt-time', '#rt-flight', '#rt-land-drop'].forEach((x) => { if (!$(x, m2)) return; $(x, m2).addEventListener('input', look); $(x, m2).addEventListener('change', look); });
         sel.onchange = look;
-        $('#rt-land-on', m2).onchange = (e) => { $('#rt-landf', m2).hidden = !e.target.checked; if (e.target.checked) $('#rt-land-drop', m2).focus(); };
+        $('#rt-land-on', m2).onchange = (e) => { $('#rt-landf', m2).hidden = !e.target.checked; $('#rt-land-price', m2).hidden = !e.target.checked; if (e.target.checked) $('#rt-land-drop', m2).focus(); };
         addressAutocomplete($('#rt-land-drop', m2), session.company.slug, () => sel.value);
       }
       $('#rt-time', m2).focus();
