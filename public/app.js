@@ -668,10 +668,20 @@
       footer: '<button class="btn" type="button" data-close>Keep my account</button><button class="btn danger" type="button" id="del-go">Delete my account</button>',
     });
     $('[data-close]', m).onclick = closeModal;
-    $('#del-go', m).onclick = (e) => busy(e.currentTarget, async () => {
+    // Asked twice (Dawit 2026-11-03): the password first, then "Are you sure?".
+    let pass = '';
+    $('#del-go', m).onclick = () => {
+      pass = $('#del-pass', m).value;
+      if (!pass) { showErr($('#del-err', m), new Error('Enter your password to confirm.')); return; }
+      $('.body', m).innerHTML = `<div class="stack" id="del-sure"><p style="font-size:18px;margin:0"><b>Are you sure you want to delete your account?</b></p><p class="muted" style="margin:0">${esc(u.email)} and your saved details will be deleted. This can't be undone.</p><div id="del-err"></div></div>`;
+      $('footer', m).innerHTML = '<button class="btn" type="button" id="del-no">No, keep my account</button><button class="btn danger" type="button" id="del-yes">Yes, delete my account</button>';
+      $('#del-no', m).onclick = closeModal;
+      $('#del-yes', m).onclick = (e) => del(e);
+    };
+    const del = (e) => busy(e.currentTarget, async () => {
       try {
         const ep = await pushEndpoint();
-        await api('auth.deleteAccount', { password: $('#del-pass', m).value });
+        await api('auth.deleteAccount', { password: pass });
         if (NATIVE && ep) { /* the server already dropped this phone's notifications */ }
         closeModal(); setSession(null); go('signin'); toast('Your account is deleted.');
       } catch (err) { showErr($('#del-err', m), err); }
