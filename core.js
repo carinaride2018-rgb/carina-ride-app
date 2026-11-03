@@ -495,10 +495,29 @@
 
   // ---- Flights -------------------------------------------------------------
 
-  const FLIGHT_RE = /^([A-Z0-9]{2})\s?(\d{1,4})$/;
+  const FLIGHT_RE = /^([A-Z][A-Z0-9]|[0-9][A-Z])\s?(\d{1,4})$/;
+  // Airline names customers type instead of the 2-letter code ("Alaska 330", "United Airlines 1342").
+  const AIRLINE_NAMES = {
+    alaska: 'AS', 'alaska air': 'AS', horizon: 'QX', 'horizon air': 'QX', united: 'UA', delta: 'DL', american: 'AA', southwest: 'WN',
+    jetblue: 'B6', 'jet blue': 'B6', spirit: 'NK', frontier: 'F9', hawaiian: 'HA', allegiant: 'G4', 'sun country': 'SY', skywest: 'OO', 'sky west': 'OO',
+    breeze: 'MX', avelo: 'XP', 'air canada': 'AC', westjet: 'WS', 'west jet': 'WS', 'british': 'BA', 'british airways': 'BA', lufthansa: 'LH',
+    'air france': 'AF', klm: 'KL', emirates: 'EK', qatar: 'QR', 'qatar airways': 'QR', ethiopian: 'ET', turkish: 'TK', 'turkish airlines': 'TK',
+    'korean air': 'KE', korean: 'KE', 'japan airlines': 'JL', jal: 'JL', ana: 'NH', 'all nippon': 'NH', eva: 'BR', 'eva air': 'BR', 'cathay pacific': 'CX', cathay: 'CX',
+    singapore: 'SQ', icelandair: 'FI', condor: 'DE', 'aer lingus': 'EI', 'virgin atlantic': 'VS', aeromexico: 'AM', volaris: 'Y4', copa: 'CM',
+    'china airlines': 'CI', 'asiana': 'OZ', 'philippine airlines': 'PR', 'starlux': 'JX', 'qantas': 'QF', 'air new zealand': 'NZ', 'iberia': 'IB', 'sas': 'SK',
+  };
+  for (const [code, name] of Object.entries(AIRLINES)) AIRLINE_NAMES[name.toLowerCase()] = code;
   function normFlight(f) {
-    const m = str(f, 20).toUpperCase().replace(/[^A-Z0-9 ]/g, '').match(FLIGHT_RE);
-    return m ? `${m[1]} ${m[2]}` : null;
+    const raw = str(f, 40);
+    const m = raw.toUpperCase().replace(/[^A-Z0-9 ]/g, '').match(FLIGHT_RE);
+    if (m) return `${m[1]} ${m[2]}`;
+    // "Alaska 330", "United Airlines flight 1342", "Delta #55"
+    const w = raw.toLowerCase().replace(/[#.,]/g, ' ').replace(/\bflight\b|\bflt\b|\bno\b/g, ' ').replace(/\s+/g, ' ').trim();
+    const n = w.match(/^(.*?)\s*(\d{1,4})$/);
+    if (!n || !n[1]) return null;
+    const name = n[1].trim();
+    const code = AIRLINE_NAMES[name] || AIRLINE_NAMES[name.replace(/\s+(airlines?|air lines|airways)$/, '')];
+    return code ? `${code} ${n[2]}` : null;
   }
 
   // Stand-in for a flight data service (FlightAware AeroAPI or similar).
@@ -1525,7 +1544,7 @@
       if (out.service !== 'hourly') out.service = isAirport(out.pickup) || isAirport(out.dropoff) ? 'airport' : 'transfer';
       if (str(b.flight)) {
         const f = normFlight(b.flight);
-        if (!f) fail('Enter the flight as airline code and number, for example AA 1342.');
+        if (!f) fail('Enter the flight as airline and number, for example AS 330 or Alaska 330.');
         out.flight = f;
         // Where the flight comes from: optional, shown to the office and the chauffeur.
         const from = str(b.flightFrom, 60);
@@ -2279,7 +2298,7 @@
       const ap = airportInfo(lp.dest.code);
       const lb = cleanBooking(c, {
         service: 'transfer', pickup: `${ap.name}, ${ap.address}`, dropoff: drop, pickupAt: lp.arrivesAt, flight: t.flight, vehicleType: t.vehicleType, passengers: t.passengers,
-        passengerName: t.passengerName, passengerPhone: t.passengerPhone, passengerEmail: t.passengerEmail, meetGreet: !!raw.landing.meetGreet, signName: t.signName,
+        passengerName: t.passengerName, passengerPhone: t.passengerPhone, passengerEmail: t.passengerEmail, meetGreet: !!raw.landing.meetGreet, signName: t.signName, bags: t.bags || 0, childSeats: t.childSeats || 0,
         accountId: t.accountId, poNumber: t.poNumber, costCenter: t.costCenter, prefs: t.prefs, notes: `Pickup when they land in ${ap.city} after ${t.ref}.`, ...('smsOk' in t ? { smsOk: t.smsOk } : {}),
       }, { allowPast: true });
       const lt = newTrip(c, lb, customer, source, by, '', true);
