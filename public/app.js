@@ -1915,7 +1915,7 @@
           <label class="field"><span id="bk-drop-label">Drop-off address</span><input id="bk-dropoff" name="dropoff" autocomplete="off" placeholder="Where are you going?" value="${esc(state.dropoff)}"></label>
           <fieldset class="fs flightbox" id="bk-flightf"><legend><span aria-hidden="true">&#9992;</span> Flight information</legend>
             <div class="grid2" id="bk-flightmain">
-              <label class="field"><span id="bk-flight-label">Flight number <span class="faint">(required)</span></span><input id="bk-flight" name="flight" class="mono" placeholder="AA 1342" value="${esc(state.flight)}" autocomplete="off"></label>
+              <label class="field"><span id="bk-flight-label">Flight number <span class="faint">(required)</span></span><input id="bk-flight" name="flight" class="mono" placeholder="AS 330 or Alaska 330" value="${esc(state.flight)}" autocomplete="off"></label>
               <label class="field" id="bk-ffromf"><span>Arriving from <span class="faint">(optional)</span></span><input id="bk-ffrom" name="flightFrom" placeholder="City, for example Denver" value="${esc(state.flightFrom || '')}" autocomplete="off"></label>
               <label class="field" id="bk-ftof" hidden><span>Flying to <span class="faint">(destination city)</span></span><input id="bk-fto" name="flightTo" placeholder="City, for example Denver" value="${esc(state.flightTo || '')}" autocomplete="off"></label>
             </div>
@@ -1925,7 +1925,7 @@
             <div class="grid3" id="bk-retf" hidden>
               <label class="field"><span>Return date</span><input id="bk-rdate" name="retDate" type="date" value="${esc(state.retDate)}"></label>
               <label class="field"><span>Return pickup time</span><input id="bk-rtime" name="retTime" type="time" step="300" value="${esc(state.retTime)}"></label>
-              <label class="field" id="bk-rflightf"><span>Return flight <span class="faint">(airport pickup)</span></span><input id="bk-rflight" name="retFlight" class="mono" placeholder="AS 330" value="${esc(state.retFlight)}" autocomplete="off"></label>
+              <label class="field" id="bk-rflightf"><span>Return flight <span class="faint">(airport pickup)</span></span><input id="bk-rflight" name="retFlight" class="mono" placeholder="AS 330 or Alaska 330" value="${esc(state.retFlight)}" autocomplete="off"></label>
             </div><p class="small faint" id="bk-ret-hint" hidden></p></div>
           <div class="stack morerides" data-hide="hourly" style="gap:10px"><div id="bk-more" class="stack" style="gap:10px"></div>
             <div><button class="linkbtn" type="button" id="bk-addride">+ Add another ride</button> <span class="small faint">Same confirmation, multiple bookings.</span></div></div>
@@ -2106,7 +2106,7 @@
       box.innerHTML = moreList.map((m, i) => `<div class="moreride stack" style="gap:8px"><div class="spread"><b>Ride ${i + 2}</b><button class="linkbtn small danger" type="button" data-rmride="${i}">Remove</button></div>
         <div class="grid3"><label class="field"><span>Pickup date</span><input type="date" data-mr="${i}" data-k="date" value="${esc(m.date)}"></label>
           <label class="field"><span>Pickup time</span><input type="time" step="300" data-mr="${i}" data-k="time" value="${esc(m.time)}"></label>
-          <label class="field"><span>Flight <span class="faint">(airport pickup)</span></span><input class="mono" data-mr="${i}" data-k="flight" placeholder="AA 1342" autocomplete="off" value="${esc(m.flight)}"></label></div>
+          <label class="field"><span>Flight <span class="faint">(airport pickup)</span></span><input class="mono" data-mr="${i}" data-k="flight" placeholder="AS 330 or Alaska 330" autocomplete="off" value="${esc(m.flight)}"></label></div>
         <label class="field"><span>Pickup address</span><input data-mr="${i}" data-k="pickup" autocomplete="off" placeholder="Hotel, pier, airport or street address" value="${esc(m.pickup)}"></label>
         <label class="field"><span>Drop-off address</span><input data-mr="${i}" data-k="dropoff" autocomplete="off" placeholder="Where to?" value="${esc(m.dropoff)}"></label></div>`).join('');
       $$('[data-mr]', box).forEach((inp) => {
@@ -3780,7 +3780,7 @@
           <p class="small muted" style="margin:0">Everything else is copied from ${esc(t.ref)}: extras, notes, billing and card.</p>
           <div class="grid2"><label class="field"><span>Return date</span><input id="rt-date" type="date" value="${day}"></label>
             <label class="field"><span>Pickup time</span><input id="rt-time" type="time" step="300" value=""></label></div>
-          <label class="field"><span>Flight number ${air ? '(required: the return starts at the airport)' : toAir ? '<span class="faint">(their flight out, for a pickup where they land)</span>' : '<span class="faint">(optional)</span>'}</span><input id="rt-flight" class="mono" placeholder="AS 330" autocomplete="off"></label>
+          <label class="field"><span>Flight number ${air ? '(required: the return starts at the airport)' : toAir ? '<span class="faint">(their flight out, for a pickup where they land)</span>' : '<span class="faint">(optional)</span>'}</span><input id="rt-flight" class="mono" placeholder="AS 330 or Alaska 330" autocomplete="off"></label>
           ${toAir ? `<fieldset class="fs landfs" id="rt-land" hidden><legend><label class="switch"><input type="checkbox" id="rt-land-on"><span id="rt-land-title">Add a pickup when they land</span></label></legend>
             <p class="small muted" id="rt-land-info"></p>
             <div class="grid2" id="rt-landf" hidden>
