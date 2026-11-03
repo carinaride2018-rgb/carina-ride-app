@@ -878,9 +878,20 @@
     // How a company takes payment: card (Stripe), cash paid to the office, or both
     // (the customer picks when booking). Chauffeurs never collect payment.
     const payOpts = (c) => ({ card: true, cash: false, ...((c && c.payOptions) || {}) });
-    const cardsOn = (c) => payOpts(c).card !== false && (payMode === 'demo' || (payMode === 'stripe' && !!(c.stripe && c.stripe.ready)));
+    // Card gateway per company: Stripe (default), or the company's own
+    // Authorize.net or PayPal account (Dawit 2026-11-03).
+    const GATEWAYS = { stripe: 'Stripe', authnet: 'Authorize.net', paypal: 'PayPal' };
+    const gwKind = (c) => (c && (c.gateway === 'authnet' || c.gateway === 'paypal') && c[c.gateway] ? c.gateway : 'stripe');
+    const gwReady = (c) => { const k = gwKind(c); return k === 'stripe' ? payMode === 'stripe' && !!(c.stripe && c.stripe.ready) : !!c[k].ready; };
+    // Where payments for this company go: the Stripe account id, or "<gateway>:<company>".
+    const acctRef = (c) => (gwKind(c) === 'stripe' ? (c.stripe && c.stripe.accountId) || '' : `${gwKind(c)}:${c.id}`);
+    // What the server needs to reach the gateway (credentials stay on the server).
+    const gwFor = (c) => { const k = gwKind(c); if (k === 'stripe') return { kind: 'stripe' }; const g = c[k]; return { kind: k, cred: { ...(opts.unseal ? opts.unseal(g.sealed) || {} : {}), sandbox: !!g.sandbox } }; };
+    // How the pages take a card: 'demo' (pretend form), 'stripe' (any secure hosted page), or 'off'.
+    const coPayMode = (c) => (payMode === 'demo' ? 'demo' : c && gwKind(c) !== 'stripe' && gwReady(c) ? 'stripe' : payMode);
+    const cardsOn = (c) => payOpts(c).card !== false && (payMode === 'demo' || gwReady(c));
     const cashOn = (c) => !!payOpts(c).cash;
-    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), cash: cashOn(c), cardChoice: payOpts(c).card !== false, payMode, logo: c.logo || '', banner: c.banner || '', domain: c.domain || '', ...(c.house ? { house: true } : {}) });
+    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), cash: cashOn(c), cardChoice: payOpts(c).card !== false, payMode: coPayMode(c), payVia: payMode === 'demo' ? '' : GATEWAYS[gwKind(c)], logo: c.logo || '', banner: c.banner || '', domain: c.domain || '', ...(c.house ? { house: true } : {}) });
 
     async function hashPw(pw, salt) { return hash(String(pw), salt); }
     async function setPassword(u, pw) { u.salt = randomId(8); u.passHash = await hashPw(pw, u.salt); }
@@ -1381,7 +1392,7 @@
     // refunds the rest. Demo charges settle at once (a card ending 0341 is
     // declined); with Stripe the server runs queued charges off-session.
     const EXTRAS_AFTER_MIN = 30;
-    const pubCard = (k) => (k ? { brand: k.brand || 'Card', last4: k.last4, exp: k.exp || '', savedAt: k.savedAt } : null);
+    const pubCard = (k) => (k ? { brand: k.brand || 'Card', last4: k.last4, exp: k.exp || '', savedAt: k.savedAt, ...(k.label ? { label: k.label } : {}) } : null);
     const onFile = (t) => t.payment.method === 'card_on_file' && !t.accountId && !t.farmIn;
     function demoCard(a, by) {
       const digits = String((a && (a.number || a.card)) || '').replace(/\D/g, '');
@@ -3026,12 +3037,12 @@
       if (t.payment.status === 'paid') fail('This trip is already paid.');
       if (t.accountId) fail('This trip is billed to your company account.');
       if (onFile(t)) fail('This trip goes on your saved card automatically.');
-      if (payMode !== 'demo') fail(payMode === 'stripe' ? 'Card payments open a secure Stripe page. Reload and tap Pay again.' : `Online card payment isn't set up yet. Call ${ctx.company.name} to pay.`);
+      if (payMode !== 'demo') fail(payMode !== 'off' ? 'Card payments open a secure payment page. Reload and tap Pay again.' : `Online card payment isn't set up yet. Call ${ctx.company.name} to pay.`);
       t.payment = { status: 'paid', method: 'card', paidAt: now().toISOString(), last4: str(a.last4, 4) || '4242' };
       return tripView(t);
     });
     def('customer.saveCard', ['customer'], true, (ctx, a) => {
-      if (payMode !== 'demo') fail(payMode === 'stripe' ? 'Cards are saved on a secure Stripe page. Reload and try again.' : "Card payments aren't set up yet.");
+      if (payMode !== 'demo') fail(payMode !== 'off' ? 'Cards are saved on a secure payment page. Reload and try again.' : "Card payments aren't set up yet.");
       saveCustomerCard(ctx.user, demoCard(a, ctx.user.name));
       return pubUser(ctx.user);
     });
@@ -3947,7 +3958,7 @@
     def('public.cardInfo', 'public', false, (ctx, a) => cardPage(tripByCardToken(a.token)));
     def('public.saveCard', 'public', true, (ctx, a) => {
       const t = tripByCardToken(a.token);
-      if (payMode !== 'demo') fail(payMode === 'stripe' ? 'Your card is saved on a secure Stripe page. Reload and try again.' : "Card payments aren't set up yet.");
+      if (payMode !== 'demo') fail(payMode !== 'off' ? 'Your card is saved on a secure payment page. Reload and try again.' : "Card payments aren't set up yet.");
       if (t.status === 'cancelled' || (t.status === 'completed' && t.payment.status === 'paid')) fail('This ride is closed.');
       const cu = t.customerId && findUser(t.customerId);
       const card = demoCard(a.card || a, cu ? cu.name : t.passengerName);
@@ -3967,7 +3978,7 @@
       q.termsAgreed = agreeTerms(c, a, who.name) || undefined;
       // With Stripe the card is saved on Stripe's page first (pay.complete books
       // it). A company without card payments books now and collects later.
-      if (cardsOn(c) && payMode === 'stripe') fail('Your card is saved on a secure Stripe page. Reload and tap the button again.');
+      if (cardsOn(c) && payMode !== 'demo') fail('Your card is saved on a secure payment page. Reload and tap the button again.');
       const card = cardsOn(c) ? demoCard(a.card || {}, who.name) : null;
       Object.assign(q.contact, who);
       bookQuote(q, who.name, card);
@@ -3977,7 +3988,7 @@
     // A card for a quote the office booked without one: goes on every open ride.
     def('public.saveQuoteCard', 'public', true, (ctx, a) => {
       const q = quoteByToken(a.token);
-      if (payMode !== 'demo') fail(payMode === 'stripe' ? 'Your card is saved on a secure Stripe page. Reload and try again.' : "Card payments aren't set up yet.");
+      if (payMode !== 'demo') fail(payMode !== 'off' ? 'Your card is saved on a secure payment page. Reload and try again.' : "Card payments aren't set up yet.");
       if (qStatus(q, findCompany(q.companyId)) !== 'accepted') fail('This quote is not booked yet.');
       quoteCard(q, demoCard(a.card || a, q.contact.name));
       return quoteView(q, false);
@@ -5425,7 +5436,7 @@
     def('public.acctCardInfo', 'public', false, (ctx, a) => acctCardPage(acctByCardToken(a.token)));
     def('public.saveAcctCard', 'public', true, (ctx, a) => {
       const acc = acctByCardToken(a.token);
-      if (payMode !== 'demo') fail(payMode === 'stripe' ? 'Your card is saved on a secure Stripe page. Reload and try again.' : "Card payments aren't set up yet.");
+      if (payMode !== 'demo') fail(payMode !== 'off' ? 'Your card is saved on a secure payment page. Reload and try again.' : "Card payments aren't set up yet.");
       acc.card = demoCard(a.card || a, acc.contact || acc.name);
       return acctCardPage(acc);
     });
@@ -5731,7 +5742,37 @@
       }
       return pubUser(who);
     });
-    def('dispatch.settings', STAFF, false, (ctx) => ({ carTypes: vehicleTypesFor(ctx.company), typeOrder: typesBySize(db.vehicles.filter((v) => v.companyId === ctx.company.id)), company: { ...pubCompany(ctx.company), refPrefix: ctx.company.refPrefix, plan: ctx.company.plan, planInfo: planInfo(ctx.company), terms: ctx.company.terms || '', policy: pcfg(ctx.company), bags: bagsCfg(ctx.company), stripe: ctx.company.stripe ? { ready: !!ctx.company.stripe.ready, since: ctx.company.stripe.connectedAt || null } : null }, rates: clone(ctx.company.rates), addons: clone(ctx.company.pricing.addons), vehicleTypes: VEHICLE_TYPES }));
+    // The company's card gateway as the office sees it (never the keys).
+    const gwPub = (c) => ({ kind: gwKind(c), name: GATEWAYS[gwKind(c)], ...Object.fromEntries(['authnet', 'paypal'].map((k) => [k, c[k] ? { ready: !!c[k].ready, sandbox: !!c[k].sandbox, hint: c[k].hint || '', since: c[k].connectedAt || null } : null])) });
+    // Authorize.net or PayPal: the master login enters the company's own keys.
+    // They are checked with the gateway, then kept sealed on the server.
+    def('company.connectGateway', ['admin'], true, async (ctx, a) => {
+      payGate(ctx.user, ctx.token);
+      const c = ctx.company, kind = a.kind;
+      if (kind !== 'authnet' && kind !== 'paypal') fail('Pick Authorize.net or PayPal.');
+      const id = str(kind === 'authnet' ? a.loginId : a.clientId, 200).trim(), key = str(kind === 'authnet' ? a.key : a.secret, 300).trim();
+      if (!id) fail(kind === 'authnet' ? 'Enter the API Login ID.' : 'Enter the Client ID.');
+      if (!key) fail(kind === 'authnet' ? 'Enter the Transaction Key.' : 'Enter the Secret.');
+      const sandbox = a.sandbox === true || a.sandbox === 'true' || a.sandbox === 'on';
+      const cred = kind === 'authnet' ? { loginId: id, key } : { clientId: id, secret: key };
+      if (payMode !== 'demo') {
+        if (!opts.verifyGateway || !opts.seal) fail('This server cannot connect other payment services yet.');
+        await opts.verifyGateway({ kind, cred: { ...cred, sandbox } });
+      }
+      c[kind] = { ready: true, sandbox, sealed: opts.seal ? opts.seal(cred) : '', hint: id.slice(-4), connectedAt: now().toISOString(), by: ctx.user.name };
+      c.gateway = kind;
+      return gwPub(c);
+    });
+    // Back to Stripe (the saved keys are removed). Cards saved with the old gateway
+    // need adding again; their charges fail with a message saying so.
+    def('company.useStripe', ['admin'], true, (ctx) => {
+      payGate(ctx.user, ctx.token);
+      const c = ctx.company;
+      for (const k of ['authnet', 'paypal']) delete c[k];
+      delete c.gateway;
+      return gwPub(c);
+    });
+    def('dispatch.settings', STAFF, false, (ctx) => ({ carTypes: vehicleTypesFor(ctx.company), typeOrder: typesBySize(db.vehicles.filter((v) => v.companyId === ctx.company.id)), company: { ...pubCompany(ctx.company), refPrefix: ctx.company.refPrefix, plan: ctx.company.plan, planInfo: planInfo(ctx.company), terms: ctx.company.terms || '', policy: pcfg(ctx.company), bags: bagsCfg(ctx.company), stripe: ctx.company.stripe ? { ready: !!ctx.company.stripe.ready, since: ctx.company.stripe.connectedAt || null } : null, gateway: gwPub(ctx.company) }, rates: clone(ctx.company.rates), addons: clone(ctx.company.pricing.addons), vehicleTypes: VEHICLE_TYPES }));
     // The company's logo (a small picture, shown in the header and on its booking pages).
     // A wide banner picture: shown across the top of emails (inside the email,
     // so mail apps don't block it) and the booking page, in place of the logo.
@@ -6890,7 +6931,9 @@
       // Checks a payment can be taken and says what to charge.
       async prepare(token, a) {
         await ensure();
-        if (payMode !== 'stripe') fail('Card payments are not switched on.');
+        if (payMode === 'demo') fail('Card payments are not switched on.');
+        if ((a.kind === 'plancard' || a.kind === 'invoice') && payMode !== 'stripe') fail('Card payments are not switched on.');
+        const via = (c) => ({ account: acctRef(c), gw: gwFor(c) });
         // The company admin's LimoRelay membership: on the platform's own Stripe account.
         if (a.kind === 'plancard' || a.kind === 'invoice') {
           const u = sessionUser(token);
@@ -6914,7 +6957,7 @@
           const c = findCompany(t.companyId);
           if (!cardsOn(c)) fail(`Online card payment isn't set up yet. Call ${c.name} to pay.`);
           const due = round2(t.price.total - (t.payment.deposit || 0));
-          return { account: c.stripe.accountId, amount: cents(due), description: `${c.name}, ride ${t.ref}${t.payment.deposit ? ' (balance)' : ''}`, email: u.email, meta: { kind: 'trip', id: t.id, ref: t.ref }, back: '' };
+          return { ...via(c), amount: cents(due), description: `${c.name}, ride ${t.ref}${t.payment.deposit ? ' (balance)' : ''}`, email: u.email, meta: { kind: 'trip', id: t.id, ref: t.ref }, back: '' };
         }
         // The customer saving a card on their profile, for future bookings.
         if (a.kind === 'mycard') {
@@ -6922,13 +6965,13 @@
           if (u.role !== 'customer') fail('Only customers save a card here.', 403);
           const c = findCompany(u.companyId);
           if (!cardsOn(c)) fail(`${c.name} doesn't take cards online yet.`);
-          return { mode: 'setup', account: c.stripe.accountId, description: `${c.name}, card on file`, email: u.email, name: u.name, meta: { kind: 'mycard', user: u.id }, back: '#account' };
+          return { mode: 'setup', ...via(c), description: `${c.name}, card on file`, email: u.email, name: u.name, meta: { kind: 'mycard', user: u.id }, back: '#account' };
         }
         // A company account's backup card, from the link the office sent.
         if (a.kind === 'acctcard') {
           const acc = acctByCardToken(a.token), c = findCompany(acc.companyId);
           if (!cardsOn(c)) fail("Card payments aren't set up yet.");
-          return { mode: 'setup', account: c.stripe.accountId, description: `${c.name}, backup card for ${acc.name}`, email: acc.billingEmail || '', name: acc.name, meta: { kind: 'acctcard', token: acc.cardToken }, back: `#acard.${acc.cardToken}` };
+          return { mode: 'setup', ...via(c), description: `${c.name}, backup card for ${acc.name}`, email: acc.billingEmail || '', name: acc.name, meta: { kind: 'acctcard', token: acc.cardToken }, back: `#acard.${acc.cardToken}` };
         }
         // Saving a card for a ride: from the booking form, the card link, or after a decline.
         if (a.kind === 'card') {
@@ -6937,7 +6980,7 @@
           if (t.status === 'cancelled' || (t.status === 'completed' && t.payment.status === 'paid')) fail('This ride is closed.');
           const c = findCompany(t.companyId);
           if (!cardsOn(c)) fail("Card payments aren't set up yet.");
-          return { mode: 'setup', account: c.stripe.accountId, description: `${c.name}, card for ride ${t.ref}`, email: t.passengerEmail || '', name: t.passengerName || '', meta: { kind: 'card', token: t.cardToken, ref: t.ref }, back: `#card.${t.cardToken}` };
+          return { mode: 'setup', ...via(c), description: `${c.name}, card for ride ${t.ref}`, email: t.passengerEmail || '', name: t.passengerName || '', meta: { kind: 'card', token: t.cardToken, ref: t.ref }, back: `#card.${t.cardToken}` };
         }
         if (a.kind === 'quote') {
           const q = quoteByToken(a.token);
@@ -6945,7 +6988,7 @@
           const qs = qStatus(q, c);
           if (qs !== 'sent' && !(qs === 'accepted' && !q.card)) fail(qs === 'accepted' ? 'This quote is already booked.' : 'This quote is not open for booking.');
           if (!cardsOn(c)) fail("Card payments aren't set up yet.");
-          const base = { mode: 'setup', account: c.stripe.accountId, description: `${c.name}, card for quote ${q.number}`, email: q.contact.email || '', name: q.contact.name, back: `#quote.${q.token}` };
+          const base = { mode: 'setup', ...via(c), description: `${c.name}, card for quote ${q.number}`, email: q.contact.email || '', name: q.contact.name, back: `#quote.${q.token}` };
           if (qStatus(q, c) === 'accepted') return { ...base, meta: { kind: 'quotecard', token: q.token, ref: q.number } };
           const { name, phone, smsOk } = bookingContact(a);
           const agreed = agreeTerms(c, a, name);
@@ -6961,7 +7004,8 @@
         if (p.setup) {
           // A card saved on Stripe's page (setup mode): nothing was charged.
           const k = p.setup;
-          const card = (by) => ({ brand: str(k.brand, 20) || 'Card', last4: str(k.last4, 4), exp: str(k.exp, 7), savedAt: now().toISOString(), by: str(by, 80), stripe: { customer: str(k.customer, 80), pm: str(k.pm, 80), session: str(p.sessionId, 120) } });
+          // stripe: where the card lives at the gateway (field name kept from the Stripe-only days); gw says which gateway.
+          const card = (by) => ({ brand: str(k.brand, 20) || 'Card', last4: str(k.last4, 4), exp: str(k.exp, 7), ...(str(k.label, 120) ? { label: str(k.label, 120) } : {}), savedAt: now().toISOString(), by: str(by, 80), stripe: { customer: str(k.customer, 80), pm: str(k.pm, 80), session: str(p.sessionId, 120), ...(GATEWAYS[k.gw] && k.gw !== 'stripe' ? { gw: k.gw } : {}) } });
           const same = (x) => x && x.stripe && x.stripe.session === p.sessionId;
           if (m.kind === 'plancard') {
             if (p.account !== 'platform') fail('Payment account does not match.', 403);
@@ -6978,21 +7022,21 @@
             const u = findUser(m.user);
             if (!u || u.role !== 'customer') fail('Customer not found.', 404);
             const c = findCompany(u.companyId);
-            if (!c.stripe || c.stripe.accountId !== p.account) fail('Payment account does not match.', 403);
+            if (!acctRef(c) || acctRef(c) !== p.account) fail('Payment account does not match.', 403);
             if (!same(u.card)) saveCustomerCard(u, card(u.name));
             out = { back: '#account', ref: 'your card' };
           } else if (m.kind === 'acctcard') {
             const acc = db.accounts.find((x) => x.cardToken === m.token);
             if (!acc) fail('Account not found.', 404);
             const c = findCompany(acc.companyId);
-            if (!c.stripe || c.stripe.accountId !== p.account) fail('Payment account does not match.', 403);
+            if (!acctRef(c) || acctRef(c) !== p.account) fail('Payment account does not match.', 403);
             if (!same(acc.card)) acc.card = card(acc.contact || acc.name);
             out = { back: `#acard.${acc.cardToken}`, ref: `the ${acc.name} account` };
           } else if (m.kind === 'card') {
             const t = db.trips.find((x) => x.cardToken === m.token);
             if (!t) fail('Trip not found.', 404);
             const c = findCompany(t.companyId);
-            if (!c.stripe || c.stripe.accountId !== p.account) fail('Payment account does not match.', 403);
+            if (!acctRef(c) || acctRef(c) !== p.account) fail('Payment account does not match.', 403);
             if (!same(t.card)) {
               const cu = t.customerId && findUser(t.customerId);
               const k2 = card(cu ? cu.name : t.passengerName);
@@ -7004,7 +7048,7 @@
             const q = db.quotes.find((x) => x.token === m.token);
             if (!q) fail('Quote not found.', 404);
             const c = findCompany(q.companyId);
-            if (!c.stripe || c.stripe.accountId !== p.account) fail('Payment account does not match.', 403);
+            if (!acctRef(c) || acctRef(c) !== p.account) fail('Payment account does not match.', 403);
             if (!same(q.card)) {
               const st = qStatus(q, c);
               if (m.kind === 'quote' && (st === 'sent' || st === 'expired')) {
@@ -7034,18 +7078,18 @@
           const t = db.trips.find((x) => x.id === m.id);
           if (!t) fail('Trip not found.', 404);
           const c = findCompany(t.companyId);
-          if (!c.stripe || c.stripe.accountId !== p.account) fail('Payment account does not match.', 403);
+          if (!acctRef(c) || acctRef(c) !== p.account) fail('Payment account does not match.', 403);
           if (t.payment.stripeSession === p.sessionId) return { back: '', ref: t.ref };
           if (t.payment.status !== 'paid') {
             t.payment = { ...t.payment, status: 'paid', method: 'card', paidAt: now().toISOString(), last4: str(p.last4, 4), amount: round2(p.amount / 100), stripeSession: p.sessionId };
-            log(t, 'paid', 'Stripe', `Card payment $${money(p.amount / 100)}`);
+            log(t, 'paid', GATEWAYS[gwKind(c)], `Card payment $${money(p.amount / 100)}`);
           }
           out = { back: '', ref: t.ref };
         } else if (m.kind === 'quote') {
           const q = db.quotes.find((x) => x.token === m.token);
           if (!q) fail('Quote not found.', 404);
           const c = findCompany(q.companyId);
-          if (!c.stripe || c.stripe.accountId !== p.account) fail('Payment account does not match.', 403);
+          if (!acctRef(c) || acctRef(c) !== p.account) fail('Payment account does not match.', 403);
           if (q.depositPaid && q.depositPaid.stripeSession === p.sessionId) return { back: `#quote.${q.token}`, ref: q.number };
           const st = qStatus(q, c);
           if (st === 'sent' || st === 'expired') {
@@ -7069,6 +7113,7 @@
       // one and reports back through chargeResult.
       async pendingCharges() {
         await ensure();
+        if (payMode === 'demo') return [];
         const out = [];
         let dirty = false;
         for (const t of db.trips) {
@@ -7076,23 +7121,29 @@
             if (x.status !== 'pending') continue;
             const c = findCompany(t.companyId), k = t.card && t.card.stripe;
             const orig = x.kind === 'refund' && t.payment.charges.find((y) => y.id === x.of);
-            if (!c.stripe || !c.stripe.accountId || (x.kind === 'refund' ? !(orig && orig.ref) : !(k && k.customer && k.pm))) { finishCharge(t, x, { ok: false, error: x.kind === 'refund' ? 'Refund it in Stripe' : 'No card saved with Stripe' }); dirty = true; continue; }
-            out.push({ tripId: t.id, id: x.id, kind: x.kind, amount: cents(x.amount), account: c.stripe.accountId, customer: k && k.customer, pm: k && k.pm, refundOf: orig ? orig.ref : '',
+            const gk = gwKind(c), name = GATEWAYS[gk];
+            if (gk === 'stripe' && payMode !== 'stripe') continue;
+            // A card saved with one gateway can't be charged through another one.
+            const sameGw = !k || (k.gw || 'stripe') === gk;
+            if (!acctRef(c) || !gwReady(c) || !sameGw || (x.kind === 'refund' ? !(orig && orig.ref) : !(k && k.customer && k.pm))) { finishCharge(t, x, { ok: false, error: !sameGw ? `This card was saved with ${GATEWAYS[k.gw || 'stripe']}. Add the card again` : x.kind === 'refund' ? `Refund it in ${name}` : `No card saved with ${name}` }); dirty = true; continue; }
+            out.push({ tripId: t.id, id: x.id, kind: x.kind, amount: cents(x.amount), account: acctRef(c), gw: gwFor(c), customer: k && k.customer, pm: k && k.pm, refundOf: orig ? orig.ref : '', origAmount: orig ? cents(orig.amount) : 0,
               description: `${c.name}, ${x.kind === 'refund' ? 'refund for' : x.kind === 'extra' ? 'extras on' : x.kind === 'fee' ? 'fee for' : 'ride'} ${t.ref}`, meta: { kind: x.kind, trip: t.ref } });
           }
         }
         for (const inv of db.invoices) {
-          if (!inv.charge || inv.charge.status !== 'pending') continue;
+          if (!inv.charge || inv.charge.status !== 'pending' || payMode !== 'stripe') continue;
           const c = findCompany(inv.companyId), k = c && c.billingCard && c.billingCard.stripe;
           if (inv.status === 'paid') { inv.charge.status = 'paid'; dirty = true; continue; }
           if (!k || !k.customer || !k.pm) { inv.charge = { ...inv.charge, status: 'failed', error: 'No card saved with Stripe' }; dirty = true; continue; }
-          out.push({ invoiceId: inv.id, id: inv.charge.id, kind: 'invoice', amount: cents(inv.total), account: null, customer: k.customer, pm: k.pm, description: `LimoRelay ${inv.number}, ${c.name}`, meta: { kind: 'invoice', invoice: inv.number } });
+          out.push({ invoiceId: inv.id, id: inv.charge.id, kind: 'invoice', amount: cents(inv.total), account: null, gw: { kind: 'stripe' }, customer: k.customer, pm: k.pm, description: `LimoRelay ${inv.number}, ${c.name}`, meta: { kind: 'invoice', invoice: inv.number } });
         }
         for (const inv of db.clientInvoices) {
           if (!inv.charge || inv.charge.status !== 'pending') continue;
           const c = findCompany(inv.companyId), acc = db.accounts.find((x) => x.id === inv.accountId), k = acc && acc.card && acc.card.stripe;
-          if (inv.status !== 'open' || !c.stripe || !c.stripe.accountId || !k || !k.customer || !k.pm) { inv.charge = { ...inv.charge, status: 'failed', error: inv.status !== 'open' ? 'Invoice no longer open' : 'No card saved with Stripe' }; dirty = true; continue; }
-          out.push({ clientInvoiceId: inv.id, id: inv.charge.id, kind: 'acctinvoice', amount: cents(inv.total), account: c.stripe.accountId, customer: k.customer, pm: k.pm, description: `${c.name}, invoice ${inv.number}`, meta: { kind: 'acctinvoice', invoice: inv.number } });
+          if (gwKind(c) === 'stripe' && payMode !== 'stripe') continue;
+          const sameGw = !k || (k.gw || 'stripe') === gwKind(c);
+          if (inv.status !== 'open' || !acctRef(c) || !gwReady(c) || !sameGw || !k || !k.customer || !k.pm) { inv.charge = { ...inv.charge, status: 'failed', error: inv.status !== 'open' ? 'Invoice no longer open' : !sameGw ? `The card was saved with ${GATEWAYS[k.gw || 'stripe']}. Ask for the card again` : `No card saved with ${GATEWAYS[gwKind(c)]}` }; dirty = true; continue; }
+          out.push({ clientInvoiceId: inv.id, id: inv.charge.id, kind: 'acctinvoice', amount: cents(inv.total), account: acctRef(c), gw: gwFor(c), customer: k.customer, pm: k.pm, description: `${c.name}, invoice ${inv.number}`, meta: { kind: 'acctinvoice', invoice: inv.number } });
         }
         if (dirty) { syncFarmouts(); meterTexts(); save(db); }
         return out;

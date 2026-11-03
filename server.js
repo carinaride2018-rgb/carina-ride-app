@@ -20,6 +20,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { createCore, setProviders, normFlight, isAirport } = require('./core.js');
 const { createProviders } = require('./providers.js');
+const { gateway } = require('./gateways.js');
 const { createWebPush } = require('./webpush.js');
 const { createNativePush, isNative } = require('./nativepush.js');
 
@@ -51,7 +52,38 @@ const push = process.env.WEB_PUSH === 'off' ? null : createWebPush(process.env, 
 // The App Store and Google Play apps: Apple and Google notifications (null until their keys are set).
 const nativePush = createNativePush(process.env);
 
+// Companies' own Authorize.net / PayPal keys are kept sealed (AES-256-GCM) in
+// the data file. The key comes from CREDENTIALS_KEY when set in Render, else
+// from a random key file kept next to the data file.
+const sealKey = (() => {
+  if (process.env.CREDENTIALS_KEY) return crypto.createHash('sha256').update(process.env.CREDENTIALS_KEY).digest();
+  const f = path.join(path.dirname(DATA_FILE), 'credentials.key');
+  try { const k = Buffer.from(fs.readFileSync(f, 'utf8').trim(), 'hex'); if (k.length === 32) return k; } catch (e) { /* first start */ }
+  const k = crypto.randomBytes(32);
+  try { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, k.toString('hex'), { mode: 0o600 }); } catch (e) { console.error('credentials key', e.message); }
+  return k;
+})();
+function seal(obj) {
+  const iv = crypto.randomBytes(12), c = crypto.createCipheriv('aes-256-gcm', sealKey, iv);
+  const enc = Buffer.concat([c.update(JSON.stringify(obj), 'utf8'), c.final()]);
+  return ['v1', iv.toString('base64'), c.getAuthTag().toString('base64'), enc.toString('base64')].join('.');
+}
+function unseal(s) {
+  try {
+    const [v, iv, tag, enc] = String(s || '').split('.');
+    if (v !== 'v1') return null;
+    const d = crypto.createDecipheriv('aes-256-gcm', sealKey, Buffer.from(iv, 'base64'));
+    d.setAuthTag(Buffer.from(tag, 'base64'));
+    return JSON.parse(Buffer.concat([d.update(Buffer.from(enc, 'base64')), d.final()]).toString('utf8'));
+  } catch (e) { return null; }
+}
+
 const core = createCore({
+  seal, unseal,
+  // Connecting Authorize.net or PayPal: the keys must work before they're saved.
+  async verifyGateway(g) {
+    try { await gateway(g).verify(); } catch (e) { const m = String(e.message).replace(/\.+$/, ''); const err = new Error(e.status && e.status < 500 ? `${m}. Check the keys and the test mode switch.` : `${m}. Try again in a minute.`); err.status = 400; throw err; }
+  },
   pushKey: push ? push.publicKey : '',
   nativePush: nativePush ? nativePush.ready : null,
   mapsKey: live.mapsKey,
@@ -215,14 +247,30 @@ const bearer = (req) => { const a = req.headers.authorization || ''; return a.st
 // LimoRelay's own membership payments use the platform's Stripe account (no Stripe-Account header).
 const acctOf = (a) => (a === 'platform' ? null : a);
 
+// Authorize.net / PayPal hosted-page visits in progress (an hour each).
+const gwSessions = new Map();
+const htmlEsc = (s) => String(s).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+async function gwStart(what) {
+  for (const [k, v] of gwSessions) if (Date.now() - v.at > 3600e3) gwSessions.delete(k);
+  const sid = crypto.randomBytes(12).toString('hex');
+  const back = `${base}pay/gw-return?s=${sid}`, cancel = `${base}?payment=cancelled${what.back || ''}`;
+  const gw = gateway(what.gw);
+  const s = await gw.setup(what, back, cancel);
+  gwSessions.set(sid, { ...s, what, kind: what.gw.kind, at: Date.now() });
+  return what.gw.kind === 'authnet' ? `${base}pay/anet-go?s=${sid}` : s.url;
+}
+
 async function payRoute(req, res, url, raw) {
   const p = url.pathname;
-  const fail = (e) => send(res, e.status && e.status < 500 ? e.status : 502, { ok: false, error: e.status && e.status < 500 && !e.data ? e.message : `Stripe: ${e.message}` });
-  if (!live.on.cards && p !== '/pay/webhook') return send(res, 404, { ok: false, error: 'Card payments are not switched on.' });
+  const fail = (e) => send(res, e.status && e.status < 500 ? e.status : 502, { ok: false, error: (e.status && e.status < 500 && !e.data) || /^(PayPal|Authorize\.net)/.test(e.message) ? e.message : `Stripe: ${e.message}` });
+  const otherGw = p === '/pay/checkout' || p === '/pay/gw-return' || p === '/pay/anet-go';
+  if (!live.on.cards && !otherGw && p !== '/pay/webhook') return send(res, 404, { ok: false, error: 'Card payments are not switched on.' });
   try {
     if (p === '/pay/checkout' && req.method === 'POST') {
       const args = raw ? JSON.parse(raw) : {};
       const what = await core.pay.prepare(bearer(req), args);
+      if (what.gw && what.gw.kind !== 'stripe') return send(res, 200, { ok: true, data: { url: await gwStart(what) } });
+      if (!live.on.cards) return send(res, 404, { ok: false, error: 'Card payments are not switched on.' });
       const success = `${base}pay/return?s={CHECKOUT_SESSION_ID}&a=${encodeURIComponent(what.account)}`;
       const cancel = `${base}?payment=cancelled${what.back}`;
       const on = { ...what, account: acctOf(what.account) };
@@ -244,6 +292,41 @@ async function payRoute(req, res, url, raw) {
       const done = await core.pay.complete({ account: acct, sessionId: session.id, amount: session.amount_total, meta: session.metadata, last4: live.pay.last4(session) });
       flushOutbox();
       return redirect(res, `${base}?paid=${encodeURIComponent(done.ref)}${done.back}`);
+    }
+    if (p === '/pay/anet-go' && req.method === 'GET') {
+      // Authorize.net's hosted page is opened with a form POST carrying the token.
+      const g = gwSessions.get(url.searchParams.get('s') || '');
+      if (!g || g.kind !== 'authnet') return redirect(res, `${base}?payment=error`);
+      const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Secure card page</title></head>
+<body style="font-family:system-ui,sans-serif;padding:24px"><p>Opening the secure card page…</p><form id="f" method="post" action="${htmlEsc(g.postUrl)}"><input type="hidden" name="token" value="${htmlEsc(g.token)}"><noscript><button type="submit">Continue</button></noscript></form>
+<script>document.getElementById('f').submit()</script></body></html>`;
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', ...SECURITY_HEADERS, 'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; form-action https://accept.authorize.net https://test.authorize.net; style-src 'unsafe-inline'" });
+      return res.end(html);
+    }
+    if (p === '/pay/gw-return' && req.method === 'GET') {
+      // Back from Authorize.net or PayPal: read the saved card, then save it
+      // (setup) or charge it once (paying a ride).
+      const sid = url.searchParams.get('s') || '';
+      const g = gwSessions.get(sid);
+      if (!g) return redirect(res, `${base}?payment=error`);
+      if (g.done) return redirect(res, g.done);
+      const what = g.what, gw = gateway(what.gw);
+      const card = await gw.cardOf(g);
+      if (!card) return redirect(res, `${base}?payment=unpaid${what.back || ''}`);
+      let to;
+      if (what.mode === 'setup') {
+        const done = await core.pay.complete({ account: what.account, sessionId: sid, meta: what.meta, setup: { ...card, gw: what.gw.kind } });
+        to = `${base}?cardsaved=${encodeURIComponent(done.ref)}${done.back}`;
+        runCharges();
+      } else {
+        const r = await gw.charge({ id: `pay_${sid}`.slice(0, 40), kind: 'charge', amount: what.amount, customer: card.customer, pm: card.pm, description: what.description, meta: what.meta });
+        if (!r.ok) { gwSessions.delete(sid); return redirect(res, `${base}?payment=unpaid${what.back || ''}`); }
+        const done = await core.pay.complete({ account: what.account, sessionId: sid, amount: what.amount, meta: what.meta, last4: card.last4 });
+        to = `${base}?paid=${encodeURIComponent(done.ref)}${done.back}`;
+      }
+      g.done = to;
+      flushOutbox();
+      return redirect(res, to);
     }
     if (p === '/pay/connect' && req.method === 'POST') {
       const c = await core.pay.company(bearer(req));
@@ -298,14 +381,13 @@ async function payRoute(req, res, url, raw) {
 // extras after the ride, refunds on cancel) and this runs them on Stripe.
 let charging = false, chargeAgain = false;
 async function runCharges() {
-  if (!live.on.cards) return;
   if (charging) { chargeAgain = true; return; }
   charging = true;
   try {
     do {
       chargeAgain = false;
       for (const x of await core.pay.pendingCharges()) {
-        const r = await live.pay.charge(x);
+        const r = x.gw && x.gw.kind !== 'stripe' ? await gateway(x.gw).charge(x) : live.on.cards ? await live.pay.charge(x) : { retry: true };
         if (r.retry) { if (r.error) console.error(`card ${x.id}: ${r.error}, will retry`); continue; }
         await core.pay.chargeResult({ tripId: x.tripId, invoiceId: x.invoiceId, clientInvoiceId: x.clientInvoiceId, id: x.id, ...r });
       }

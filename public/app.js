@@ -112,7 +112,7 @@
   // The ride when they land: fare, chauffeur gratuity and total, once the drop-off there is entered.
   const landPrice = (lp, ask) => lp.price == null ? `<p class="small faint" style="margin:0">${esc(ask)}</p>`
     : `<div class="qline"><span>Ride fare${lp.estimate ? ' (estimate)' : ''}</span><span class="num">${money(lp.fare)}</span></div>${lp.gratuity ? `<div class="qline"><span>Chauffeur gratuity</span><span class="num">${money(lp.gratuity)}</span></div>` : ''}<div class="qline qsum"><span><b>Total</b></span><span class="num"><b>${money(lp.price)}</b></span></div>`;
-  const cardName = (k) => k ? `${k.brand || 'Card'} ending ${k.last4}` : '';
+  const cardName = (k) => !k ? '' : k.last4 ? `${k.brand || 'Card'} ending ${k.last4}` : `${k.brand || 'Card'}${k.label ? ` (${k.label})` : ''}`;
   const cardPill = (t) => { const p = t.pay; if (!p) return ''; if (p.failed) return '<span class="pill s-cancelled">Card declined</span>'; if (t.status === 'cancelled') return p.paid > 0 ? `<span class="pill paid">Fee ${esc(money(p.paid))} charged</span>` : ''; if (p.needsCard) return '<span class="pill unpaid">Needs a card</span>'; if (t.payment.status === 'paid') return '<span class="pill paid">Paid · card</span>'; if (p.fareCharged) return `<span class="pill unpaid">${esc(money(p.balance))} extras due</span>`; return '<span class="pill s-accepted">Card on file</span>'; };
   function cardLine(t, who) {
     const p = t.pay; if (!p) return '';
@@ -1273,7 +1273,7 @@
         ${state}
         ${d.closed ? '' : `<form class="panel stack" id="cd-form" novalidate>
           <p class="small muted">${d.fareCharged ? 'The fare is already paid.' : d.chargeWhen === 'booking' ? `The ${money(d.balance > 0 ? d.balance : d.total)} fare is charged as soon as you save the card.` : new Date(d.chargeAt).getTime() <= Date.now() ? `Pickup is less than ${d.chargeHours} hours away, so the ${money(d.balance > 0 ? d.balance : d.total)} fare is charged as soon as you save the card.` : `Nothing is charged now. The fare goes on this card ${d.chargeHours} hours before pickup (${esc(fmtDT(d.chargeAt))}).`} Extras like waiting time, an added stop or a new destination go on the same card after the ride.</p>
-          ${stripe ? '<p class="small muted">You\'ll enter your card on a secure Stripe page, then come straight back here.</p>' : `
+          ${stripe ? '<p class="small muted">You\'ll enter your card on a secure payment page, then come straight back here.</p>' : `
           <label class="field"><span>Card number</span><input name="number" class="mono" inputmode="numeric" autocomplete="cc-number" value="4242 4242 4242 4242"></label>
           <label class="field"><span>Expiry (MM/YY)</span><input name="exp" class="mono" autocomplete="cc-exp" value="12/30"></label>
           ${d.company.payMode === 'demo' ? '<p class="small faint">Demo: no real card is charged; a card ending 0341 shows a decline.</p>' : ''}`}
@@ -1313,7 +1313,7 @@
         ${d.card ? `<div class="note ok">${esc(cardName(d.card))} is on file.</div>` : ''}
         <form class="panel stack" id="ac-form" novalidate>
           <p class="small muted">Nothing is charged now. You still get your invoices as usual. ${esc(d.company.name)} only uses this card if an invoice goes unpaid.</p>
-          ${stripe ? '<p class="small muted">You\'ll enter the card on a secure Stripe page, then come straight back here.</p>' : `
+          ${stripe ? '<p class="small muted">You\'ll enter the card on a secure payment page, then come straight back here.</p>' : `
           <label class="field"><span>Card number</span><input name="number" class="mono" inputmode="numeric" autocomplete="cc-number" value="4242 4242 4242 4242"></label>
           <label class="field"><span>Expiry (MM/YY)</span><input name="exp" class="mono" autocomplete="cc-exp" value="12/30"></label>
           ${d.company.payMode === 'demo' ? '<p class="small faint">Demo: no real card is charged; a card ending 0341 shows a decline.</p>' : ''}`}
@@ -1791,7 +1791,7 @@
       const open = q.status === 'sent';
       const cardOn = q.cards !== false && q.company.cards !== false, stripeCard = cardOn && q.company.payMode === 'stripe';
       const cardHow = q.chargeWhen === 'booking' ? 'No deposit. The rides are charged to your card when you book, and extras like waiting time or an added stop after the ride.' : `No deposit. Nothing is charged now: each ride goes on your card ${q.chargeHours || 24} hours before its pickup, and extras like waiting time or an added stop after the ride.`;
-      const cardFields = stripeCard ? `<p class="small muted">${cardHow} You'll save your card on a secure Stripe page, then come straight back here.</p>`
+      const cardFields = stripeCard ? `<p class="small muted">${cardHow} You'll save your card on a secure payment page, then come straight back here.</p>`
         : `<div class="grid2"><label class="field"><span>Card number</span><input name="number" class="mono" inputmode="numeric" autocomplete="cc-number" value="4242 4242 4242 4242"></label><label class="field"><span>Expiry (MM/YY)</span><input name="exp" class="mono" autocomplete="cc-exp" value="12/30"></label></div>
           <p class="small muted">${cardHow}${q.company.payMode === 'demo' ? ' Demo: no real card is charged.' : ''}</p>`;
       v.innerHTML = `<div class="stack">
@@ -2171,7 +2171,7 @@
         box.innerHTML = `<div class="cardbox"><div class="spread"><span class="small"><b>Card on file</b><br>${esc(cardName(k))}${k.exp ? ` · exp ${esc(k.exp)}` : ''}</span>${co.payMode === 'demo' ? '<button class="linkbtn small" type="button" id="bk-newcard">Use another card</button>' : ''}</div><p class="small muted">${how}</p></div>`;
         const b = $('#bk-newcard', box); if (b) b.onclick = () => { newCard = true; drawCard(); };
       } else if (co.payMode === 'stripe') {
-        box.innerHTML = `<div class="cardbox"><b class="small">Card on file</b><p class="small muted">After you book, you'll save your card on a secure Stripe page. ${how}</p></div>`;
+        box.innerHTML = `<div class="cardbox"><b class="small">Card on file</b><p class="small muted">After you book, you'll save your card on a secure payment page. ${how}</p></div>`;
       } else {
         box.innerHTML = `<div class="cardbox stack" style="gap:8px"><b class="small">Card on file</b>
           <label class="field"><span>Card number</span><input id="bk-cardno" class="mono" inputmode="numeric" autocomplete="cc-number" value="${esc(state.cardNo || '4242 4242 4242 4242')}"></label>
@@ -2744,7 +2744,7 @@
           return;
         }
         if (stripe) {
-          box.innerHTML = `<p class="small muted">${k ? 'Add a new card to use instead of ' + esc(cardName(k)) + '.' : 'Save a card so booking is one tap.'} You enter it on Stripe's secure page; nothing is charged now.</p>
+          box.innerHTML = `<p class="small muted">${k ? 'Add a new card to use instead of ' + esc(cardName(k)) + '.' : 'Save a card so booking is one tap.'} You enter it on a secure payment page; nothing is charged now.</p>
             <div class="row"><button class="btn brand" type="button" id="pf-stripe">${k ? 'Add new card' : 'Add a card'}</button>${k ? '<button class="btn" type="button" id="pf-keep">Keep current card</button>' : ''}</div><div id="pf-cerr"></div>`;
           $('#pf-stripe', box).onclick = (e) => busy(e.currentTarget, async () => { try { const r = await payApi('checkout', { kind: 'mycard' }); location.href = r.url; await new Promise(() => {}); } catch (x) { showErr($('#pf-cerr', box), x); } });
         } else {
@@ -2977,7 +2977,7 @@
       const m = openModal({
         title: `Pay for ${t.ref}`,
         body: `<div class="spread"><span class="muted">${esc(fmtDT(t.pickupAt))}</span><b class="num" style="font-size:22px">${money(due)}</b></div>
-          <p class="note">You'll pay on a secure Stripe page. The payment goes straight to ${esc(session.company.name)}, then you come back here.</p><div id="pay-err"></div>`,
+          <p class="note">You'll pay on a secure payment page. The payment goes straight to ${esc(session.company.name)}, then you come back here.</p><div id="pay-err"></div>`,
         footer: `<button class="btn" type="button" data-close>Not now</button><button class="btn brand" type="button" id="pay-go">Pay ${money(due)} by card</button>`,
       });
       $('[data-close]', m).onclick = closeModal;
@@ -3504,7 +3504,7 @@
       rates: ['Base fare, per mile and hourly for each car.', 'Set prices'],
       logo: ['Shown on your booking page, the booking confirmation and every email.', 'Add logo'],
       drivers: ['Each driver gets their own app login.', 'Add a driver'],
-      payments: ['Connect Stripe so passengers pay by card, or take cash only.', 'Set up payments'],
+      payments: ['Connect Stripe, Authorize.net or PayPal so passengers pay by card, or take cash only.', 'Set up payments'],
       booking: ['Book a ride yourself to see how it works.', 'New booking'],
       share: ['Put it on your website and Google profile.', 'Copy link'],
     };
@@ -5842,7 +5842,7 @@
             <label class="field"><span>Your terms and conditions</span><textarea name="terms" rows="6" maxlength="6000" placeholder="For example: no smoking; a cleaning fee of $250 applies to spills; children under 8 need a car seat." ${ro}>${esc(s.company.terms || '')}</textarea></label></div>
           <div class="panel stack" id="rs-payopts"><h2>How customers pay</h2>
             <p class="small muted">Payment always goes through ${esc(s.company.name)}, never to the chauffeur. Turn on one or both; with both on, the customer picks when booking.</p>
-            <label class="switch"><input type="checkbox" name="payCard" id="rs-paycard" ${s.company.cardChoice !== false ? 'checked' : ''} ${ro}><span>Card (charged through Stripe, set up below)</span></label>
+            <label class="switch"><input type="checkbox" name="payCard" id="rs-paycard" ${s.company.cardChoice !== false ? 'checked' : ''} ${ro}><span>Card (charged through your card service, set up below)</span></label>
             <label class="switch"><input type="checkbox" name="payCash" id="rs-paycash" ${s.company.cash ? 'checked' : ''} ${ro}><span>Cash, paid to the office (mark the ride paid in Trips)</span></label>
             <p class="small faint">Square: coming soon. It needs LimoRelay's Square app to be set up first.</p></div>
           <div class="panel stack" id="rs-cards"><h2>Card payments</h2><p class="small faint">Loading…</p></div>
@@ -5853,8 +5853,29 @@
         const box = $('#rs-cards', v);
         if (!isAdmin) { box.innerHTML = `<h2>Card payments <span class="pill off" style="vertical-align:middle">🔒 Locked</span></h2><p class="small muted">Only the company's master login can open payment settings.</p>`; return; }
         if (!(await payLocked(box, 'Card payments', drawCards))) return;
-        box.innerHTML = `<div class="spread"><h2>Card payments</h2>${lockNowBtn('rs-lock')}</div>${cardsPanel(s.company)}`;
+        const g = s.company.gateway || { kind: 'stripe' };
+        const pick = drawCards.pick || g.kind;
+        box.innerHTML = `<div class="spread"><h2>Card payments</h2>${lockNowBtn('rs-lock')}</div>
+          <div class="stack" style="gap:6px"><span class="label">Card service</span><div class="seg" id="rs-gw">${[['stripe', 'Stripe'], ['authnet', 'Authorize.net'], ['paypal', 'PayPal']].map(([k, l]) => `<button type="button" data-gw="${k}" aria-pressed="${pick === k}">${l}${g.kind === k ? ' ✓' : ''}</button>`).join('')}</div>
+          <span class="small faint">Pick the service your company already uses. Customers' cards are charged there and the money goes to your account.${g.kind !== 'stripe' ? ` In use now: <b>${esc(g.name)}</b>.` : ''}</span></div>
+          <div id="rs-gwbody">${pick === 'stripe' ? cardsPanel(s.company) : gwPanel(pick, g, drawCards.replace)}</div>`;
         $('#rs-lock', box).onclick = async () => { try { await api('company.lockPayments'); } catch (e) { /* already locked */ } drawCards(); };
+        $$('[data-gw]', box).forEach((b) => { b.onclick = () => { drawCards.pick = b.dataset.gw; drawCards.replace = ''; drawCards(); }; });
+        const after = (gp, msg) => { s.company.gateway = gp; drawCards.pick = gp.kind; drawCards.replace = ''; toast(msg); drawCards(); };
+        // Not a <form>: this panel sits inside the Rates & brand form.
+        const gf = $('#rs-gwform', box);
+        const connect = () => busy($('#rs-gwgo', gf), async () => {
+          const val = Object.fromEntries($$('[data-gk]', gf).map((i) => [i.dataset.gk, i.type === 'checkbox' ? i.checked : i.value]));
+          try { const gp = await api('company.connectGateway', { kind: pick, ...val }); after(gp, `${gp.name} is connected. Customers' cards now go through ${gp.name}.`); } catch (err) { showErr($('#rs-gwerr', box), err); }
+        });
+        if (gf) {
+          $('#rs-gwgo', gf).onclick = connect;
+          $$('input', gf).forEach((i) => i.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); connect(); } }));
+        }
+        const us = $('#rs-usestripe', box);
+        if (us) us.onclick = () => { if (!us.dataset.armed) { us.dataset.armed = '1'; us.textContent = 'Click again to switch back to Stripe'; return; } busy(us, async () => { try { const gp = await api('company.useStripe'); after(gp, 'Switched back to Stripe.'); } catch (err) { toast(err.message, true); } }); };
+        const rk = $('#rs-gwreplace', box);
+        if (rk) rk.onclick = () => { drawCards.replace = pick; drawCards(); };
         const sc = $('#rs-stripe', box);
         if (sc) sc.onclick = () => busy(sc, async () => { try { const r = await payApi('connect'); location.href = r.url; await new Promise(() => {}); } catch (err) { toast(err.message, true); } });
       };
@@ -5931,6 +5952,24 @@
       };
     }
 
+    // Authorize.net or PayPal: the company's own keys.
+    function gwPanel(kind, g, replace) {
+      const cur = g[kind], inUse = g.kind === kind && cur && cur.ready;
+      const name = kind === 'authnet' ? 'Authorize.net' : 'PayPal';
+      if (inUse && replace !== kind) return `<p><span class="pill s-on_board">Connected</span> ${name}${cur.hint ? `, ${kind === 'authnet' ? 'API Login ID' : 'Client ID'} ending ${esc(cur.hint)}` : ''}${cur.sandbox ? ' · <b>Test mode</b> (no real money)' : ''}.</p>
+          <div class="row"><button class="btn" type="button" id="rs-gwreplace">Replace keys</button><button class="btn" type="button" id="rs-usestripe">Switch back to Stripe</button></div>
+          <p class="small faint">Cards saved before a switch need adding again; their charges say so on the trip.</p>`;
+      const help = kind === 'authnet'
+        ? 'Find these in Authorize.net: Account, Settings, API Credentials &amp; Keys. Customer Information Manager (CIM) must be on in your Authorize.net account so cards can be saved for later charges.'
+        : 'Find these at developer.paypal.com: Apps &amp; Credentials, your Live app (or Sandbox for testing). Your PayPal business account needs saved payments (vaulting) turned on.';
+      return `<div class="stack" id="rs-gwform">
+          <p class="small muted">${help}</p>
+          <div class="grid2"><label class="field"><span>${kind === 'authnet' ? 'API Login ID' : 'Client ID'}</span><input data-gk="${kind === 'authnet' ? 'loginId' : 'clientId'}" class="mono" autocomplete="off" spellcheck="false"></label>
+            <label class="field"><span>${kind === 'authnet' ? 'Transaction Key' : 'Secret'}</span><input data-gk="${kind === 'authnet' ? 'key' : 'secret'}" type="password" class="mono" autocomplete="new-password" spellcheck="false"></label></div>
+          <label class="switch"><input type="checkbox" data-gk="sandbox"><span>Test mode (${kind === 'authnet' ? 'Authorize.net sandbox' : 'PayPal sandbox'} keys, no real money)</span></label>
+          <p class="small faint">We check the keys with ${name} before saving. They are stored encrypted and never shown again.</p>
+          <div id="rs-gwerr"></div><div><button class="btn primary" type="button" id="rs-gwgo">Connect ${name}</button></div></div>`;
+    }
     function cardsPanel(c) {
       if (c.payMode === 'demo') return '<p class="muted">Card payments are simulated on this copy. Customers pay with a pretend card and nothing is charged.</p>';
       if (c.payMode === 'off') return `<p class="muted">Online card payments are off until the platform owner adds Stripe. Customers pay the chauffeur, or you bill company accounts.</p>`;
