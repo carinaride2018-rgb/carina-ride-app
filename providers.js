@@ -310,6 +310,27 @@ function createProviders(rawEnv, opts) {
     }
   }
 
+  // A business's Google rating and its newest reviews (Places API (New), up to 5).
+  async function placeReviews(placeId) {
+    if (!on.maps || !placeId) return null;
+    const r = await request('GET', `${url('GOOGLE_PLACES', 'https://places.googleapis.com')}/v1/places/${encodeURIComponent(placeId)}?languageCode=en`, {
+      headers: { 'X-Goog-Api-Key': env.GOOGLE_MAPS_API_KEY, 'X-Goog-FieldMask': 'displayName,rating,userRatingCount,googleMapsUri,reviews' },
+      timeoutMs: 8000,
+    });
+    return {
+      name: (r.displayName && r.displayName.text) || '', rating: r.rating || null, count: r.userRatingCount || 0, url: r.googleMapsUri || '',
+      reviews: (r.reviews || []).map((x) => ({
+        author: (x.authorAttribution && x.authorAttribution.displayName) || 'Google user',
+        authorUrl: (x.authorAttribution && x.authorAttribution.uri) || '',
+        photo: (x.authorAttribution && x.authorAttribution.photoUri) || '',
+        stars: x.rating || 0,
+        when: x.relativePublishTimeDescription || '',
+        text: ((x.originalText || x.text || {}).text || '').slice(0, 1200),
+        url: x.googleMapsUri || '',
+      })).filter((x) => x.text),
+    };
+  }
+
   // ---- Flights ---------------------------------------------------------------
 
   // flight code -> { at, from, to, list: [AeroAPI flights], error }
@@ -454,7 +475,7 @@ function createProviders(rawEnv, opts) {
 
   return {
     on, deliver, e164, verifyTwilio, smsStatus,
-    route, warmRoutes, geo, warmGeo, places, loadRoutes, saveRoutes,
+    route, warmRoutes, geo, warmGeo, places, placeReviews, loadRoutes, saveRoutes,
     // A browser key (restricted to your site) for drawing Google maps; never the server key.
     mapsKey: env.GOOGLE_MAPS_BROWSER_KEY || '',
     flightHook, prefetchFlights, pollFlights,

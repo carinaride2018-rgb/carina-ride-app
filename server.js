@@ -643,9 +643,35 @@ async function testSms(token, args) {
   return { to, status: st.status, code: st.code, error: st.code ? (SMS_CODES[st.code] || st.message || `Twilio error ${st.code}`) : '' };
 }
 
+// Google reviews, kept for 6 hours so the site stays fast and Google is asked
+// a few times a day at most. Public data, so any site may read it.
+const reviewsCache = new Map();
+async function reviewsRoute(req, res, url) {
+  const head = { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=1800', ...SECURITY_HEADERS };
+  const slug = String(url.searchParams.get('slug') || '').toLowerCase().slice(0, 60);
+  try {
+    const hit = reviewsCache.get(slug);
+    if (hit && Date.now() - hit.at < 6 * 3600e3) { res.writeHead(200, head); return res.end(hit.body); }
+    const place = await core.placeOf(slug);
+    if (!place || !live.placeReviews) { res.writeHead(404, head); return res.end('{"error":"No reviews for this company."}'); }
+    const data = await live.placeReviews(place.placeId);
+    if (!data) { res.writeHead(404, head); return res.end('{"error":"Google Maps is not connected."}'); }
+    const body = JSON.stringify(data);
+    reviewsCache.set(slug, { at: Date.now(), body });
+    res.writeHead(200, head); res.end(body);
+  } catch (e) {
+    console.error('reviews', e.message);
+    const hit = reviewsCache.get(slug);
+    if (hit) { res.writeHead(200, head); return res.end(hit.body); }
+    res.writeHead(502, head); res.end('{"error":"Reviews are not available right now."}');
+  }
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   if (url.pathname === '/healthz') return send(res, 200, { ok: true });
+  // Live Google reviews for a company's own website: /reviews.json?slug=carina-ride
+  if (url.pathname === '/reviews.json') { reviewsRoute(req, res, url); return; }
   if (url.pathname.startsWith('/logo/')) {
     const slug = url.pathname.slice(6).replace(/\.\w+$/, '');
     core.logo(slug).then((l) => { if (!l) return send(res, 404, 'Not found', 'text/plain'); res.writeHead(200, { 'Content-Type': l.type, 'Cache-Control': 'public, max-age=86400' }); res.end(l.buf); }).catch(() => send(res, 500, 'Error', 'text/plain'));

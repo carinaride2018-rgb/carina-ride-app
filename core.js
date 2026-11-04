@@ -789,6 +789,7 @@
         if (!(c.rates.flatRates || []).length) c.rates.flatRates = [{ id: 'flat_downtown', ...clone(DOWNTOWN_SEATTLE), prices: { 'Sedan': 110, 'SUV': 145, 'Business Van': 220, 'Sprinter Van': 275, '22 PAX Mini Bus': 450 } }];
       }
       // Business discount, added later: Carina Ride starts at 6%, others at 0.
+      for (const c of d.companies || []) if (c.googlePlaceId == null) c.googlePlaceId = c.slug === 'carina-ride' ? 'ChIJkXYOu8NDkFQR3zyWZXKqtOc' : '';
       for (const c of d.companies || []) if (c.adsTag == null) c.adsTag = c.slug === 'carina-ride' ? 'AW-774934890/BN9ZCLC0n7IdEOqiwvEC' : '';
       for (const c of d.companies || []) if (c.pricing && c.pricing.bizPct == null) c.pricing.bizPct = c.slug === 'carina-ride' ? 6 : 0;
       // Pickup location fees, added later: Carina Ride starts with the three Seattle stadiums at 40%.
@@ -7300,6 +7301,12 @@
         }
         if (changed) save(db);
         return out;
+      },
+      // The Google Business Profile place a company's reviews come from.
+      async placeOf(slug) {
+        await ensure();
+        const c = db.companies.find((x) => x.slug === String(slug || '') && x.status === 'active');
+        return c && c.googlePlaceId ? { placeId: c.googlePlaceId, name: c.name } : null;
       },
       // A company's logo as a file, for emails (email apps don't show data: pictures).
       async logo(slug) {
