@@ -3536,7 +3536,7 @@
       const mapEl = $('#bd-map'); if (mapEl) mapEl.hidden = g.house || (g.show && !drv.done);
       if (!g.show) { box.innerHTML = ''; return; }
       const all = g.done === g.steps.length;
-      const link = DEMO ? `#book.${session.company.slug}` : g.house ? 'https://booking.limorelay.com' : `${location.origin}${location.pathname}#book.${session.company.slug}`;
+      const link = DEMO ? `#book.${session.company.slug}` : g.house ? 'https://booking.limorelay.com' : `${location.origin}/book/${session.company.slug}`;
       const sig = JSON.stringify(g); if (box.dataset.sig === sig) return; box.dataset.sig = sig;
       box.innerHTML = `<section class="panel setupguide"><div class="spread"><div class="stack" style="gap:2px"><h2>${all ? 'You’re all set' : 'Get set up'}</h2>
           <p class="small muted" style="margin:0">${all ? 'Your booking page is ready for customers.' : g.house ? `${g.done} of ${g.steps.length} done. Member companies drive the rides, so there are no cars or drivers to add.` : `${g.done} of ${g.steps.length} done. Each step ticks itself off.`}</p></div>
@@ -5807,7 +5807,7 @@
       try { s = await api('dispatch.settings'); } catch (e) { return showErr(v, e); }
       const ro = isAdmin ? '' : 'disabled';
       const r = s.rates;
-      const link = DEMO ? `#book.${s.company.slug}` : s.company.domain ? `https://${s.company.domain}` : `${location.origin}${location.pathname}#book.${s.company.slug}`;
+      const link = DEMO ? `#book.${s.company.slug}` : s.company.domain ? `https://${s.company.domain}` : `${location.origin}/book/${s.company.slug}`;
       const num = (k, label, step, hint) => `<label class="field"><span>${label}</span><input id="rs-${k}" name="${k}" type="number" min="0" step="${step || 0.01}" value="${r[k]}" ${ro}>${hint ? `<span class="hint">${hint}</span>` : ''}</label>`;
       v.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Rates &amp; brand</h1><p class="muted">${isAdmin ? 'Base rates for a sedan. Night, weekend, busy-time and holiday adjustments are in Pricing.' : 'Only the company admin can change these.'}</p></div></div>
         <form id="rs" class="stack" novalidate style="max-width:860px">

@@ -6028,7 +6028,7 @@
     // reset) their password, then sign in to book and see their rides.
     function sendCustomerLogin(c, u) {
       const link = loginLink(u, 'welcome');
-      const site = `${(opts.publicUrl || 'https://limorelay.com/').replace(/#.*$/, '')}#book.${c.slug}`;
+      const site = `${(opts.publicUrl || 'https://limorelay.com/').replace(/#.*$/, '').replace(/\/?$/, '/')}book/${c.slug}`;
       mailUser(u, c.id, 'login', `Hi ${u.name.split(' ')[0]}, here are your ${c.name} login details. Your sign-in email is ${u.email}. ${u.passHash ? 'Choose a new password' : 'Set your password'} with this link (it works for ${WELCOME_DAYS} days): ${link} Then sign in any time at ${site} to book rides, see your trips and keep your card on file.${c.phone ? ` Questions? Call ${c.phone}.` : ''}`);
       return link;
     }
@@ -7224,8 +7224,18 @@
       },
     };
 
+    // What search engines see: the companies with an open booking page.
+    const seoCo = (c) => ({ slug: c.slug, name: c.name, tagline: c.tagline || '', phone: c.phone || '', email: c.email || '', city: (c.signup && c.signup.city) || '', logo: !!(c.logo || c.banner), domain: c.domain || '', updated: c.updatedAt || c.createdAt || '' });
+    const seoOpen = (c) => c && c.status === 'active' && !c.house && db.vehicles.some((v) => v.companyId === c.id && v.status === 'active');
+    const seo = {
+      async companies() { await ensure(); return db.companies.filter(seoOpen).map(seoCo); },
+      async company(slug) { await ensure(); const c = db.companies.find((x) => x.slug === str(slug, 60)); return seoOpen(c) ? seoCo(c) : null; },
+      async hostSlug(host) { await ensure(); return slugForHost(host); },
+    };
+
     return {
       call,
+      seo,
       pay,
       // A text someone sent to the platform's Twilio number.
       // The driver pressed a key on the wake-up call.

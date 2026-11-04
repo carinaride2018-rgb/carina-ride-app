@@ -145,9 +145,86 @@ async function serveManifest(req, res) {
   }, 'application/manifest+json');
 }
 
+// ---- Search engines ---------------------------------------------------------------
+// robots.txt, sitemap.xml, and the page head filled in for the home page and for
+// each company's booking page at /book/<slug> (title, description, link previews,
+// and business details Google reads). The app itself still draws the page.
+const reqHost = (req) => String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim().toLowerCase().replace(/:\d+$/, '');
+const xmlEsc = (v) => String(v).replace(/[<>&'"]/g, (ch) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[ch]));
+const attr = (v) => String(v == null ? '' : v).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+const jsonLd = (o) => `<script type="application/ld+json">${JSON.stringify(o).replace(/</g, '\\u003c')}</script>`;
+let indexHtml = null;
+const coUrl = (c) => (c.domain ? `https://${c.domain}/` : `${base}book/${encodeURIComponent(c.slug)}`);
+function pageHead(html, h) {
+  const tags = [
+    `<link rel="canonical" href="${attr(h.url)}">`,
+    `<meta property="og:type" content="website">`, `<meta property="og:site_name" content="${attr(h.site)}">`,
+    `<meta property="og:title" content="${attr(h.title)}">`, `<meta property="og:description" content="${attr(h.desc)}">`,
+    `<meta property="og:url" content="${attr(h.url)}">`, ...(h.image ? [`<meta property="og:image" content="${attr(h.image)}">`] : []),
+    `<meta name="twitter:card" content="${h.image ? 'summary_large_image' : 'summary'}">`,
+    jsonLd(h.ld),
+  ].join('\n  ');
+  return html
+    .replace(/<title>[^<]*<\/title>/, `<title>${attr(h.title)}</title>`)
+    .replace(/<meta name="description" content="[^"]*">/, `<meta name="description" content="${attr(h.desc)}">\n  ${tags}`)
+    .replace('<meta charset="utf-8">', `<meta charset="utf-8">${h.go ? `\n  <script>if(!location.hash)history.replaceState(null,'',${JSON.stringify(h.go)});</script>` : ''}`)
+    .replace('<div id="app"></div>', `<div id="app"></div>${h.noscript ? `\n  <noscript>${h.noscript}</noscript>` : ''}`);
+}
+const HOME_DESC = 'Limo booking and dispatch software with a network of chauffeur companies that send each other rides. Booking page, dispatch board, driver and passenger apps included. Free for 30 days.';
+function homeHead(html) {
+  return pageHead(html, {
+    site: 'LimoRelay', url: base, title: 'LimoRelay: limo booking and dispatch software for chauffeur companies', desc: HOME_DESC, image: `${base}icons/icon-512.png`,
+    ld: { '@context': 'https://schema.org', '@type': 'SoftwareApplication', name: 'LimoRelay', url: base, applicationCategory: 'BusinessApplication', operatingSystem: 'Web, iOS, Android', description: HOME_DESC,
+      offers: { '@type': 'AggregateOffer', priceCurrency: 'USD', lowPrice: '49', highPrice: '199', offerCount: '3' } },
+    noscript: '<h1>LimoRelay: limo booking and dispatch software</h1><p>Online booking page, dispatch board, driver app and passenger app for limo and chauffeur companies, plus a network of member companies that send each other rides. Plans from $49 a month, free for 30 days.</p>',
+  });
+}
+function companyHead(html, c) {
+  const where = c.city ? ` in ${c.city}` : '';
+  const desc = `${c.tagline ? c.tagline.replace(/\.?$/, '. ') : `Chauffeured cars${where}. `}Book a sedan, SUV or van online with an instant price${c.phone ? `, or call ${c.phone}` : ''}.`;
+  const url = coUrl(c);
+  return pageHead(html, {
+    site: c.name, url, title: c.city ? `${c.name} | Limo and car service in ${c.city}` : `${c.name} | Book your ride online`, desc, image: c.logo ? `${base}logo/${encodeURIComponent(c.slug)}.png` : '',
+    go: `/#book.${c.slug}`,
+    ld: { '@context': 'https://schema.org', '@type': 'LocalBusiness', name: c.name, url, description: desc, ...(c.phone ? { telephone: c.phone } : {}), ...(c.email ? { email: c.email } : {}),
+      ...(c.logo ? { image: `${base}logo/${encodeURIComponent(c.slug)}.png` } : {}), ...(c.city ? { areaServed: c.city, address: { '@type': 'PostalAddress', addressLocality: c.city, addressCountry: 'US' } } : {}) },
+    noscript: `<h1>${attr(c.name)}</h1><p>${attr(desc)}</p>`,
+  });
+}
+async function seoRoute(req, res, rel) {
+  const host = reqHost(req);
+  const slugHere = host ? await core.seo.hostSlug(host) : '';
+  if (rel === '/robots.txt') {
+    const site = slugHere ? `https://${host}/` : base;
+    return send(res, 200, `User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /pay/\nDisallow: /twilio/\nSitemap: ${site}sitemap.xml\n`, 'text/plain; charset=utf-8');
+  }
+  if (rel === '/sitemap.xml') {
+    const urls = [];
+    if (slugHere) urls.push({ loc: `https://${host}/` });
+    else {
+      urls.push({ loc: base, pri: '1.0' }, { loc: `${base}privacy.html`, pri: '0.3' }, { loc: `${base}terms.html`, pri: '0.3' });
+      for (const c of await core.seo.companies()) urls.push({ loc: coUrl(c), mod: c.updated ? String(c.updated).slice(0, 10) : '', pri: '0.8' });
+    }
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.map((u) => `  <url><loc>${xmlEsc(u.loc)}</loc>${u.mod ? `<lastmod>${u.mod}</lastmod>` : ''}${u.pri ? `<priority>${u.pri}</priority>` : ''}</url>`).join('\n')}\n</urlset>\n`;
+    return send(res, 200, xml, 'application/xml; charset=utf-8');
+  }
+  if (!indexHtml) indexHtml = fs.readFileSync(path.join(PUBLIC, 'index.html'), 'utf8');
+  if (rel.startsWith('/book/')) {
+    const c = await core.seo.company(rel.slice(6).replace(/\/+$/, ''));
+    if (!c) return redirect(res, `${base}#book.${encodeURIComponent(rel.slice(6).replace(/\/+$/, ''))}`);
+    return send(res, 200, companyHead(indexHtml, c), 'text/html; charset=utf-8');
+  }
+  // The home page: LimoRelay, or a company's own booking address.
+  const c = slugHere ? await core.seo.company(slugHere) : null;
+  return send(res, 200, c ? companyHead(indexHtml, { ...c, domain: host }) : homeHead(indexHtml), 'text/html; charset=utf-8');
+}
+
 function serveStatic(req, res) {
   let rel = decodeURIComponent(new URL(req.url, 'http://x').pathname);
   if (rel === '/manifest.webmanifest') return serveManifest(req, res);
+  if (rel === '/' || rel === '/index.html' || rel === '/robots.txt' || rel === '/sitemap.xml' || rel.startsWith('/book/')) {
+    return seoRoute(req, res, rel).catch((e) => { console.error('seo page', e.message); send(res, 500, 'Error', 'text/plain'); });
+  }
   if (rel === '/') rel = '/index.html';
   const file = rel === '/core.js' ? path.join(__dirname, 'core.js') : path.join(PUBLIC, path.normalize(rel));
   if (rel !== '/core.js' && !file.startsWith(PUBLIC + path.sep)) return send(res, 403, 'Forbidden', 'text/plain');
