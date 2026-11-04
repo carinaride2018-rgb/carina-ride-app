@@ -24,10 +24,27 @@
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const money = (n) => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const money0 = (n) => '$' + Math.round(Number(n || 0)).toLocaleString('en-US');
-  const fmtTime = (iso) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  // Times show and are typed in the company's own time zone, so someone booking
+  // a Seattle ride from New York types and sees Seattle time. TZ stays unset
+  // when the browser is already in that zone (nothing changes for local people).
+  let BROWSER_TZ = ''; try { BROWSER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { /* old browser */ }
+  let TZ;
+  const setTz = (co) => { const tz = co && !co.house ? co.timezone : ''; TZ = tz && tz !== BROWSER_TZ ? tz : undefined; };
+  const tzParts = (d) => { const o = {}; for (const x of new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(d)) o[x.type] = x.value; return o; };
+  // "2026-11-04T15:00" typed on a form -> that moment in the company's zone.
+  const atLocal = (s) => {
+    if (!TZ || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(String(s || ''))) return new Date(s);
+    const [y, mo, d, h, mi] = String(s).match(/\d+/g).map(Number);
+    const want = Date.UTC(y, mo - 1, d, h, mi);
+    let t = want;
+    for (let i = 0; i < 2; i++) { const p = tzParts(new Date(t)); t += want - Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute); }
+    return new Date(t);
+  };
+  const tzLabel = () => { if (!TZ) return ''; for (const n of ['longGeneric', 'long']) { try { return new Intl.DateTimeFormat('en-US', { timeZone: TZ, timeZoneName: n }).formatToParts(new Date()).find((x) => x.type === 'timeZoneName').value; } catch (e) { /* try the next */ } } return ''; };
+  const fmtTime = (iso) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: TZ });
   const minsLeft = (iso) => Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 60000));
   const fmtYMD = (ymd) => new Date(String(ymd).slice(0, 10) + 'T12:00:00').toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
-  const fmtDate = (iso) => new Date(iso).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  const fmtDate = (iso) => new Date(iso).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', timeZone: TZ });
   const fmtDT = (iso) => `${fmtDate(iso)}, ${fmtTime(iso)}`;
   // "2026-10-19", "2026-10-21" -> "Mon, Oct 19 – Wed, Oct 21" (local calendar days)
   const fmtDay = (d) => new Date(d + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
@@ -138,7 +155,7 @@
         ${t.payment.status !== 'paid' && t.status !== 'cancelled' ? '<button class="btn sm" type="button" data-pay="cash">Paid in cash</button>' : ''}</div></div>`;
   }
   const payPill = (t) => t.pay ? cardPill(t) : t.status === 'cancelled' ? '' : t.payment.status !== 'paid' && t.payment.method === 'account' ? '<span class="pill s-accepted">On account</span>' : t.payment.status !== 'paid' && t.payment.method === 'cash' ? '<span class="pill unpaid">Cash due to office</span>' : t.payment.status !== 'paid' && t.payment.deposit ? `<span class="pill s-assigned">Deposit ${esc(money(t.payment.deposit))} paid</span>` : `<span class="pill ${t.payment.status}">${t.payment.status === 'paid' ? 'Paid' + (t.payment.method ? ' · ' + esc(t.payment.method) : '') : 'Unpaid'}</span>`;
-  const toLocalInput = (d) => { const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 16); };
+  const toLocalInput = (d) => { if (TZ) { const p = tzParts(d); return `${p.year}-${p.month}-${p.day}T${String(+p.hour % 24).padStart(2, '0')}:${p.minute}`; } const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 16); };
   const defaultPickup = () => { const d = new Date(Date.now() + 3 * 3600e3); d.setMinutes(Math.ceil(d.getMinutes() / 15) * 15, 0, 0); return toLocalInput(d); };
   const mapsLink = (addr) => 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(addr);
   const store = {
@@ -314,6 +331,7 @@
   function shell({ tabs, active, onTab, wide, narrow, search }) {
     quickSearch = search || null;
     const co = session && session.company;
+    setTz(co);
     const brand = co ? co.color : null;
     document.documentElement.style.setProperty('--brand', brand || '#3d4f7c');
     setAppIdentity(co, session && session.user);
@@ -1342,7 +1360,7 @@
     ['Live dispatch board', 'Every ride for the day by chauffeur, with drag-and-drop assigning, alerts for anything unassigned and a live map of your cars.'],
     ['Driver app', 'Chauffeurs accept trips, see the passenger and flight, move each ride from on the way to drop-off and share GPS with dispatch.'],
     ['Passenger updates', 'Automatic confirmation, 24-hour reminder, "your chauffeur is on the way" with live tracking, and a review request after the ride.'],
-    ['Card on file payments', 'The card is charged when the customer books (or a set time before pickup, your choice). Waiting time, extra stops and other extras go on the same card after the ride. No cash.'],
+    ['Card on file payments', 'The card is charged when the customer books (or a set time before pickup, your choice). Waiting time, extra stops and other extras go on the same card after the ride. Cash to the office is optional.'],
     ['Flight tracking', 'Airport pickups follow the flight. Delays move the pickup time and the chauffeur is told.'],
     ['Farm-out network', 'Send rides you can’t cover to trusted partner companies and take theirs, with balances settled in one place. You earn a commission on every ride you send.'],
     ['Corporate accounts and travel agents', 'Company accounts with monthly invoices, PO numbers and bookers, plus a travel agent login with commission tracking.'],
@@ -1354,7 +1372,7 @@
     ['Never turn a client away', 'When your cars are booked, a partner covers the ride. Your client gets picked up, still books through you, and comes back to you next time.'],
     ['Extra income without extra cars', `Every ride you send to a partner earns you a commission (${KEEP_PCT}% of the fare by default), and partners send rides your way on slow days.`],
     ['More bookings, day and night', 'Clients book and get a price on your own page at any hour, even while you sleep or drive. Bookings land on your dispatch board.'],
-    ['Get paid on time, every time', 'The card is charged when the client books. Waiting time and extra stops go on the same card after the ride. No chasing payments, no cash.'],
+    ['Get paid on time, every time', 'The card is charged when the client books. Waiting time and extra stops go on the same card after the ride. No chasing payments.'],
     ['Fewer phone calls', 'Passengers get their confirmation, a reminder, the chauffeur’s name and a live tracking link automatically, and can text back when they need you.'],
     ['Fewer missed pickups', 'Airport pickups follow the flight, delays move the pickup time, and you’re alerted when a ride has no driver or a chauffeur hasn’t set off.'],
     ['Look like a big company', 'Your name, logo and colors on the booking page, every text and email, and the phone app your clients install.'],
@@ -1462,7 +1480,7 @@
           ${plan('standard', 'For growing companies.', ['All features', `${P.standard.texts.toLocaleString()} passenger texts a month`, 'No setup fee', 'Unlimited bookings'])}
           ${plan('fleet', 'For larger fleets and busy offices.', ['All features', `${P.fleet.texts.toLocaleString()} passenger texts a month`, 'No setup fee', 'Unlimited bookings'])}
         </div>
-        <p class="small faint" style="margin-top:12px">Extra texts are $15 for 500. Card processing is billed by Stripe directly to your company; ${PLATFORM} takes no share of your fares.</p>
+        <p class="small faint" style="margin-top:12px">Extra texts are $15 for 500. Card fees are billed by your own card service (Stripe, Square, Authorize.net or PayPal); ${PLATFORM} takes no share of your fares.</p>
       </section>
       <section class="lp-sec lp-trial" id="lp-trial">
         <div class="stack" style="gap:8px"><h2>Join us, free for 30 days</h2><p class="muted" id="tr-lead">It takes two minutes. Your free trial starts right away, with no card needed, and a short setup guide helps you add your cars, prices and first booking. Questions? Email ${mailLink()}.</p></div>
@@ -1685,7 +1703,7 @@
         const i = +el.closest('[data-i]').dataset.i, k = el.dataset.k;
         el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', () => {
           const l = lines[i];
-          if (k === 'pickupAt') l.pickupAt = el.value ? new Date(el.value).toISOString() : '';
+          if (k === 'pickupAt') l.pickupAt = el.value ? atLocal(el.value).toISOString() : '';
           else if (k === 'unitPrice') l.unitPrice = el.value === '' ? null : Number(el.value);
           else l[k] = el.value;
           if (k === 'service') { draw(); }
@@ -1867,6 +1885,7 @@
     document.body.appendChild(box);
   }
   function bookingForm(host, opts) {
+    if (opts.info && opts.info.company) setTz(opts.info.company);
     // opts: { info: {rates, addons, vehicleTypes}, mode, initial, quoteFn, submitLabel, onSubmit }
     const vt = opts.info.vehicleTypes;
     const ad = opts.info.addons || { childSeat: 15, meetGreet: 25, extraStop: 20 };
@@ -1916,12 +1935,12 @@
           </div><span class="small faint" id="bk-service-hint"></span></div>
           <div class="grid3">
             <label class="field"><span>Pickup date</span><input id="bk-date" name="date" type="date" value="${esc(state.date)}" required></label>
-            <label class="field"><span>Pickup time</span><input id="bk-time" name="time" type="time" step="300" value="${esc(state.time)}" required>${opts.mode !== 'dispatch' && opts.info.minNoticeHours ? `<span class="hint">Book at least ${opts.info.minNoticeHours} hours ahead</span>` : ''}</label>
+            <label class="field"><span>Pickup time${TZ ? ` <small class="faint">(${esc(tzLabel())})</small>` : ''}</span><input id="bk-time" name="time" type="time" step="300" value="${esc(state.time)}" required>${opts.mode !== 'dispatch' && opts.info.minNoticeHours ? `<span class="hint">Book at least ${opts.info.minNoticeHours} hours ahead</span>` : ''}</label>
             <label class="field" data-show="hourly"><span>Hours</span><input id="bk-hours" name="hours" type="number" min="1" max="24" value="${esc(state.hours)}"><span class="hint">Minimum ${opts.info.rates.minHours} hours</span></label>
           </div>
           <label class="field"><span>Pickup address</span><input id="bk-pickup" name="pickup" autocomplete="off" placeholder="Hotel, airport or street address" value="${esc(state.pickup)}" required></label>
           <div class="stack stops" data-hide="hourly" style="gap:8px"><div id="bk-stops"></div>
-            <div><button class="linkbtn" type="button" id="bk-addstop">+ Add a stop on the way <span class="faint">(priced by the extra miles and the wait${opts.info.rates && opts.info.rates.waitPerMin ? `, ${money(opts.info.rates.waitPerMin)}/min` : ''})</span></button></div></div>
+            <div><button class="linkbtn" type="button" id="bk-addstop">+ Add a stop on the way</button></div></div>
           <label class="field"><span id="bk-drop-label">Drop-off address</span><input id="bk-dropoff" name="dropoff" autocomplete="off" placeholder="Where are you going?" value="${esc(state.dropoff)}"></label>
           <fieldset class="fs flightbox" id="bk-flightf"><legend><span aria-hidden="true">&#9992;</span> Flight information</legend>
             <div class="grid2" id="bk-flightmain">
@@ -2130,7 +2149,7 @@
     function drawPolicy() {
       const el = $('#bk-policy', host);
       if (!el || !pol) return;
-      const when = state.date && state.time ? new Date(`${state.date}T${state.time}`) : null;
+      const when = state.date && state.time ? atLocal(`${state.date}T${state.time}`) : null;
       const until = when && !isNaN(when) ? new Date(when.getTime() - pol.cancelHours * 3600e3) : null;
       const waits = `Free waiting: ${pol.waitAirport} min after landing at the airport, ${pol.waitOther} min elsewhere${opts.info.rates.waitPerMin ? `, then ${money(opts.info.rates.waitPerMin)}/min` : ''}.${pol.noShowFeePct ? ` A no-show is charged ${pol.noShowFeePct === 100 ? 'the full fare' : pol.noShowFeePct + '% of the fare'}.` : ''}`;
       const fee = pol.cancelFeePct === 100 ? 'the full fare' : pol.cancelFeePct + '% of the fare';
@@ -2192,8 +2211,8 @@
     let qt = null, qn = 0;
     const booking = () => {
       const { date, time, retOn, retDate, retTime, retFlight, prefTemp, prefMusic, prefQuiet, stops, landOn, landDest, landDrop, repOn, repUntil, ...rest } = state;
-      const when = date && time ? new Date(`${date}T${time}`) : null;
-      const rwhen = retOn && retDate && retTime ? new Date(`${retDate}T${retTime}`) : null;
+      const when = date && time ? atLocal(`${date}T${time}`) : null;
+      const rwhen = retOn && retDate && retTime ? atLocal(`${retDate}T${retTime}`) : null;
       const keep = stopList.map((x, i) => i).filter((i) => stopList[i].trim());
       const out = { ...rest, stopList: state.service === 'hourly' ? [] : keep.map((i) => stopList[i]), stopWaits: state.service === 'hourly' ? [] : keep.map((i) => stopWaits[i] == null ? defWait : stopWaits[i]), prefs: { temp: prefTemp, music: prefMusic, quiet: prefQuiet }, pickupAt: when && !isNaN(when) ? when.toISOString() : '' };
       const smsBox = $('#bk-sms', host); if (smsBox) out.smsOk = !!smsBox.checked && !!String(out.passengerPhone || '').trim();
@@ -2201,7 +2220,7 @@
       if (repOn) out.repeat = { on: true, days: $$('[data-rday]:checked', host).map((x) => x.dataset.rday), until: repUntil };
       if (retOn && state.service !== 'hourly') { out.returnAt = rwhen && !isNaN(rwhen) ? rwhen.toISOString() : 'missing'; out.returnFlight = retFlight; }
       const mr = state.service === 'hourly' ? [] : moreList.filter((m) => m.pickup.trim() || m.dropoff.trim());
-      if (mr.length) out.moreRides = mr.map((m) => { const w = m.date && m.time ? new Date(`${m.date}T${m.time}`) : null; return { pickupAt: w && !isNaN(w) ? w.toISOString() : '', pickup: m.pickup.trim(), dropoff: m.dropoff.trim(), flight: m.flight.trim() }; });
+      if (mr.length) out.moreRides = mr.map((m) => { const w = m.date && m.time ? atLocal(`${m.date}T${m.time}`) : null; return { pickupAt: w && !isNaN(w) ? w.toISOString() : '', pickup: m.pickup.trim(), dropoff: m.dropoff.trim(), flight: m.flight.trim() }; });
       out.moreList = moreList;
       // The nationwide site reads the times as the pickup city's local time.
       if (opts.info.company && opts.info.company.house) { try { out.browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { /* server keeps the time as sent */ } }
@@ -2404,8 +2423,8 @@
         const miss = !state.date || !state.time ? 'Choose the pickup date and time.' : !state.pickup.trim() ? 'Enter the pickup address.' : state.service !== 'hourly' && !state.dropoff.trim() ? 'Enter the drop-off address.' : !addrOk ? 'Check the addresses marked in red: we need the exact pickup and drop-off, not just the city.' : '';
         const mi = state.service === 'hourly' ? -1 : moreList.findIndex((m) => !m.date || !m.time || !m.pickup.trim() || !m.dropoff.trim());
         const miss2 = mi >= 0 ? `Ride ${mi + 2}: add the date, time, pickup and drop-off, or remove it.` : '';
-        const rw = state.retOn && state.service !== 'hourly' ? (state.retDate && state.retTime ? new Date(`${state.retDate}T${state.retTime}`) : null) : undefined;
-        const miss3 = rw === null ? 'Round trip: add the return date and time.' : rw && rw <= new Date(`${state.date}T${state.time}`) ? 'Round trip: the return must be after the first pickup.' : '';
+        const rw = state.retOn && state.service !== 'hourly' ? (state.retDate && state.retTime ? atLocal(`${state.retDate}T${state.retTime}`) : null) : undefined;
+        const miss3 = rw === null ? 'Round trip: add the return date and time.' : rw && rw <= atLocal(`${state.date}T${state.time}`) ? 'Round trip: the return must be after the first pickup.' : '';
         try { if (miss || miss2 || miss3) throw new Error(miss || miss2 || miss3); await opts.quoteFn(quoteOnly()); showStep(2); } catch (x) { flagErr(err, x); }
       });
       $('#bk-back', host).onclick = () => showStep(1);
@@ -2915,7 +2934,7 @@
         const read = () => {
           const f = $('#ed-form', m), b = {};
           for (const el of f.elements) { if (!el.name) continue; b[el.name] = el.type === 'checkbox' ? el.checked : el.value; }
-          const w = new Date(b.pickupAt); b.pickupAt = isNaN(w) ? '' : w.toISOString();
+          const w = atLocal(b.pickupAt); b.pickupAt = isNaN(w) ? '' : w.toISOString();
           if ('stopList' in b) { b.stopList = b.stopList.split('\n').map((x) => x.trim()).filter(Boolean); const old = t.stopList || []; b.stopWaits = b.stopList.map((x) => { const i = old.indexOf(x); return i >= 0 && t.stopWaits ? t.stopWaits[i] : ''; }); }
           return b;
         };
@@ -3224,7 +3243,7 @@
                 <dt>Service</dt><dd>${esc(live.serviceLabel)}${live.service === 'hourly' ? `, ${live.hours} h` : ''}</dd>
                 ${extrasList(live).length ? `<dt>Requests</dt><dd>${esc(extrasList(live).join(' · '))}</dd>` : ''}
                 ${live.notes ? `<dt>Notes</dt><dd>${esc(live.notes)}</dd>` : ''}
-                ${live.farmIn ? `<dt>Fare</dt><dd>Billed to ${esc(live.farmIn.fromName)}. Don't collect payment.</dd>` : live.pay ? `<dt>Fare</dt><dd><span class="num">${money(live.price.total)}</span> · on the customer's card. Don't collect payment; waiting time you add goes on the card after the ride.</dd>` : `<dt>Fare</dt><dd><span class="num">${money(live.price.total)}</span> · the office handles payment. Don't take payment from the passenger.</dd>`}</dl>
+                ${live.farmIn ? `<dt>Fare</dt><dd>Billed to ${esc(live.farmIn.fromName)}. Don't collect payment.</dd>` : live.pay ? `<dt>Fare</dt><dd><span class="num">${money(live.price.total)}</span> · paid by card. Don't take payment.</dd>` : `<dt>Fare</dt><dd><span class="num">${money(live.price.total)}</span> · the office handles payment. Don't take payment.</dd>`}</dl>
               <button class="btn primary drv-next" type="button" data-act="advance" data-id="${live.id}">${esc(NEXT_LABEL[live.status])}</button>
               <div class="grid2 drv-btns"><a class="btn" href="${esc(mapsLink(live.status === 'on_board' && live.dropoff ? live.dropoff : live.pickup))}" target="_blank" rel="noopener">Navigate to ${live.status === 'on_board' && live.dropoff ? 'drop-off' : 'pickup'}</a>
               ${['accepted', 'en_route', 'arrived'].includes(live.status) ? `<button class="btn" type="button" data-act="sign" data-id="${live.id}">Show name sign</button>` : `<button class="btn" type="button" data-act="incident" data-id="${live.id}">Report an incident</button>`}</div>
@@ -3504,7 +3523,7 @@
       rates: ['Base fare, per mile and hourly for each car.', 'Set prices'],
       logo: ['Shown on your booking page, the booking confirmation and every email.', 'Add logo'],
       drivers: ['Each driver gets their own app login.', 'Add a driver'],
-      payments: ['Connect Stripe, Authorize.net or PayPal so passengers pay by card, or take cash only.', 'Set up payments'],
+      payments: ['Connect Stripe, Square, Authorize.net or PayPal so passengers pay by card, or take cash to the office.', 'Set up payments'],
       booking: ['Book a ride yourself to see how it works.', 'New booking'],
       share: ['Put it on your website and Google profile.', 'Copy link'],
     };
@@ -3806,7 +3825,7 @@
         const date = $('#rt-date', m2).value, time = $('#rt-time', m2).value;
         if (!date || !time) return showErr($('#rt-err', m2), 'Choose the return date and pickup time.');
         const landOn = toAir && !$('#rt-land', m2).hidden && $('#rt-land-on', m2).checked;
-        try { const r = await api('dispatch.addReturn', { id: t.id, pickupAt: new Date(`${date}T${time}`).toISOString(), flight: $('#rt-flight', m2).value, ...(landOn ? { landing: { on: true, dest: $('#rt-land-dest', m2).value, dropoff: $('#rt-land-drop', m2).value } } : {}) }); closeModal(); done(r); }
+        try { const r = await api('dispatch.addReturn', { id: t.id, pickupAt: atLocal(`${date}T${time}`).toISOString(), flight: $('#rt-flight', m2).value, ...(landOn ? { landing: { on: true, dest: $('#rt-land-dest', m2).value, dropoff: $('#rt-land-drop', m2).value } } : {}) }); closeModal(); done(r); }
         catch (err) { showErr($('#rt-err', m2), err); }
       });
       $('#rt-go', m2).onclick = () => go(); $('#rt-form', m2).onsubmit = go;
@@ -3820,7 +3839,7 @@
           const k = ++ln;
           let lp = null;
           if (date && time && flight) {
-            try { lp = (await api('dispatch.quote', { booking: { service: 'transfer', pickup: t.dropoff, dropoff: t.pickup, pickupAt: new Date(`${date}T${time}`).toISOString(), flight, vehicleType: t.vehicleType, passengers: t.passengers, landing: { dest: sel.value, dropoff: $('#rt-land-drop', m2).value } } })).landing; } catch (e) { lp = null; }
+            try { lp = (await api('dispatch.quote', { booking: { service: 'transfer', pickup: t.dropoff, dropoff: t.pickup, pickupAt: atLocal(`${date}T${time}`).toISOString(), flight, vehicleType: t.vehicleType, passengers: t.passengers, landing: { dest: sel.value, dropoff: $('#rt-land-drop', m2).value } } })).landing; } catch (e) { lp = null; }
           }
           if (k !== ln) return;
           $('#rt-land', m2).hidden = !lp;
@@ -4004,7 +4023,7 @@
         const fd = formData(e.target);
         const { adjAmount, adjReason, ...f2 } = fd;
         f2.adjustment = { amount: adjAmount, reason: adjReason };
-        if (f2.pickupAt) f2.pickupAt = new Date(f2.pickupAt).toISOString();
+        if (f2.pickupAt) f2.pickupAt = atLocal(f2.pickupAt).toISOString();
         // Older trips only have a stop count; keep it until stops are typed in.
         if (!String(f2.stopList || '').trim() && t.stops && !(t.stopList || []).length) { delete f2.stopList; delete f2.stopWaits; }
         if (closed) { for (const k of Object.keys(f2)) if (!['notes', 'priceOverride', 'adjustment'].includes(k)) delete f2[k]; }
@@ -5987,7 +6006,7 @@
     }
     function cardsPanel(c) {
       if (c.payMode === 'demo') return '<p class="muted">Card payments are simulated on this copy. Customers pay with a pretend card and nothing is charged.</p>';
-      if (c.payMode === 'off') return `<p class="muted">Online card payments are off until the platform owner adds Stripe. Customers pay the chauffeur, or you bill company accounts.</p>`;
+      if (c.payMode === 'off') return `<p class="muted">Stripe is not switched on for LimoRelay yet. Pick another card service above, take cash to the office, or bill company accounts.</p>`;
       const st = c.stripe;
       if (st && st.ready) return `<p><span class="pill s-on_board">Connected</span> Card payments go to your own Stripe account and from there to your bank.</p><p class="small muted">Want customers to pay with <b>Cash App Pay</b> too? In Stripe, open Settings, Payment methods and turn on Cash App Pay. It then shows on the secure page next to the card, and it is charged and refunded like a card.</p><div><a class="btn" href="https://dashboard.stripe.com" target="_blank" rel="noopener">Open Stripe</a></div>`;
       if (!isAdmin) return '<p class="muted">Not set up yet. The company admin can connect Stripe here.</p>';
@@ -6227,7 +6246,7 @@
           ${list.map((c) => `<tr><td><div class="row" style="flex-wrap:nowrap"><span class="avatar" style="background:${esc(c.color)};color:#fff;border:0">${esc(initials(c.name))}</span><div><b>${esc(c.name)}</b><br><a class="small mono" href="#book.${esc(c.slug)}">#book.${esc(c.slug)}</a></div></div>
               <div class="row" style="gap:6px;margin-top:8px;flex-wrap:nowrap"><button class="btn sm" type="button" data-editco="${c.id}">Edit</button><button class="btn sm" type="button" data-sendlogin="${c.id}">Send login email</button><button class="btn sm" type="button" data-status="${c.id}" data-to="${c.status === 'active' ? 'suspended' : 'active'}">${c.status === 'active' ? 'Pause' : 'Resume'}</button></div></td>
             <td class="mono small">${esc(c.adminEmail)}</td>
-            <td class="nowrap"><select class="input" style="width:auto;min-height:32px;padding:3px 6px" data-plan="${c.id}" aria-label="Plan">${Object.entries(C.PLANS).map(([k, p]) => `<option value="${k}" ${c.plan === k ? 'selected' : ''}>${p.label}</option>`).join('')}</select>
+            <td><select class="input" style="width:auto;min-height:32px;padding:3px 6px" data-plan="${c.id}" aria-label="Plan">${Object.entries(C.PLANS).map(([k, p]) => `<option value="${k}" ${c.plan === k ? 'selected' : ''}>${p.label}</option>`).join('')}</select>
               <select class="input" style="width:auto;min-height:32px;padding:3px 6px" data-billing="${c.id}" aria-label="Billing"><option value="monthly" ${c.billing === 'monthly' ? 'selected' : ''}>Monthly</option><option value="yearly" ${c.billing === 'yearly' ? 'selected' : ''}>Yearly</option></select></td>
             <td class="r num nowrap">${c.billing === 'yearly' ? `${money(c.yearlyFee)}/yr` : `${money(c.monthlyFee)}/mo`}${c.inTrial ? `<div class="small faint">Trial until ${esc(fmtYMD(c.trialEnds))}</div>` : c.priceLockedUntil ? `<div class="small faint">Locked until ${esc(fmtYMD(c.priceLockedUntil))}</div>` : c.paidThrough ? `<div class="small faint">Paid through ${esc(c.paidThrough)}</div>` : ''}</td><td class="r num">${c.drivers}</td><td class="r num">${c.vehicles}</td><td class="r num">${c.tripsMonth}</td><td class="r num">${money0(c.bookedMonth)}</td>
             <td class="nowrap"><button class="linkbtn num" type="button" data-texts="${c.id}">${c.texts.used} / ${c.texts.included}${c.texts.custom ? '*' : ''}</button>${c.texts.out ? ' <span class="pill s-cancelled">Out</span>' : c.texts.low ? ' <span class="pill unpaid">Low</span>' : ''}${c.texts.credits ? `<div class="small faint">+${c.texts.credits} bought</div>` : ''}</td>

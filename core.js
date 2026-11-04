@@ -2233,7 +2233,7 @@
       // The picture on the booking card: the first active car of the type with
       // a photo. Without one the page draws a picture of the type.
       const vp = db.vehiclePhotos || {}, photoOf = (t) => { const v = db.vehicles.find((x) => x.companyId === c.id && x.status === 'active' && x.type === t && vp[x.id]); return v ? vp[v.id] : TYPE_PHOTO[t] ? samplePhoto(TYPE_PHOTO[t]) : ''; };
-      return VEHICLE_TYPES.filter((t) => out[t]).map((t) => ({ type: t, capacity: out[t], bags: bags[t], models: names[t].slice(0, 2).join(' or ') + ' or similar', multiplier: c.rates.multipliers[t] || 1, photo: photoOf(t) })).sort(bySeats);
+      return VEHICLE_TYPES.filter((t) => out[t]).map((t) => ({ type: t, capacity: out[t], bags: bags[t], models: ((m) => (/ or |similar/i.test(m) ? m : m + ' or similar'))(names[t].slice(0, 2).join(' or ')), multiplier: c.rates.multipliers[t] || 1, photo: photoOf(t) })).sort(bySeats);
     }
     function quoteFor(company, raw, customer) {
       const b = { ...raw, vehicleType: VEHICLE_TYPES.includes(raw.vehicleType) ? raw.vehicleType : 'Sedan' };

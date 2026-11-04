@@ -101,6 +101,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
   .whoname { display: none; }
   .who { gap: 6px; margin-left: auto; }
   .wordmark small { display: none; }
+  /* Five or six sections: the tabs get their own row on a phone too. */
+  .topbar:not(.fewtabs):not(.manytabs):has(.tabs button) { padding-bottom: 0; }
+  .topbar:not(.fewtabs):not(.manytabs):has(.tabs button) .navrow { order: 3; flex-basis: 100%; margin: 0 -16px; padding: 0 16px; border-top: 1px solid var(--line); }
+  .topbar:not(.fewtabs):not(.manytabs):has(.tabs button) .tabs button { padding: 12px 10px 11px; }
+  .topbar:not(.fewtabs):not(.manytabs):has(.tabs button) .wordmark { margin-right: auto; }
 }
 
 .qsbox { display: flex; align-items: center; gap: 8px; width: 260px; height: 34px; padding: 0 8px 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); color: var(--ink-3); font: inherit; font-size: 13.5px; cursor: text; }
@@ -236,7 +241,6 @@ td.mono, td .mono, td .num, .ref { white-space: nowrap; }
 .pagehead { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
 .subtabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 18px; }
 .subtabs button { white-space: nowrap; flex: none; }
-@media (max-width: 640px) { .subtabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-left: -16px; margin-right: -16px; padding: 0 16px; } .subtabs::-webkit-scrollbar { display: none; } }
 .subtabs button { border: 1px solid var(--line); background: var(--surface); padding: 6px 12px; border-radius: 999px; cursor: pointer; font-weight: 550; color: var(--ink-2); }
 .subtabs button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
 
