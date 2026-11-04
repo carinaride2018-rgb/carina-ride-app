@@ -101,8 +101,19 @@ function createProviders(rawEnv, opts) {
     }
     return (msgs[0] && (msgs[0].messageId || msgs[0].id || msgs[0]._id)) || 'signalhouse';
   }
+  const twilioOn = has('TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_FROM');
   async function sendSms(to, body) {
-    if (signalHouse) return sendSignalHouse(to, body);
+    if (signalHouse) {
+      try { return await sendSignalHouse(to, body); } catch (e) {
+        // A passenger who opted out stays opted out. Any other refusal (number not
+        // ready while the 10DLC campaign is pending, an outage) goes out by Twilio.
+        if (!twilioOn || /opted out|Do Not Contact/i.test(e.message)) throw e;
+        log('Signal House refused a text, sending by Twilio:', e.message);
+      }
+    }
+    return sendTwilio(to, body);
+  }
+  async function sendTwilio(to, body) {
     const sid = env.TWILIO_ACCOUNT_SID;
     const from = String(env.TWILIO_FROM).trim();
     const form = { To: to, Body: body };
@@ -130,7 +141,7 @@ function createProviders(rawEnv, opts) {
   // Twilio's delivery state for one sent text, e.g. delivered, or undelivered with error 30034.
   async function smsStatus(msgSid) {
     // Signal House reports delivery by callback, not by lookup: treat an accepted text as sent.
-    if (signalHouse) return { status: 'sent', code: null, message: '' };
+    if (signalHouse && !/^SM/.test(String(msgSid))) return { status: 'sent', code: null, message: '' };
     const sid = env.TWILIO_ACCOUNT_SID;
     const r = await request('GET', `${url('TWILIO', 'https://api.twilio.com')}/2010-04-01/Accounts/${encodeURIComponent(sid)}/Messages/${encodeURIComponent(msgSid)}.json`, {
       headers: { Authorization: 'Basic ' + Buffer.from(`${sid}:${env.TWILIO_AUTH_TOKEN}`).toString('base64') },
