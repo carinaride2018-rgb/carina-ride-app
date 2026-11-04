@@ -219,11 +219,20 @@ async function seoRoute(req, res, rel) {
   return send(res, 200, c ? companyHead(indexHtml, { ...c, domain: host }) : homeHead(indexHtml), 'text/html; charset=utf-8');
 }
 
+let demoHtml = null;
 function serveStatic(req, res) {
   let rel = decodeURIComponent(new URL(req.url, 'http://x').pathname);
   if (rel === '/manifest.webmanifest') return serveManifest(req, res);
   if (rel === '/' || rel === '/index.html' || rel === '/robots.txt' || rel === '/sitemap.xml' || rel.startsWith('/book/')) {
     return seoRoute(req, res, rel).catch((e) => { console.error('seo page', e.message); send(res, 500, 'Error', 'text/plain'); });
+  }
+  // Public demo: the whole app with sample data, no sign-in, nothing is saved or sent.
+  if (rel === '/demo' || rel === '/demo/' || rel === '/demo.html') {
+    try {
+      if (!demoHtml) demoHtml = require('./build-demo.js').buildDemo();
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=300', ...SECURITY_HEADERS });
+      return res.end(demoHtml);
+    } catch (e) { console.error('demo page', e.message); return send(res, 500, 'Error', 'text/plain'); }
   }
   if (rel === '/') rel = '/index.html';
   const file = rel === '/core.js' ? path.join(__dirname, 'core.js') : path.join(PUBLIC, path.normalize(rel));
