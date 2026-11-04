@@ -13,7 +13,11 @@ const logos = { light: svgUri('public/icons/logo-light.svg'), dark: svgUri('publ
 const jpgUri = (p) => 'data:image/jpeg;base64,' + fs.readFileSync(path.join(__dirname, p)).toString('base64');
 const carPhotos = Object.fromEntries(['sedan', 'suv', 'van10', 'van14', 'minibus'].map((k) => [k, jpgUri(`public/media/vehicles/${k}.jpg`)]));
 
-const html = `<meta charset="utf-8">
+function buildDemo() {
+return `<!DOCTYPE html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
 <title>LimoRelay</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <style>
@@ -28,6 +32,13 @@ ${safe(read('core.js'))}
 ${safe(read('public/app.js'))}
 </script>
 `;
-fs.mkdirSync(path.join(__dirname, 'dist'), { recursive: true });
-fs.writeFileSync(path.join(__dirname, 'dist', 'demo.html'), html);
-console.log('Wrote dist/demo.html (' + Math.round(html.length / 1024) + ' KB)');
+}
+
+module.exports = { buildDemo };
+
+if (require.main === module) {
+  const html = buildDemo();
+  fs.mkdirSync(path.join(__dirname, 'dist'), { recursive: true });
+  fs.writeFileSync(path.join(__dirname, 'dist', 'demo.html'), html);
+  console.log('Wrote dist/demo.html (' + Math.round(html.length / 1024) + ' KB)');
+}
