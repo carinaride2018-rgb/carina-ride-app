@@ -208,7 +208,13 @@
   async function api(method, args) {
     const token = session && session.token;
     try {
-      if (DEMO) return await core.call(token, method, args || {});
+      if (DEMO) {
+        // The demo never opens the platform owner side.
+        if (method.startsWith('owner.')) throw new Error('Not available in the demo.');
+        const r = await core.call(token, method, args || {});
+        if (r && r.user && r.user.role === 'owner') throw new Error('That login is not part of the demo.');
+        return r;
+      }
       const res = await fetch('/api/' + method, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
@@ -316,7 +322,6 @@
     { key: 'dispatch', label: 'Dispatch', email: 'dispatch@carina.demo', who: 'Nadia Hassan, Carina Ride', what: 'Runs the board, assigns drivers and vehicles, takes phone bookings.' },
     { key: 'agent', label: 'Travel agent', email: 'sofia@travel.demo', who: 'Sofia Reyes, Emerald City Travel', what: 'Books rides for her clients, picks who pays, and tracks her commission.' },
     { key: 'partner', label: 'Partner company', email: 'dispatch@pugetsound.demo', who: 'Grace Lin, Puget Sound Executive Cars', what: 'Another company on the network. Takes trips Carina Ride sends over and sends its own.' },
-    { key: 'owner', label: 'Platform owner', email: 'owner@demo.com', who: 'You', what: 'Adds limo companies to the platform and bills them monthly.' },
   ];
 
   function go(route) { if (location.hash.slice(1) === route) render(); else location.hash = route; }
