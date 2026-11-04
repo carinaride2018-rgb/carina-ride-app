@@ -41,6 +41,7 @@ Every service below needs its own account, created by you. Prices change, so che
    - `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN`, from the Twilio console home page.
    - `TWILIO_FROM`: your number, for example `+12065550100`, or a Messaging Service ID starting with `MG`.
    - `TWILIO_VOICE_FROM` (only if `TWILIO_FROM` is a Messaging Service): a Twilio phone number with voice, used for drivers' wake-up calls.
+   - **Or use Signal House instead of Twilio:** set `SIGNALHOUSE_API_KEY` (Signal House dashboard, API keys) and `SIGNALHOUSE_FROM` (your Signal House number, for example `+12065550100`, on an approved 10DLC campaign). When both are set, texts go through Signal House. Driver wake-up calls and the reply Inbox still use Twilio.
 4. **Passenger replies (Inbox)**: in the Twilio console, open your number (or Messaging Service), and under "A message comes in" choose Webhook, `HTTP POST`, and enter `https://limorelay.com/twilio/sms` (your `PUBLIC_URL` followed by `twilio/sms`). Replies then show up in each company's Inbox. The app checks Twilio's signature with `TWILIO_AUTH_TOKEN`, so nothing else is needed. The owner's Connections screen shows the exact address.
 
 ### Email: Resend
