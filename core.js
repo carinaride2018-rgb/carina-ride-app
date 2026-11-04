@@ -789,6 +789,7 @@
         if (!(c.rates.flatRates || []).length) c.rates.flatRates = [{ id: 'flat_downtown', ...clone(DOWNTOWN_SEATTLE), prices: { 'Sedan': 110, 'SUV': 145, 'Business Van': 220, 'Sprinter Van': 275, '22 PAX Mini Bus': 450 } }];
       }
       // Business discount, added later: Carina Ride starts at 6%, others at 0.
+      for (const c of d.companies || []) if (c.adsTag == null) c.adsTag = c.slug === 'carina-ride' ? 'AW-774934890/BN9ZCLC0n7IdEOqiwvEC' : '';
       for (const c of d.companies || []) if (c.pricing && c.pricing.bizPct == null) c.pricing.bizPct = c.slug === 'carina-ride' ? 6 : 0;
       // Pickup location fees, added later: Carina Ride starts with the three Seattle stadiums at 40%.
       for (const c of d.companies || []) if (c.pricing && !Array.isArray(c.pricing.locationFees)) c.pricing.locationFees = c.slug === 'carina-ride' ? [
@@ -902,7 +903,7 @@
     const coPayMode = (c) => (payMode === 'demo' ? 'demo' : c && gwKind(c) !== 'stripe' && gwReady(c) ? 'stripe' : payMode);
     const cardsOn = (c) => payOpts(c).card !== false && (payMode === 'demo' || gwReady(c));
     const cashOn = (c) => !!payOpts(c).cash;
-    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), cash: cashOn(c), cardChoice: payOpts(c).card !== false, payMode: coPayMode(c), payVia: payMode === 'demo' ? '' : GATEWAYS[gwKind(c)], logo: c.logo || '', banner: c.banner || '', domain: c.domain || '', ...(c.house ? { house: true } : {}) });
+    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), cash: cashOn(c), cardChoice: payOpts(c).card !== false, payMode: coPayMode(c), payVia: payMode === 'demo' ? '' : GATEWAYS[gwKind(c)], logo: c.logo || '', banner: c.banner || '', domain: c.domain || '', adsTag: c.adsTag || '', ...(c.house ? { house: true } : {}) });
 
     async function hashPw(pw, salt) { return hash(String(pw), salt); }
     async function setPassword(u, pw) { u.salt = randomId(8); u.passHash = await hashPw(pw, u.salt); }
@@ -4507,6 +4508,11 @@
     });
     def('aff.save', STAFF, true, (ctx, a) => {
       const c = ctx.company;
+      if ('adsTag' in a) {
+        const g = str(a.adsTag, 80).replace(/\s+/g, '');
+        if (g && !/^AW-\d{6,12}\/[A-Za-z0-9_-]{6,40}$/.test(g)) fail('Enter the Google Ads conversion tag like AW-123456789/AbCdEfGh.');
+        c.adsTag = g;
+      }
       const name = str(a.name, 80);
       if (!name) fail('Enter the company name.');
       const email = str(a.email, 120).toLowerCase();

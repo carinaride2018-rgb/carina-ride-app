@@ -2454,6 +2454,7 @@
     try { info = await api('public.company', { slug }); }
     catch (e) { const v = shell({}); v.innerHTML = `<div class="panel stack" id="bk-missing"><h2>Booking page unavailable</h2><p class="muted">${esc(e.status === 404 ? `There's no booking page at "${slug}". Check the link with the limo company.` : e.message)}</p><a class="btn" href="#signin">Back</a></div>`; return; }
     brandTitle(info.company, 'Book a ride');
+    adsLoad(info.company);
     const signedHere = session && session.user.role === 'customer' && session.user.companyId === info.company.id;
     if (signedHere && session.user.agent) return go('customer');
     const keep = session;
@@ -2503,6 +2504,7 @@
     });
     async function guestBook(booking, who) {
       const t = await api('public.guestBook', { slug, name: who.name, phone: who.phone, email: who.email, booking });
+      await adsBooked(t, info.company);
       if (t.pay && t.pay.needsCard && info.company.payMode === 'stripe') {
         toast(`${bookedMsg(t)} Next, save your card.`);
         const r = await payApi('checkout', { kind: 'card', token: t.cardToken });
@@ -3317,7 +3319,37 @@
   }
   // After booking: keep the new card on the session, or send the customer to
   // Stripe to save one when the ride still needs it.
+  // Google Ads: load the company's tag on its booking page (keeps the ad click
+  // id) and count each booking as a conversion with its fare.
+  const adsTagOf = (co) => (!DEMO && co && /^AW-\d+\/[\w-]+$/.test(co.adsTag || '') ? co.adsTag : '');
+  let adsLoaded = '';
+  function adsLoad(co) {
+    const tag = adsTagOf(co); if (!tag) return false;
+    const aw = tag.split('/')[0];
+    window.dataLayer = window.dataLayer || [];
+    if (!window.gtag) window.gtag = function () { window.dataLayer.push(arguments); };
+    if (adsLoaded !== aw) {
+      adsLoaded = aw;
+      const sc = document.createElement('script'); sc.async = true; sc.src = 'https://www.googletagmanager.com/gtag/js?id=' + encodeURIComponent(aw); document.head.appendChild(sc);
+      window.gtag('js', new Date()); window.gtag('config', aw);
+    }
+    return true;
+  }
+  function adsBooked(t, co) {
+    if (!t || !adsLoad(co)) return Promise.resolve();
+    const all = [t, t.returnTrip, ...(t.moreTrips || [])].filter(Boolean);
+    const value = Math.round(all.reduce((n, x) => n + Number((x.price && x.price.total) || 0), 0) * 100) / 100;
+    return new Promise((done) => {
+      const end = setTimeout(done, 1200); // never hold the customer up for long
+      window.gtag('event', 'conversion', { send_to: adsTagOf(co), value, currency: 'USD', transaction_id: String(t.ref || t.id || ''), transport_type: 'beacon', event_callback: () => { clearTimeout(end); done(); } });
+    });
+  }
   async function afterBook(t, b) {
+    if (session && session.user && session.user.role === 'customer' && !session.user.agent && session.company) {
+      let co = session.company;
+      if (!('adsTag' in co)) { try { co = (await api('public.company', { slug: co.slug })).company || co; } catch (e) { /* keep going */ } }
+      await adsBooked(t, co);
+    }
     if (t.card && b && b.card && session && session.user) setSession({ ...session, user: { ...session.user, card: t.card } });
     if (t.pay && t.pay.needsCard && session.company && session.company.payMode === 'stripe') {
       toast(`${bookedMsg(t)} Next, save your card.`);
@@ -5840,6 +5872,8 @@
               <span class="hint">Link to this from your website, or embed it as a booking widget.</span></div>
             <label class="field"><span>Your own booking address <span class="faint">(optional)</span></span><input id="rs-domain" name="domain" class="mono" placeholder="book.yourcompany.com" value="${esc(s.company.domain || '')}" ${ro}>
               <span class="hint">Customers see your name in the address bar. After you save, add a CNAME record for this name where you bought the domain, pointing to <span class="mono">livery-9xtm.onrender.com</span>, and ask LimoRelay to turn it on.</span></label>
+            <label class="field"><span>Google Ads conversion tag <span class="faint">(optional)</span></span><input id="rs-adstag" name="adsTag" class="mono" placeholder="AW-123456789/AbCdEfGh" value="${esc(s.company.adsTag || '')}" ${ro}>
+              <span class="hint">From Google Ads: Goals → Conversions → your booking action → Tag setup (the send_to value). Each booking made on your booking page is then counted in Google Ads, with its fare.</span></label>
           </div>
           <div class="panel stack"><h2>Rates</h2>
             <div class="grid3">${num('minHours', 'Minimum hours (by the hour)', 1)}
@@ -5983,7 +6017,7 @@
         const policy = { editHours: f.pol_editHours, cancelHours: f.pol_cancelHours, cancelFeePct: f.pol_cancelFeePct, waitAirport: f.pol_waitAirport, waitOther: f.pol_waitOther, noShowFeePct: f.pol_noShowFeePct, chargeWhen: f.pol_chargeWhen, chargeHours: f.pol_chargeHours };
         await busy($('button[type=submit]', e.target), async () => {
           try {
-            const res = await api('dispatch.saveSettings', { name: f.name, color: f.color, tagline: f.tagline, domain: f.domain, phone: f.phone, email: f.email, rates, policy, terms: f.terms, payOptions: { card: !!f.payCard, cash: !!f.payCash } });
+            const res = await api('dispatch.saveSettings', { name: f.name, color: f.color, tagline: f.tagline, domain: f.domain, adsTag: f.adsTag, phone: f.phone, email: f.email, rates, policy, terms: f.terms, payOptions: { card: !!f.payCard, cash: !!f.payCash } });
             setSession({ ...session, company: { ...session.company, ...res.company } });
             toast('Saved.'); draw();
           } catch (err) { showErr($('#rs-err', v), err); }
