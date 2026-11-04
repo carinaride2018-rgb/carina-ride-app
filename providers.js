@@ -4,7 +4,8 @@
  * Each service switches on when its keys are set in the environment and
  * otherwise stays simulated, so the app runs the same with or without them:
  *
- *   Texts        Twilio            TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM
+ *   Texts        Signal House      SIGNALHOUSE_API_KEY, SIGNALHOUSE_FROM   (used first when set)
+ *                or Twilio         TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM
  *   Email        Resend            RESEND_API_KEY, EMAIL_FROM
  *   Card pay     Stripe Connect    STRIPE_SECRET_KEY (STRIPE_WEBHOOK_SECRET optional)
  *   Maps         Google Maps       GOOGLE_MAPS_API_KEY (Routes API + Places API (New))
@@ -31,8 +32,10 @@ function createProviders(rawEnv, opts) {
   const url = (name, def) => env[`LIVERY_TEST_${name}_URL`] || def;
   const has = (...keys) => keys.every((k) => String(env[k] || '').trim());
 
+  // Texts go through Signal House when its key and number are set, otherwise Twilio.
+  const signalHouse = has('SIGNALHOUSE_API_KEY', 'SIGNALHOUSE_FROM');
   const on = {
-    sms: has('TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_FROM'),
+    sms: signalHouse || has('TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_FROM'),
     email: has('RESEND_API_KEY', 'EMAIL_FROM'),
     cards: has('STRIPE_SECRET_KEY'),
     maps: has('GOOGLE_MAPS_API_KEY'),
@@ -79,7 +82,27 @@ function createProviders(rawEnv, opts) {
     return sub.charAt(0).toUpperCase() + sub.slice(1);
   }
 
+  // Signal House: POST /message/sms with the API key as a Bearer token. Numbers are digits only.
+  // The request can succeed with nothing sent (opt-out, blocked): enqueuedCount tells.
+  async function sendSignalHouse(to, body) {
+    const digits = (x) => String(x || '').replace(/\D/g, '');
+    const r = await request('POST', `${url('SIGNALHOUSE', 'https://v2.signalhouse.io')}/message/sms`, {
+      headers: { Authorization: `Bearer ${String(env.SIGNALHOUSE_API_KEY).trim()}` },
+      body: { senderPhoneNumber: digits(env.SIGNALHOUSE_FROM), recipientPhoneNumber: [digits(to)], messageBody: body, enableShortlink: false },
+      timeoutMs: 15000,
+    });
+    const d = (r && r.data) || r || {};
+    const msgs = d.insertedMessages || [];
+    if (r && r.success === false) throw new Error(String(r.error || 'Signal House did not send the text'));
+    if (d.enqueuedCount === 0) {
+      const m = msgs[0] || {};
+      const why = m.errorCode === 'OUT' ? 'The passenger opted out of texts (replied STOP)' : (d.dncBlockedNumbers || []).length ? 'The number is on the Do Not Contact list' : `Signal House did not send it${m.errorCode ? ` (${m.errorCode})` : ''}`;
+      throw new Error(why);
+    }
+    return (msgs[0] && (msgs[0].messageId || msgs[0].id || msgs[0]._id)) || 'signalhouse';
+  }
   async function sendSms(to, body) {
+    if (signalHouse) return sendSignalHouse(to, body);
     const sid = env.TWILIO_ACCOUNT_SID;
     const from = String(env.TWILIO_FROM).trim();
     const form = { To: to, Body: body };
@@ -106,6 +129,8 @@ function createProviders(rawEnv, opts) {
   }
   // Twilio's delivery state for one sent text, e.g. delivered, or undelivered with error 30034.
   async function smsStatus(msgSid) {
+    // Signal House reports delivery by callback, not by lookup: treat an accepted text as sent.
+    if (signalHouse) return { status: 'sent', code: null, message: '' };
     const sid = env.TWILIO_ACCOUNT_SID;
     const r = await request('GET', `${url('TWILIO', 'https://api.twilio.com')}/2010-04-01/Accounts/${encodeURIComponent(sid)}/Messages/${encodeURIComponent(msgSid)}.json`, {
       headers: { Authorization: 'Basic ' + Buffer.from(`${sid}:${env.TWILIO_AUTH_TOKEN}`).toString('base64') },
@@ -426,7 +451,7 @@ function createProviders(rawEnv, opts) {
     // What the owner's Connections screen shows. Never includes key values.
     status() {
       return {
-        sms: { on: on.sms, voice: on.sms && !!voiceFrom(), service: 'Twilio', from: on.sms ? String(env.TWILIO_FROM).replace(/^(\+?\d{2})\d+(\d{2})$/, '$1•••$2') : '' },
+        sms: { on: on.sms, voice: has('TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN') && !!voiceFrom(), service: signalHouse ? 'Signal House' : 'Twilio', from: on.sms ? String(signalHouse ? env.SIGNALHOUSE_FROM : env.TWILIO_FROM).replace(/^(\+?\d{2})\d+(\d{2})$/, '$1•••$2') : '' },
         email: { on: on.email, service: 'Resend', from: on.email ? fromAddress() : '' },
         cards: { on: on.cards, service: 'Stripe', mode: on.cards ? (String(env.STRIPE_SECRET_KEY).startsWith('sk_live') ? 'live' : 'test') : '', webhook: has('STRIPE_WEBHOOK_SECRET') },
         maps: { on: on.maps, service: 'Google Maps', routes: [...routes.keys()].filter((k) => !k.startsWith('@geo|')).length, mapDisplay: !!env.GOOGLE_MAPS_BROWSER_KEY },
