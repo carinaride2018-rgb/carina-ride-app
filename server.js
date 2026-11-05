@@ -137,11 +137,11 @@ async function serveManifest(req, res) {
     name, short_name: name.length > 14 ? name.split(' ')[0] : name, description: co ? `Book and track rides with ${name}` : 'Limousine booking and dispatch',
     id: co ? `/?c=${slug}${staff ? '&r=staff' : ''}` : '/', start_url: co && !staff ? `/?source=app#book.${slug}` : '/?source=app', scope: '/', display: 'standalone', orientation: 'portrait',
     background_color: '#f4f5f7', theme_color: color,
-    icons: [
-      { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-      { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
-      { src: '/icons/maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
-    ],
+    icons: ((d) => [
+      { src: `${d}/icon-192.png`, sizes: '192x192', type: 'image/png' },
+      { src: `${d}/icon-512.png`, sizes: '512x512', type: 'image/png' },
+      { src: `${d}/maskable-512.png`, sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+    ])((co && coIconDir(slug)) || '/icons'),
   }, 'application/manifest+json');
 }
 
@@ -179,11 +179,21 @@ function homeHead(html) {
     noscript: '<h1>LimoRelay: limo booking and dispatch software</h1><p>Online booking page, dispatch board, driver app and passenger app for limo and chauffeur companies, plus a network of member companies that send each other rides. Plans from $49 a month, free for 30 days.</p>',
   });
 }
+// A company's own tab and app icons (public/icons/co/<slug>/), used on its booking pages.
+const coIconDir = (slug) => { const d = path.join(PUBLIC, 'icons', 'co', String(slug || '').replace(/[^a-z0-9-]/gi, '')); return slug && fs.existsSync(path.join(d, 'icon-192.png')) ? `/icons/co/${String(slug).replace(/[^a-z0-9-]/gi, '')}` : ''; };
+function withCoIcons(html, slug) {
+  const d = coIconDir(slug); if (!d) return html;
+  return html.replace(/<link rel="icon" href="icons\/favicon\.svg"[^>]*>/, `<link rel="icon" href="${d}/favicon-32.png" sizes="32x32" type="image/png">`)
+    .replace(/<link rel="icon" href="icons\/favicon-32\.png"[^>]*>/, `<link rel="icon" href="${d}/favicon-48.png" sizes="48x48" type="image/png">`)
+    .replace(/<link rel="alternate icon" href="icons\/favicon\.ico">/, `<link rel="alternate icon" href="${d}/favicon.ico">`)
+    .replace(/<link rel="apple-touch-icon" href="icons\/apple-touch-icon\.png">/, `<link rel="apple-touch-icon" href="${d}/apple-touch-icon.png">`)
+    .replace(/<link rel="manifest" id="manifest" href="manifest\.webmanifest">/, `<link rel="manifest" id="manifest" href="manifest.webmanifest?c=${encodeURIComponent(slug)}">`);
+}
 function companyHead(html, c) {
   const where = c.city ? ` in ${c.city}` : '';
   const desc = `${c.tagline ? c.tagline.replace(/\.?$/, '. ') : `Chauffeured cars${where}. `}Book a sedan, SUV or van online with an instant price${c.phone ? `, or call ${c.phone}` : ''}.`;
   const url = coUrl(c);
-  return pageHead(html, {
+  return pageHead(withCoIcons(html, c.slug), {
     site: c.name, url, title: c.city ? `${c.name} | Limo and car service in ${c.city}` : `${c.name} | Book your ride online`, desc, image: c.logo ? `${base}logo/${encodeURIComponent(c.slug)}.png` : '',
     go: `/#book.${c.slug}`,
     ld: { '@context': 'https://schema.org', '@type': 'LocalBusiness', name: c.name, url, description: desc, ...(c.phone ? { telephone: c.phone } : {}), ...(c.email ? { email: c.email } : {}),
