@@ -788,13 +788,18 @@
       // Dawit 2026-11-02: Carina Ride's downtown Seattle flat rates, set once (editable in Rates & brand).
       for (const c of d.companies) if (c.rates && !c.rates.flatSeeded && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
         c.rates.flatSeeded = true;
-        if (!(c.rates.flatRates || []).length) c.rates.flatRates = [{ id: 'flat_downtown', ...clone(DOWNTOWN_SEATTLE), prices: { 'Sedan': 110, 'SUV': 145, 'Business Van': 220, 'Sprinter Van': 275, '22 PAX Mini Bus': 450 } }];
+        if (!(c.rates.flatRates || []).length) c.rates.flatRates = [{ id: 'flat_downtown', ...clone(DOWNTOWN_SEATTLE), prices: { 'Sedan': 110, 'SUV': 145, 'Business Van': 220, 'Sprinter Van': 275, '22 PAX Mini Bus': 475 } }];
+      }
+      // Dawit 2026-11-05: 22 PAX Mini Bus flat rate goes from $450 to $475 (downtown and cruise piers), once.
+      for (const c of d.companies) if (c.rates && !c.rates.minibus475 && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
+        c.rates.minibus475 = true;
+        for (const z of c.rates.flatRates || []) if (z.prices && Number(z.prices['22 PAX Mini Bus']) === 450) z.prices['22 PAX Mini Bus'] = 475;
       }
       // Dawit 2026-11-05: the same flat rates for SEA ↔ Pier 66 and Pier 91 (Pier 91 is outside downtown).
       for (const c of d.companies) if (c.rates && c.rates.flatSeeded && !c.rates.piersSeeded && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
         c.rates.piersSeeded = true;
         const dt = (c.rates.flatRates || []).find((z) => z.id === 'flat_downtown');
-        if (!(c.rates.flatRates || []).some((z) => z.id === 'flat_piers')) (c.rates.flatRates = c.rates.flatRates || []).push({ id: 'flat_piers', ...clone(CRUISE_PIERS), prices: clone((dt && dt.prices) || { 'Sedan': 110, 'SUV': 145, 'Business Van': 220, 'Sprinter Van': 275, '22 PAX Mini Bus': 450 }) });
+        if (!(c.rates.flatRates || []).some((z) => z.id === 'flat_piers')) (c.rates.flatRates = c.rates.flatRates || []).push({ id: 'flat_piers', ...clone(CRUISE_PIERS), prices: clone((dt && dt.prices) || { 'Sedan': 110, 'SUV': 145, 'Business Van': 220, 'Sprinter Van': 275, '22 PAX Mini Bus': 475 }) });
       }
       // Business discount, added later: Carina Ride starts at 6%, others at 0.
       for (const c of d.companies || []) if (c.adsTag == null) c.adsTag = c.slug === 'carina-ride' ? 'AW-774934890/BN9ZCLC0n7IdEOqiwvEC' : '';
