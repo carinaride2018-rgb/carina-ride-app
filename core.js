@@ -2964,15 +2964,21 @@
     def('customer.editTrip', ['customer'], true, (ctx, a) => {
       const t = db.trips.find((x) => x.id === a.id && x.customerId === ctx.user.id && !x.hiddenByCustomer);
       if (!t) fail('Trip not found.', 404);
+      return editTrip(ctx, t, a, false);
+    });
+    // The phone agent changes rides like the office does: past the online
+    // change window, down to the company's minimum notice.
+    function editTrip(ctx, t, a, byAgent) {
       const et = editTerms(t);
-      if (!et.open) fail(et.why);
+      if (!et.open && !(byAgent && now() < new Date(t.pickupAt) && ['confirmed', 'assigned', 'accepted'].includes(t.status) && !t.invoiceId)) fail(et.why);
+      if (byAgent && t.farmout && !t.farmout.outside) fail(`This ride is being driven by a partner company. Send the change to the office with request_change.`);
       const x = a.booking || {}, patch = {};
       for (const k of EDITABLE) if (k in x) patch[k] = x[k];
       if (t.agent && 'passengerName' in patch && !str(patch.passengerName)) fail("Enter your client's name.");
       const b = cleanBooking(ctx.company, { ...t, ...patch });
       if ('signName' in patch) b.signName = str(patch.signName, 60);
-      const h = et.hours;
-      if (new Date(b.pickupAt).getTime() < now().getTime() + h * 3600e3 - 60e3) fail(`Online changes need the new pickup at least ${h} hours away. For a sooner pickup, call ${ctx.company.name}${ctx.company.phone ? ` at ${ctx.company.phone}` : ''}.`);
+      const h = byAgent ? dcfg(ctx.company).minNoticeHours || 0 : et.hours;
+      if (new Date(b.pickupAt).getTime() < now().getTime() + h * 3600e3 - 60e3) fail(byAgent ? `The new pickup must be at least ${h} hours from now.` : `Online changes need the new pickup at least ${h} hours away. For a sooner pickup, call ${ctx.company.name}${ctx.company.phone ? ` at ${ctx.company.phone}` : ''}.`);
       const tt = { ...clone(t), ...b };
       const price = quote(ctx.company, tt, tt.priceCtx);
       const diff = round2(price.total - t.price.total);
@@ -3010,7 +3016,7 @@
       const office = officeEmail(ctx.company);
       if (office && cmsg(ctx.company).officeNew) put(office, 'email', officeChangedText(t, changed), 'office_changed');
       return { trip: tripView(t), diff: round2(t.price.total - oldTotal), changed: changed.map(([l]) => l) };
-    });
+    }
     def('customer.cancel', ['customer'], true, (ctx, a) => {
       const t = db.trips.find((x) => x.id === a.id && x.customerId === ctx.user.id);
       if (!t) fail('Trip not found.', 404);
@@ -7270,9 +7276,255 @@
       async hostSlug(host) { await ensure(); return slugForHost(host); },
     };
 
+    // ---- Phone agent ----------------------------------------------------------
+    // An AI agent answers a company's phone (Twilio voice, see phoneagent.js).
+    // It quotes from the company's own rates, books rides like an office phone
+    // booking, tells callers where their ride is, cancels, and passes change
+    // requests and anything else to the office. It only ever reads or changes
+    // rides booked with the caller's own phone number.
+    const DEFAULT_PHONE = { on: false, number: '', transferTo: '', greeting: '', notes: '', canCancel: true };
+    const phcfg = (c) => ({ ...DEFAULT_PHONE, ...(c.phoneAgent || {}) });
+    const callsOf = () => db.calls || (db.calls = []);
+    // The agent acts as an office login named "Phone agent" (it is not stored as a user).
+    const agentCtx = (c) => ({ token: null, user: { id: 'phone_agent', role: 'admin', name: 'Phone agent', companyId: c.id, active: true }, company: c, dirty: false });
+    function asAgent(c, method, args) {
+      const ctx = agentCtx(c);
+      sweepDispatch(c);
+      return M[method].fn(ctx, args || {});
+    }
+    const sayTime = (iso, c) => fmtLocal(iso, c, true);
+    function callerTrips(c, key) {
+      if (!key) return [];
+      const since = now().getTime() - 12 * 3600e3;
+      return db.trips.filter((t) => t.companyId === c.id && !t.officeDeleted && phoneKey(t.passengerPhone) === key && new Date(t.pickupAt).getTime() > since)
+        .sort((a, b) => a.pickupAt.localeCompare(b.pickupAt)).slice(0, 8);
+    }
+    function rideBrief(t, c) {
+      const v = tripView(t);
+      return {
+        ref: t.ref, status: t.noShow ? 'No-show' : STATUS_LABELS[t.status], pickupTime: sayTime(t.pickupAt, c), pickup: t.pickup, dropoff: t.dropoff || '',
+        service: SERVICES[t.service], vehicleType: t.vehicleType, passengers: t.passengers, flight: t.flight || '', passengerName: t.passengerName,
+        total: t.price ? t.price.total : null,
+        chauffeur: v.driver ? v.driver.name.split(' ')[0] : null,
+        car: v.vehicle ? [v.vehicle.color, v.vehicle.year, v.vehicle.name].filter(Boolean).join(' ') + (v.vehicle.plate ? `, plate ${v.vehicle.plate}` : '') : null,
+        minutesAway: v.live ? v.live.etaMin : null,
+        trackingLink: t.trackToken && ['en_route', 'arrived'].includes(t.status) ? trackUrl(t) : '',
+      };
+    }
+    // Callers say "tomorrow at 6 pm"; the agent turns that into a date and a time.
+    function agentPickup(c, a) {
+      const iso = localToIso(str(a.date, 20), str(a.time, 20), c);
+      if (!iso) fail('Give the pickup date as YYYY-MM-DD and the time as HH:MM (24-hour clock).');
+      if (new Date(iso) < now()) fail('That pickup time has already passed. Ask for the date and time again.');
+      return iso;
+    }
+    function agentBooking(c, a, from) {
+      return {
+        service: a.service === 'hourly' ? 'hourly' : 'transfer',
+        pickup: str(a.pickup, 200), dropoff: str(a.dropoff, 200),
+        pickupAt: agentPickup(c, a), hours: a.hours, passengers: Math.max(1, Math.round(num(a.passengers, 1))),
+        vehicleType: a.vehicleType, flight: str(a.flight, 20), childSeats: a.childSeats || 0, meetGreet: !!a.meetGreet,
+        passengerName: str(a.passengerName, 80), passengerPhone: str(a.passengerPhone, 30) || str(from, 30), passengerEmail: str(a.passengerEmail, 120),
+        notes: str(a.notes, 400), promoCode: str(a.promoCode, 30),
+        ...(typeof a.textsOk === 'boolean' ? { smsOk: a.textsOk } : {}),
+      };
+    }
+    const refKey = (r) => String(r || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const byRef = (c, r) => refKey(r) && db.trips.find((x) => x.companyId === c.id && refKey(x.ref) === refKey(r));
+    function callerCanSee(call, t) { return !!call.key && phoneKey(t.passengerPhone) === call.key; }
+    const AGENT_TOOLS = {
+      // Prices for one vehicle type, or every type that seats the party.
+      get_quote(c, call, a) {
+        const b = agentBooking(c, a, call.from);
+        const types = vehicleTypesFor(c).filter((x) => x.capacity >= b.passengers);
+        if (!types.length) return { error: `No single vehicle seats ${b.passengers}. Offer to have the office call back about a group booking.` };
+        const pick = a.vehicleType ? types.filter((x) => x.type === a.vehicleType) : types;
+        if (!pick.length) return { error: `${a.vehicleType} does not seat ${b.passengers}. Options: ${types.map((x) => x.type).join(', ')}.` };
+        cleanBooking(c, { ...b, vehicleType: pick[0].type }, {});
+        const quotes = pick.map((x) => {
+          const q = quoteFor(c, { ...b, vehicleType: x.type }, null);
+          return { vehicleType: x.type, models: x.models, seats: x.capacity, bags: x.bags, total: q.total, gratuityIncluded: q.gratuity, miles: q.miles || null };
+        });
+        return { pickupTime: sayTime(b.pickupAt, c), service: SERVICES[b.service === 'hourly' ? 'hourly' : (isAirport(b.pickup) || isAirport(b.dropoff) ? 'airport' : 'transfer')], quotes, currency: c.rates.currency || 'USD', note: 'Totals include gratuity and fees. Tolls and extra waiting are added after the ride.' };
+      },
+      async book_ride(c, call, a) {
+        const b = agentBooking(c, a, call.from);
+        if (!b.passengerName) fail("Ask for the passenger's name.");
+        if (!phoneKey(b.passengerPhone)) fail("Ask for the passenger's mobile number.");
+        if (!a.vehicleType) fail('Ask which vehicle they want.');
+        checkNotice(c, b.pickupAt);
+        const r = await asAgent(c, 'dispatch.createTrip', { booking: b });
+        const t = db.trips.find((x) => x.id === r.id);
+        t.byAgent = true;
+        log(t, 'note', 'Phone agent', `Booked on a call from ${call.from || 'a hidden number'}`);
+        let cardLink = false;
+        if (onFile(t) && !t.card && (t.passengerPhone || t.passengerEmail)) { asAgent(c, 'dispatch.sendCardLink', { id: t.id }); cardLink = true; }
+        call.refs = [...new Set([...(call.refs || []), t.ref])];
+        call.outcome = 'booked';
+        return { booked: true, ref: t.ref, pickupTime: sayTime(t.pickupAt, c), vehicleType: t.vehicleType, total: t.price.total, cardLinkTexted: cardLink, payNote: cardLink ? `A link to add a card was sent. ${chargeNote(c)}.` : t.accountId ? 'Billed to the company account.' : '' };
+      },
+      find_rides(c, call, a) {
+        let list = callerTrips(c, call.key);
+        if (refKey(a.ref)) {
+          const t = byRef(c, a.ref);
+          if (t && !callerCanSee(call, t)) return { error: 'That ride was booked with a different phone number. For privacy, offer to transfer the caller to the office.' };
+          list = t ? [t] : [];
+        }
+        return { callerNumberKnown: !!call.key, rides: list.map((t) => rideBrief(t, c)) };
+      },
+      cancel_ride(c, call, a) {
+        const t = byRef(c, a.ref);
+        if (!t || !callerCanSee(call, t)) return { error: 'No ride with that number was booked from this phone. Offer to transfer to the office.' };
+        if (!phcfg(c).canCancel) return { error: 'This company takes cancellations only from the office. Offer to transfer.' };
+        if (!['confirmed', 'assigned', 'accepted'].includes(t.status)) return { error: 'This ride is already under way and cannot be cancelled by phone agent. Transfer to the office.' };
+        const ct = cancelTerms(t);
+        if (ct.fee > 0 && !a.acceptFee) return { needsFeeOk: true, fee: ct.fee, message: `Free cancellation ended ${sayTime(ct.freeUntil, c)}. Cancelling now costs $${money(ct.fee)}. Ask if they still want to cancel.` };
+        t.status = 'cancelled';
+        if (ct.fee > 0) t.cancelFee = ct.fee;
+        log(t, 'cancelled', 'Phone agent', ct.fee > 0 ? `Cancelled on a call, late fee $${money(ct.fee)}` : 'Cancelled on a call');
+        notify(t, 'cancelled');
+        payStep(t);
+        call.refs = [...new Set([...(call.refs || []), t.ref])];
+        call.outcome = 'cancelled';
+        return { cancelled: true, ref: t.ref, fee: ct.fee };
+      },
+      // Changes a ride like the office would. Call with preview first to get the new price.
+      change_ride(c, call, a) {
+        const t = byRef(c, a.ref);
+        if (!t || !callerCanSee(call, t)) return { error: 'No ride with that number was booked from this phone. Ask for the booking number again, or take a message with request_change.' };
+        const booking = {};
+        if (a.date || a.time) {
+          const lp = localParts(t.pickupAt, c.timezone);
+          booking.pickupAt = agentPickup(c, { date: a.date || lp.date, time: a.time || `${String(lp.hour).padStart(2, '0')}:${String(lp.minute).padStart(2, '0')}` });
+        }
+        for (const k of ['pickup', 'dropoff', 'hours', 'passengers', 'vehicleType', 'flight', 'notes', 'childSeats', 'meetGreet', 'passengerName']) if (a[k] != null && a[k] !== '') booking[k] = a[k];
+        if (a.service) booking.service = a.service === 'hourly' ? 'hourly' : 'transfer';
+        if (!Object.keys(booking).length) fail('Say what to change.');
+        if (booking.vehicleType || booking.passengers) {
+          const type = booking.vehicleType || t.vehicleType, pax = Math.round(num(booking.passengers, t.passengers));
+          const vt = vehicleTypesFor(c).find((x) => x.type === type);
+          if (!vt) fail(`${type} is not a vehicle this company runs.`);
+          if (vt.capacity < pax) fail(`${type} seats ${vt.capacity}. Suggest a bigger vehicle.`);
+        }
+        const r = editTrip(agentCtx(c), t, { booking, preview: !!a.preview }, true);
+        if (a.preview) return { preview: true, newTotal: r.price.total, oldTotal: t.price.total, difference: r.diff, note: r.diff > 0 && r.fareCharged ? 'The difference goes on the card on file.' : r.diff < 0 && r.fareCharged ? 'The difference is refunded to the card.' : '' };
+        call.refs = [...new Set([...(call.refs || []), t.ref])];
+        call.outcome = 'changed';
+        log(t, 'note', 'Phone agent', `Changed on a call: ${r.changed.join(', ')}`);
+        return { changed: r.changed, ref: t.ref, pickupTime: sayTime(t.pickupAt, c), newTotal: t.price.total, difference: r.diff, confirmationTexted: !!(t.passengerPhone && t.smsOk !== false) };
+      },
+      // Messages for the office (lost items, complaints, billing, custom tours) land in the Inbox.
+      request_change(c, call, a) {
+        const what = str(a.details, 600);
+        if (!what) fail('Say what the caller wants changed.');
+        const t = a.ref ? byRef(c, a.ref) : null;
+        const trip = t && callerCanSee(call, t) ? t : null;
+        inboxOf().unshift({ id: id('sms'), companyId: c.id, key: call.key || 'call-' + call.id, phone: str(call.from, 30), dir: 'in', body: `[Phone call] ${str(a.callerName, 80) ? str(a.callerName, 80) + ': ' : ''}${what}`, at: now().toISOString(), read: false,
+          tripId: trip ? trip.id : null, ref: trip ? trip.ref : '', call: call.id });
+        if (trip) { log(trip, 'note', 'Phone agent', `Change asked on a call: ${what}`); call.refs = [...new Set([...(call.refs || []), trip.ref])]; }
+        call.outcome = call.outcome || 'message';
+        return { sent: true, message: 'The office has the request and will confirm by text or call.' };
+      },
+    };
+    function voiceContext(c, call) {
+      const pol = pcfg(c), r = c.rates, cfg = phcfg(c);
+      const types = vehicleTypesFor(c).map((x) => `${x.type}: up to ${x.capacity} passengers, ${x.bags || '?'} bags (${x.models})`);
+      const mine = callerTrips(c, call.key).filter((t) => LIVE_STATUS.includes(t.status));
+      const p = localParts(now().toISOString(), c.timezone);
+      return [
+        `Company: ${c.name}${c.tagline ? ` (${c.tagline})` : ''}. Office phone: ${c.phone || 'not set'}. Email: ${c.email || 'not set'}. Time zone: ${c.timezone}.`,
+        `Right now it is ${sayTime(now().toISOString(), c)} (${p.date}, ${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')} local).`,
+        `Services: point-to-point transfers, airport rides, and by the hour (minimum ${r.minHours} hours).`,
+        `Vehicles:\n- ${types.join('\n- ') || 'No vehicles listed yet.'}`,
+        `Minimum notice for a booking: ${dcfg(c).minNoticeHours || 0} hours. Free cancellation until ${pol.cancelHours} hours before pickup; after that the fee is ${pol.cancelFeePct}% of the fare. Payment: ${cardsOn(c) ? `card, by a secure link we text after booking. ${chargeNote(c)}.` : 'the office arranges payment.'} Chauffeurs never take payment.`,
+        `Caller's number: ${call.key ? call.from : 'hidden'}. ${mine.length ? `Their upcoming rides: ${mine.map((t) => `${t.ref} on ${sayTime(t.pickupAt, c)} from ${t.pickup} (${STATUS_LABELS[t.status]})`).join('; ')}.` : 'No upcoming rides booked from this number.'}`,
+        ...(cfg.notes ? [`Notes from the office (follow these):\n${str(cfg.notes, 3000)}`] : []),
+      ].join('\n\n');
+    }
+    function callView(x) { return { ...clone(x), transcript: undefined, turns: (x.transcript || []).length }; }
+    // Office: the agent's settings and the call log.
+    def('dispatch.phoneAgent', STAFF, false, (ctx) => ({ settings: phcfg(ctx.company), live: !!(live.voiceAgent), calls: callsOf().filter((x) => x.companyId === ctx.company.id).slice(0, 100).map(callView) }));
+    def('dispatch.callDetail', STAFF, false, (ctx, a) => {
+      const x = callsOf().find((y) => y.id === a.id && y.companyId === ctx.company.id);
+      if (!x) fail('Call not found.', 404);
+      return clone(x);
+    });
+    def('dispatch.savePhoneAgent', STAFF, true, (ctx, a) => {
+      if (ctx.user.role !== 'admin') fail('Only a company admin can change the phone agent.', 403);
+      const s = a.settings || {};
+      const number = str(s.number, 30), key = phoneKey(number);
+      if (number && !key) fail('Enter the phone number the agent answers, for example (206) 555-0100.');
+      if (key && db.companies.some((x) => x.id !== ctx.company.id && x.phoneAgent && phoneKey(x.phoneAgent.number) === key)) fail('Another company already uses that number for its phone agent.');
+      const transferTo = str(s.transferTo, 30);
+      if (transferTo && !phoneKey(transferTo)) fail('Enter a phone number to transfer calls to, or leave it blank.');
+      if (s.on && !key) fail('Enter the phone number the agent answers before switching it on.');
+      ctx.company.phoneAgent = { on: !!s.on, number, transferTo, greeting: str(s.greeting, 300), notes: str(s.notes, 3000), canCancel: s.canCancel !== false };
+      return phcfg(ctx.company);
+    });
+    // Server side (phoneagent.js); never reachable from the browser API.
+    const voice = {
+      // A call came in to `to`. Returns null when no company's agent answers that number.
+      async start({ to, from, sid }) {
+        await ensure();
+        const key = phoneKey(to);
+        const c = key && db.companies.find((x) => x.status === 'active' && x.phoneAgent && x.phoneAgent.on && phoneKey(x.phoneAgent.number) === key);
+        if (!c) return null;
+        const cfg = phcfg(c);
+        let call = callsOf().find((x) => x.sid && x.sid === str(sid, 64));
+        if (!call) {
+          call = { id: id('call'), companyId: c.id, sid: str(sid, 64), from: str(from, 30), key: phoneKey(from), at: now().toISOString(), endedAt: null, seconds: 0, outcome: '', refs: [], transcript: [] };
+          const p = personForPhone(c.id, call.key);
+          if (p.name) call.callerName = p.name;
+          callsOf().unshift(call);
+          if (db.calls.length > 2000) db.calls.length = 2000;
+          save(db);
+        }
+        return {
+          callId: call.id, company: { id: c.id, name: c.name, phone: c.phone || '' },
+          greeting: cfg.greeting || `Thank you for calling ${c.name}. This is the virtual assistant. How can I help you today?`,
+          transferTo: cfg.transferTo || c.phone || '', context: voiceContext(c, call),
+        };
+      },
+      // Runs one of the agent's tools. Errors come back as { error } for the agent to explain.
+      async tool(callId, name, input) {
+        await ensure();
+        const call = callsOf().find((x) => x.id === callId);
+        const c = call && findCompany(call.companyId);
+        if (!c || !AGENT_TOOLS[name]) return { error: 'Unknown tool.' };
+        try {
+          const out = await AGENT_TOOLS[name](c, call, input || {});
+          sweepDispatch(c, true); syncFarmouts(); syncCredits(); meterTexts(); save(db);
+          return out;
+        } catch (e) {
+          if (e instanceof ApiError) return { error: e.message };
+          throw e;
+        }
+      },
+      async say(callId, who, text) {
+        await ensure();
+        const call = callsOf().find((x) => x.id === callId);
+        if (!call || !str(text)) return;
+        call.transcript.push({ at: now().toISOString(), who: who === 'agent' ? 'agent' : 'caller', text: str(text, 2000) });
+        if (call.transcript.length > 300) call.transcript.splice(0, call.transcript.length - 300);
+        save(db);
+      },
+      // The call ended (hung up, transferred or timed out).
+      async end(callId, { outcome, seconds, sid } = {}) {
+        await ensure();
+        const call = callsOf().find((x) => (callId && x.id === callId) || (sid && x.sid === str(sid, 64)));
+        if (!call) return;
+        if (!call.endedAt) call.endedAt = now().toISOString();
+        if (seconds) call.seconds = Math.round(num(seconds, 0));
+        if (outcome && (!call.outcome || outcome === 'transferred')) call.outcome = str(outcome, 30);
+        if (!call.outcome) call.outcome = call.transcript.some((x) => x.who === 'caller') ? 'answered' : 'hung up';
+        save(db);
+      },
+    };
+
     return {
       call,
       seo,
+      voice,
       pay,
       // A text someone sent to the platform's Twilio number.
       // The driver pressed a key on the wake-up call.

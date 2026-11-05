@@ -44,6 +44,17 @@ Every service below needs its own account, created by you. Prices change, so che
    - **Or use Signal House instead of Twilio:** set `SIGNALHOUSE_API_KEY` (Signal House dashboard, API keys) and `SIGNALHOUSE_FROM` (your Signal House number, for example `+12065550100`, on an approved 10DLC campaign). When both are set, texts go through Signal House. Driver wake-up calls and the reply Inbox still use Twilio.
 4. **Passenger replies (Inbox)**: in the Twilio console, open your number (or Messaging Service), and under "A message comes in" choose Webhook, `HTTP POST`, and enter `https://limorelay.com/twilio/sms` (your `PUBLIC_URL` followed by `twilio/sms`). Replies then show up in each company's Inbox. The app checks Twilio's signature with `TWILIO_AUTH_TOKEN`, so nothing else is needed. The owner's Connections screen shows the exact address.
 
+### Phone agent: Twilio voice + Claude
+
+An AI assistant answers a company's phone. It gives prices from the company's rates, books, changes and cancels rides, tells callers where their chauffeur is, and takes messages for the office (they land in the Inbox). Customized tours are sent to a person. Every call is logged with what was said under Dispatch > Phone agent.
+
+1. Get an API key at console.anthropic.com and add it as `ANTHROPIC_API_KEY`. Without it, calls go straight to the office number.
+2. Optional: `PHONE_AGENT_VOICE` (default `Google.en-US-Chirp3-HD-Aoede`, a natural human-sounding voice; any Twilio `<Say>` voice works) and `PHONE_AGENT_MODEL` (default `claude-opus-5-5`).
+3. In the Twilio console, open the number. Under **Voice configuration**, set "A call comes in" to Webhook, `HTTP POST`, `https://limorelay.com/twilio/voice`, and "Call status changes" to `https://limorelay.com/twilio/voice/status` (your `PUBLIC_URL` followed by those paths).
+4. Sign in as the company admin, open **Phone agent**, enter the same number, the number to send calls to when a person is needed, and anything the agent should know. Switch it on and save.
+
+Cost: Twilio voice (about 1–2 cents a minute) plus Claude usage per call.
+
 ### Email: Resend
 
 1. Create a Resend account. The free plan covers about 3,000 emails a month.
