@@ -7262,7 +7262,7 @@
     };
 
     // What search engines see: the companies with an open booking page.
-    const seoCo = (c) => ({ slug: c.slug, name: c.name, tagline: c.tagline || '', phone: c.phone || '', email: c.email || '', city: (c.signup && c.signup.city) || '', logo: !!(c.logo || c.banner), domain: c.domain || '', updated: c.updatedAt || c.createdAt || '' });
+    const seoCo = (c) => ({ slug: c.slug, name: c.name, tagline: c.tagline || '', phone: c.phone || '', email: c.email || '', city: (c.signup && c.signup.city) || '', logo: !!(c.logo || c.banner), iconLogo: /^data:image\/\w+;base64,/.test(c.logo || ''), domain: c.domain || '', updated: c.updatedAt || c.createdAt || '' });
     const seoOpen = (c) => c && c.status === 'active' && !c.house && db.vehicles.some((v) => v.companyId === c.id && v.status === 'active');
     const seo = {
       async companies() { await ensure(); return db.companies.filter(seoOpen).map(seoCo); },

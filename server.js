@@ -137,7 +137,11 @@ async function serveManifest(req, res) {
     name, short_name: name.length > 14 ? name.split(' ')[0] : name, description: co ? `Book and track rides with ${name}` : 'Limousine booking and dispatch',
     id: co ? `/?c=${slug}${staff ? '&r=staff' : ''}` : '/', start_url: co && !staff ? `/?source=app#book.${slug}` : '/?source=app', scope: '/', display: 'standalone', orientation: 'portrait',
     background_color: '#f4f5f7', theme_color: color,
-    icons: ((d) => [
+    icons: co && !coIconDir(slug) && /^data:image\/\w+;base64,/.test((co.company || co).logo || '') ? [
+      { src: `/co-icon/${encodeURIComponent(slug)}.svg`, sizes: 'any', type: 'image/svg+xml' },
+      { src: `/co-icon/${encodeURIComponent(slug)}.svg`, sizes: 'any', type: 'image/svg+xml', purpose: 'maskable' },
+      { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+    ] : ((d) => [
       { src: `${d}/icon-192.png`, sizes: '192x192', type: 'image/png' },
       { src: `${d}/icon-512.png`, sizes: '512x512', type: 'image/png' },
       { src: `${d}/maskable-512.png`, sizes: '512x512', type: 'image/png', purpose: 'maskable' },
@@ -181,19 +185,33 @@ function homeHead(html) {
 }
 // A company's own tab and app icons (public/icons/co/<slug>/), used on its booking pages.
 const coIconDir = (slug) => { const d = path.join(PUBLIC, 'icons', 'co', String(slug || '').replace(/[^a-z0-9-]/gi, '')); return slug && fs.existsSync(path.join(d, 'icon-192.png')) ? `/icons/co/${String(slug).replace(/[^a-z0-9-]/gi, '')}` : ''; };
-function withCoIcons(html, slug) {
-  const d = coIconDir(slug); if (!d) return html;
-  return html.replace(/<link rel="icon" href="icons\/favicon\.svg"[^>]*>/, `<link rel="icon" href="${d}/favicon-32.png" sizes="32x32" type="image/png">`)
-    .replace(/<link rel="icon" href="icons\/favicon-32\.png"[^>]*>/, `<link rel="icon" href="${d}/favicon-48.png" sizes="48x48" type="image/png">`)
-    .replace(/<link rel="alternate icon" href="icons\/favicon\.ico">/, `<link rel="alternate icon" href="${d}/favicon.ico">`)
-    .replace(/<link rel="apple-touch-icon" href="icons\/apple-touch-icon\.png">/, `<link rel="apple-touch-icon" href="${d}/apple-touch-icon.png">`)
-    .replace(/<link rel="manifest" id="manifest" href="manifest\.webmanifest">/, `<link rel="manifest" id="manifest" href="manifest.webmanifest?c=${encodeURIComponent(slug)}">`);
+function withCoIcons(html, slug, hasLogo) {
+  const d = coIconDir(slug);
+  const e = encodeURIComponent(slug || '');
+  // Hand-made icons win; otherwise a company with an uploaded logo gets icons made from it.
+  if (!d && !hasLogo) return html;
+  const fav = d ? `<link rel="icon" href="${d}/favicon-32.png" sizes="32x32" type="image/png">` : `<link rel="icon" href="/co-icon/${e}.svg" type="image/svg+xml">`;
+  const fav2 = d ? `<link rel="icon" href="${d}/favicon-48.png" sizes="48x48" type="image/png">` : `<link rel="icon" href="/logo/${e}.png" sizes="any">`;
+  const ico = d ? `<link rel="alternate icon" href="${d}/favicon.ico">` : `<link rel="alternate icon" href="/logo/${e}.png">`;
+  const apple = d ? `${d}/apple-touch-icon.png` : `/logo/${e}.png`;
+  return html.replace(/<link rel="icon" href="icons\/favicon\.svg"[^>]*>/, fav)
+    .replace(/<link rel="icon" href="icons\/favicon-32\.png"[^>]*>/, fav2)
+    .replace(/<link rel="alternate icon" href="icons\/favicon\.ico">/, ico)
+    .replace(/<link rel="apple-touch-icon" href="icons\/apple-touch-icon\.png">/, `<link rel="apple-touch-icon" href="${apple}">`)
+    .replace(/<link rel="manifest" id="manifest" href="manifest\.webmanifest">/, `<link rel="manifest" id="manifest" href="manifest.webmanifest?c=${e}">`);
+}
+// A square icon made from a company's uploaded logo: the logo centred on white.
+async function coIconSvg(slug) {
+  const l = await core.logo(slug);
+  if (!l) return null;
+  const uri = `data:${l.type};base64,${l.buf.toString('base64')}`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 512 512" width="512" height="512"><rect width="512" height="512" rx="96" fill="#fff"/><image x="32" y="32" width="448" height="448" preserveAspectRatio="xMidYMid meet" href="${uri}" xlink:href="${uri}"/></svg>`;
 }
 function companyHead(html, c) {
   const where = c.city ? ` in ${c.city}` : '';
   const desc = `${c.tagline ? c.tagline.replace(/\.?$/, '. ') : `Chauffeured cars${where}. `}Book a sedan, SUV or van online with an instant price${c.phone ? `, or call ${c.phone}` : ''}.`;
   const url = coUrl(c);
-  return pageHead(withCoIcons(html, c.slug), {
+  return pageHead(withCoIcons(html, c.slug, !!c.iconLogo), {
     site: c.name, url, title: c.city ? `${c.name} | Limo and car service in ${c.city}` : `${c.name} | Book your ride online`, desc, image: c.logo ? `${base}logo/${encodeURIComponent(c.slug)}.png` : '',
     go: `/#book.${c.slug}`,
     ld: { '@context': 'https://schema.org', '@type': 'LocalBusiness', name: c.name, url, description: desc, ...(c.phone ? { telephone: c.phone } : {}), ...(c.email ? { email: c.email } : {}),
@@ -656,6 +674,11 @@ async function testSms(token, args) {
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   if (url.pathname === '/healthz') return send(res, 200, { ok: true });
+  if (url.pathname.startsWith('/co-icon/')) {
+    const slug = url.pathname.slice(9).replace(/\.svg$/, '');
+    coIconSvg(slug).then((svg) => { if (!svg) return send(res, 404, 'Not found', 'text/plain'); res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=86400', ...SECURITY_HEADERS }); res.end(svg); }).catch(() => send(res, 500, 'Error', 'text/plain'));
+    return;
+  }
   if (url.pathname.startsWith('/logo/')) {
     const slug = url.pathname.slice(6).replace(/\.\w+$/, '');
     core.logo(slug).then((l) => { if (!l) return send(res, 404, 'Not found', 'text/plain'); res.writeHead(200, { 'Content-Type': l.type, 'Cache-Control': 'public, max-age=86400' }); res.end(l.buf); }).catch(() => send(res, 500, 'Error', 'text/plain'));
