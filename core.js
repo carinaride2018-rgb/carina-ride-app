@@ -566,6 +566,8 @@
   const AIRPORT_NAMES = { SEA: ['seatac', 'sea tac', 'seattle tacoma', '17801 international blvd', '98158'] };
   const DOWNTOWN_SEATTLE = { name: 'Downtown Seattle', mode: 'airport', airport: 'SEA', center: { lat: 47.6080, lng: -122.3352 }, radiusMi: 1.2,
     words: ['98101', '98104', '98111', '98121', '98154', '98161', '98164', '98174', '98191', 'downtown seattle'] };
+  const CRUISE_PIERS = { name: 'Seattle cruise piers (Pier 66 & 91)', mode: 'airport', airport: 'SEA', center: { lat: 47.6339, lng: -122.3846 }, radiusMi: 0.4,
+    words: ['pier 91', 'pier 66', 'smith cove', 'bell street cruise', 'bell harbor', '2001 w garfield', '2001 west garfield', '2225 alaskan', 'cruise terminal'] };
   const atAirport = (addr, code) => { if (airportCode(addr) === code) return true; const f = ' ' + fold(addr) + ' '; return (AIRPORT_NAMES[code] || []).some((w) => f.includes(' ' + w + ' ')); };
   function inArea(z, addr) {
     const f = ' ' + fold(addr) + ' ';
@@ -787,6 +789,12 @@
       for (const c of d.companies) if (c.rates && !c.rates.flatSeeded && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
         c.rates.flatSeeded = true;
         if (!(c.rates.flatRates || []).length) c.rates.flatRates = [{ id: 'flat_downtown', ...clone(DOWNTOWN_SEATTLE), prices: { 'Sedan': 110, 'SUV': 145, 'Business Van': 220, 'Sprinter Van': 275, '22 PAX Mini Bus': 450 } }];
+      }
+      // Dawit 2026-11-05: the same flat rates for SEA ↔ Pier 66 and Pier 91 (Pier 91 is outside downtown).
+      for (const c of d.companies) if (c.rates && c.rates.flatSeeded && !c.rates.piersSeeded && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
+        c.rates.piersSeeded = true;
+        const dt = (c.rates.flatRates || []).find((z) => z.id === 'flat_downtown');
+        if (!(c.rates.flatRates || []).some((z) => z.id === 'flat_piers')) (c.rates.flatRates = c.rates.flatRates || []).push({ id: 'flat_piers', ...clone(CRUISE_PIERS), prices: clone((dt && dt.prices) || { 'Sedan': 110, 'SUV': 145, 'Business Van': 220, 'Sprinter Van': 275, '22 PAX Mini Bus': 450 }) });
       }
       // Business discount, added later: Carina Ride starts at 6%, others at 0.
       for (const c of d.companies || []) if (c.adsTag == null) c.adsTag = c.slug === 'carina-ride' ? 'AW-774934890/BN9ZCLC0n7IdEOqiwvEC' : '';
