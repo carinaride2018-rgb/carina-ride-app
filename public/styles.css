@@ -964,3 +964,4 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 .custprice > span:first-child { font-weight: 800; font-size: 15px; color: #111; }
 .custprice input { border: 2px solid #111 !important; font-weight: 700; font-size: 17px; }
 .custprice input::placeholder { font-weight: 500; }
+.btn.forcebtn { border:2px solid #b45309; color:#b45309; font-weight:700; }

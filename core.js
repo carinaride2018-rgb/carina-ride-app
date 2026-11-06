@@ -1552,7 +1552,7 @@
       const h = dcfg(company).minNoticeHours;
       if (h && new Date(pickupAt).getTime() < now().getTime() + h * 3600e3 - 60e3) fail(`Online bookings need at least ${h} hour${h === 1 ? '' : 's'}' notice. For a sooner pickup, call ${company.name}${company.phone ? ` at ${company.phone}` : ''}.`);
     }
-    function cleanBooking(company, b, { allowPast } = {}) {
+    function cleanBooking(company, b, { allowPast, force } = {}) {
       const gb = b.guestBiz && str(b.guestBiz.company) ? { company: str(b.guestBiz.company, 80), po: str(b.guestBiz.po, 60) } : null;
       const out = {
         ...(gb ? { business: gb } : {}),
@@ -1586,13 +1586,13 @@
       } else { out.poNumber = ''; out.costCenter = ''; }
       if (!out.pickup) fail('Enter a pickup address.');
       if (out.service !== 'hourly' && !out.dropoff) fail('Enter a drop-off address.');
-      if (!exactAddress(out.pickup)) fail(`Pickup address: enter the full street address or a place name with its city (like a hotel or airport), not just "${out.pickup}".`);
-      if (out.dropoff && !exactAddress(out.dropoff)) fail(`Drop-off address: enter the full street address or a place name with its city (like a hotel or airport), not just "${out.dropoff}".`);
+      if (!force && !exactAddress(out.pickup)) fail(`Pickup address: enter the full street address or a place name with its city (like a hotel or airport), not just "${out.pickup}".`);
+      if (!force && out.dropoff && !exactAddress(out.dropoff)) fail(`Drop-off address: enter the full street address or a place name with its city (like a hotel or airport), not just "${out.dropoff}".`);
       if (out.service !== 'hourly') out.service = isAirport(out.pickup) || isAirport(out.dropoff) ? 'airport' : 'transfer';
       if (str(b.flight)) {
         const f = normFlight(b.flight);
-        if (!f) fail('Enter the flight as airline and number, for example AS 330 or Alaska 330.');
-        out.flight = f;
+        if (!f && !force) fail('Enter the flight as airline and number, for example AS 330 or Alaska 330.');
+        out.flight = f || str(b.flight, 20).toUpperCase();
         // Where the flight comes from: optional, shown to the office and the chauffeur.
         const from = str(b.flightFrom, 60);
         if (from) out.flightFrom = from;
@@ -1601,7 +1601,7 @@
         if (to) out.flightTo = to;
       }
       // Airport pickups are timed to the landing, so the flight is required.
-      if (isAirport(out.pickup) && !out.flight) fail('Pickups at the airport need the flight number, for example AS 331, so we can follow the landing.');
+      if (!force && isAirport(out.pickup) && !out.flight) fail('Pickups at the airport need the flight number, for example AS 331, so we can follow the landing.');
       // Nationwide site: the time typed is the pickup city's local time, not the booker's.
       if (company.house) {
         const tz = placeTz(out.pickup) || company.timezone;
@@ -1615,9 +1615,9 @@
       out.pickupAt = when.toISOString();
       if (!(out.passengers >= 1 && out.passengers <= 60)) fail('Passengers must be between 1 and 60.');
       const fleet = company.house ? houseTypes(company).filter((v) => v.type === out.vehicleType) : db.vehicles.filter((v) => v.companyId === company.id && v.status === 'active' && v.type === out.vehicleType);
-      if (!fleet.length) fail(`${company.name} has no ${out.vehicleType} available. Choose another vehicle.`);
-      const cap = Math.max(...fleet.map((v) => v.capacity));
-      if (out.passengers > cap) fail(`${anA(out.vehicleType)} ${out.vehicleType} seats up to ${cap}. Choose a larger vehicle.`);
+      if (!fleet.length && !force) fail(`${company.name} has no ${out.vehicleType} available. Choose another vehicle.`);
+      const cap = fleet.length ? Math.max(...fleet.map((v) => v.capacity)) : 60;
+      if (!force && out.passengers > cap) fail(`${anA(out.vehicleType)} ${out.vehicleType} seats up to ${cap}. Choose a larger vehicle.`);
       // Stops on the way, by address. Old trips only had a count; keep it
       // until someone edits the stops.
       if (b.stopList !== undefined) {
@@ -1636,7 +1636,7 @@
       }
       out.bags = Math.max(0, Math.min(40, Math.round(num(b.bags, 0))));
       const bagCap = bagsCfg(company)[out.vehicleType];
-      if (out.bags > bagCap) fail(`${anA(out.vehicleType)} ${out.vehicleType} takes up to ${bagCap} suitcase${bagCap === 1 ? '' : 's'}. Choose a larger vehicle.`);
+      if (!force && out.bags > bagCap) fail(`${anA(out.vehicleType)} ${out.vehicleType} takes up to ${bagCap} suitcase${bagCap === 1 ? '' : 's'}. Choose a larger vehicle.`);
       out.signName = str(b.signName, 60);
       const pr = b.prefs || {};
       out.prefs = { temp: TEMPS[pr.temp] ? pr.temp : '', music: MUSIC[pr.music] ? pr.music : '', quiet: !!pr.quiet && pr.quiet !== 'false' };
@@ -3399,9 +3399,14 @@
       const before = t.pickupAt;
       if (t.invoiceId && Object.keys(p).some((k) => !['notes'].includes(k))) fail('This trip is on an invoice. Void the invoice first to change it.');
       const beforeAcct = t.accountId || null;
+      // Force save: the office changes a ride at the last minute and skips the
+      // address, flight, seat and suitcase checks. The driver is texted below.
+      const force = !!a.force;
+      const drvKey = () => JSON.stringify([t.pickupAt, t.pickup, t.dropoff, t.stopList, t.flight, t.passengers, t.vehicleType, t.passengerName, t.passengerPhone, t.hours, t.service]);
+      const drvBefore = drvKey();
       const merged = { ...t, ...p };
       if (!['completed', 'cancelled'].includes(t.status)) {
-        const b = cleanBooking(ctx.company, merged, { allowPast: true });
+        const b = cleanBooking(ctx.company, merged, { allowPast: true, force });
         Object.assign(t, b);
         if (t.pickupAt !== before) t.scheduledPickupAt = t.pickupAt;
       } else if ('notes' in p) t.notes = str(p.notes, 500);
@@ -3422,7 +3427,15 @@
       }
       reprice(t);
       if (t.flight) checkFlight(t, false);
-      log(t, 'edited', ctx.user.name);
+      log(t, 'edited', ctx.user.name, force ? 'Force saved' : '');
+      // A driver already on this ride hears about changes to the time, places or passenger.
+      const drv = t.driverId && ['assigned', 'accepted', 'en_route', 'arrived', 'on_board'].includes(t.status) && findUser(t.driverId);
+      if (drv && drvKey() !== drvBefore && (drv.phone || drv.email)) {
+        const c = ctx.company;
+        db.messages.unshift({ id: id('msg'), companyId: c.id, tripId: t.id, ref: t.ref, at: now().toISOString(), recipient: drv.phone || drv.email, channel: drv.phone ? 'sms' : 'email', kind: 'driver_changed',
+          body: `${c.name}: trip ${t.ref} was changed by the office. Pickup ${fmtLocal(t.pickupAt, c, true)} at ${t.pickup}${t.service === 'hourly' ? '' : `, to ${t.dropoff}`}. Passenger ${t.passengerName || '-'}${t.passengerPhone ? ` ${t.passengerPhone}` : ''}. Open the driver app for details.` });
+        log(t, 'driver_told', ctx.user.name, `Change texted to ${drv.name}`);
+      }
       if (affBefore && affKey() !== affBefore) affChanged(t, ctx.user.name);
       return { ...tripView(t), warnings: assignWarnings(t) };
     });

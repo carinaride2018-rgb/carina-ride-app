@@ -242,7 +242,7 @@
 
   // ---- UI primitives --------------------------------------------------------
   let toastTimer = null;
-  const HIST_LABELS = { wake_call: 'Wake-up call', wake_ok: 'Driver confirmed awake', wake_alert: 'Office alerted: no answer to wake-up call', late_alert: 'Office alerted: driver not on the way', confirm_resent: 'Confirmation sent again', receipt_sent: 'Receipt emailed', paid: 'Charged', refunded: 'Refunded', card_failed: 'Card declined', card_saved: 'Card saved', card_link: 'Card link sent', no_show: 'No-show', no_show_asked: 'Driver reported a no-show', no_show_declined: 'Dispatch: keep waiting', pickup_moved: 'Pickup moved', flight_cancelled: 'Flight cancelled', declined: 'Declined', edited: 'Edited', unassigned: 'Unassigned', no_answer: 'No answer in time', farm_offered: 'Offered to partner', farm_accepted: 'Partner accepted', farm_declined: 'Partner declined', farm_cancelled: 'Taken back from partner', farm_returned: 'Partner handed it back', farm_expired: 'Partner offer expired', farm_completed: 'Partner completed', auto_farm_none: 'Automatic farm-out stopped', posted: 'Posted to trip board', post_expired: 'Trip board: nobody took it', post_cancelled: 'Taken off the trip board' };
+  const HIST_LABELS = { driver_told: 'Driver texted the change', wake_call: 'Wake-up call', wake_ok: 'Driver confirmed awake', wake_alert: 'Office alerted: no answer to wake-up call', late_alert: 'Office alerted: driver not on the way', confirm_resent: 'Confirmation sent again', receipt_sent: 'Receipt emailed', paid: 'Charged', refunded: 'Refunded', card_failed: 'Card declined', card_saved: 'Card saved', card_link: 'Card link sent', no_show: 'No-show', no_show_asked: 'Driver reported a no-show', no_show_declined: 'Dispatch: keep waiting', pickup_moved: 'Pickup moved', flight_cancelled: 'Flight cancelled', declined: 'Declined', edited: 'Edited', unassigned: 'Unassigned', no_answer: 'No answer in time', farm_offered: 'Offered to partner', farm_accepted: 'Partner accepted', farm_declined: 'Partner declined', farm_cancelled: 'Taken back from partner', farm_returned: 'Partner handed it back', farm_expired: 'Partner offer expired', farm_completed: 'Partner completed', auto_farm_none: 'Automatic farm-out stopped', posted: 'Posted to trip board', post_expired: 'Trip board: nobody took it', post_cancelled: 'Taken off the trip board' };
   function toast(text, bad, ms) {
     let el = $('.toast');
     if (!el) { el = document.createElement('div'); el.className = 'toast'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
@@ -4011,7 +4011,7 @@
             </div>` : ''}
             <label class="field"><span>Notes</span><textarea id="te-notes" name="notes">${esc(t.notes)}</textarea></label>
             <div id="te-err"></div>
-            <div class="row"><button class="btn primary" type="submit">Save changes</button><span class="small faint">Booked ${t.agent ? `by ${esc(t.agent.name)} (${esc(t.agent.agency)}, travel agent${t.agent.pct ? `, ${t.agent.pct}% commission` : ''}${t.agent.payBy === 'passenger' ? ', client pays' : ''})` : esc(t.source === 'phone' ? 'by phone' : 'online')} ${esc(fmtDT(t.createdAt))}</span></div>
+            <div class="row"><button class="btn primary" type="submit">Save changes</button>${!closed && !t.invoiceId && P.bookings ? '<button class="btn forcebtn" type="button" id="te-force" title="Save now and skip the address, flight and seat checks">Force save</button>' : ''}<span class="small faint">Booked ${t.agent ? `by ${esc(t.agent.name)} (${esc(t.agent.agency)}, travel agent${t.agent.pct ? `, ${t.agent.pct}% commission` : ''}${t.agent.payBy === 'passenger' ? ', client pays' : ''})` : esc(t.source === 'phone' ? 'by phone' : 'online')} ${esc(fmtDT(t.createdAt))}</span></div>
           </form>
           <div class="side">
             ${canReturn(t) ? '<button class="btn retbtn" type="button" id="te-return">↩ Add return trip</button>' : ''}
@@ -4098,8 +4098,15 @@
       }
       addressAutocomplete($('#te-pickup', m), session.company.slug);
       addressAutocomplete($('#te-dropoff', m), session.company.slug);
+      let force = false;
+      const fb = $('#te-force', m);
+      if (fb) fb.onclick = () => {
+        if (!confirm('Force save this ride now?\n\nThis skips the address, flight and seat checks. The driver gets a text with the change.')) return;
+        force = true; $('#te-form', m).requestSubmit();
+      };
       $('#te-form', m).onsubmit = async (e) => {
         e.preventDefault();
+        const useForce = force; force = false;
         const fd = formData(e.target);
         const { adjAmount, adjReason, ...f2 } = fd;
         f2.adjustment = { amount: adjAmount, reason: adjReason };
@@ -4109,7 +4116,7 @@
         if (closed) { for (const k of Object.keys(f2)) if (!['notes', 'priceOverride', 'adjustment'].includes(k)) delete f2[k]; }
         if (t.invoiceId) { for (const k of Object.keys(f2)) if (k !== 'notes') delete f2[k]; }
         await busy($('button[type=submit]', e.target), async () => {
-          try { const r = await api('dispatch.updateTrip', { id, patch: f2 }); toast(`Trip saved. Total ${money(r.price.total)}.`); reopen(); } catch (err) { showErr($('#te-err', m), err); }
+          try { const r = await api('dispatch.updateTrip', { id, patch: f2, force: useForce }); toast(`${useForce ? 'Force saved' : 'Trip saved'}. Total ${money(r.price.total)}.`); reopen(); } catch (err) { showErr($('#te-err', m), err); }
         });
       };
       const as = $('#te-assign', m);
