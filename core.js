@@ -7394,6 +7394,13 @@
       },
       async book_ride(c, call, a) {
         const b = agentBooking(c, a, call.from);
+        // No email given on the call: use the one this passenger gave us before, so the confirmation email still goes out.
+        if (!/@/.test(b.passengerEmail || '')) {
+          const k = phoneKey(b.passengerPhone);
+          const u = k && db.users.find((x) => x.companyId === c.id && x.role === 'customer' && phoneKey(x.phone) === k && /@/.test(x.email || ''));
+          const past = k && !u && db.trips.filter((x) => x.companyId === c.id && phoneKey(x.passengerPhone) === k && /@/.test(x.passengerEmail || '')).sort((x, y) => String(y.createdAt || '').localeCompare(String(x.createdAt || '')))[0];
+          if (u || past) b.passengerEmail = u ? u.email : past.passengerEmail;
+        }
         if (!b.passengerName) fail("Ask for the passenger's name.");
         if (!phoneKey(b.passengerPhone)) fail("Ask for the passenger's mobile number.");
         if (!a.vehicleType) fail('Ask which vehicle they want.');
