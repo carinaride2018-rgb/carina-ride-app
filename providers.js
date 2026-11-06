@@ -529,7 +529,8 @@ function emailHtml(m, opt) {
   const src = opt && opt.cid && !opt.banner ? `cid:${opt.cid}` : co.logoUrl;
   const logo = src ? `<img src="${hesc(src)}" alt="${hesc(co.name)}" width="180" style="width:180px;max-width:70%;height:auto;display:block;margin:0 auto;border:0">` : `<div style="font-size:24px;font-weight:800;color:#111111;text-align:center;letter-spacing:-.01em">${hesc(co.name || '')}</div>`;
   const title = heading ? `<tr><td style="padding:0 24px 18px;text-align:center"><div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;font-weight:700;color:${color}">${hesc(heading)}</div>${m.ref ? `<div style="font-size:26px;font-weight:800;color:#111111;margin-top:4px;letter-spacing:.01em">${hesc(m.ref)}</div>` : ''}</td></tr>` : '';
-  const pdfNote = opt && opt.pdf ? `<tr><td style="padding:0 24px 18px"><div style="border:1px dashed #cfd0d4;border-radius:10px;padding:12px 14px;font-size:13px;color:#333333;background:#fafafa">&#128196; A printable PDF of this booking is attached.</div></td></tr>` : '';
+  // The PDF is attached to the email; no note about it in the body (Dawit 2026-11-06).
+  const pdfNote = '';
   const contact = [co.phone ? `<a href="tel:${hesc(String(co.phone).replace(/[^\d+]/g, ''))}" style="color:#111111;text-decoration:none;font-weight:700">${hesc(co.phone)}</a>` : '', co.email ? `<a href="mailto:${hesc(co.email)}" style="color:#111111;text-decoration:none">${hesc(co.email)}</a>` : ''].filter(Boolean).join(' &nbsp;&middot;&nbsp; ');
   const termsLink = terms || co.termsUrl ? `<div style="margin-top:8px"><a href="${hesc(terms || co.termsUrl)}" style="color:#6b6f76">Terms and Conditions</a></div>` : '';
   return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light only"><meta name="supported-color-schemes" content="light"></head><body style="margin:0;padding:0;background:#f1f1f3">
