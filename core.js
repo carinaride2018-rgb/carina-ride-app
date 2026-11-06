@@ -7581,7 +7581,7 @@
         await ensure();
         const call = callsOf().find((x) => x.id === callId);
         if (!call || !str(text)) return;
-        call.transcript.push({ at: now().toISOString(), who: who === 'agent' ? 'agent' : 'caller', text: str(text, 2000) });
+        call.transcript.push({ at: now().toISOString(), who: ['agent', 'system'].includes(who) ? who : 'caller', text: str(text, 2000) });
         if (call.transcript.length > 300) call.transcript.splice(0, call.transcript.length - 300);
         save(db);
       },

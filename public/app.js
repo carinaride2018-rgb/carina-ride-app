@@ -4913,7 +4913,7 @@
           let c; try { c = await api('dispatch.callDetail', { id: r.dataset.call }); } catch (err) { toast(err.message, true); return; }
           openModal({ title: `Call from ${c.callerName || c.from || 'a hidden number'}`, wide: true,
             body: `<p class="small muted">${esc(fmtDT(c.at))} · ${esc(CALL_OUTCOME[c.outcome] || 'Answered questions')}${(c.refs || []).length ? ` · ${esc(c.refs.join(', '))}` : ''}</p>
-              <div class="stack" style="gap:8px">${(c.transcript || []).map((x) => `<div><b class="small">${x.who === 'agent' ? 'Agent' : 'Caller'}</b><div>${esc(x.text)}</div></div>`).join('') || '<p class="faint">Nothing was said.</p>'}</div>` });
+              <div class="stack" style="gap:8px">${(c.transcript || []).map((x) => x.who === 'system' ? `<div class="small" style="color:var(--danger,#b42318)"><b>Problem</b> ${esc(x.text)}</div>` : `<div><b class="small">${x.who === 'agent' ? 'Agent' : 'Caller'}</b><div>${esc(x.text)}</div></div>`).join('') || '<p class="faint">Nothing was said.</p>'}</div>` });
         }; });
       }
       current = { poll: true, refresh };

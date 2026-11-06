@@ -181,23 +181,34 @@ function createPhoneAgent({ env, core, publicUrl, log }) {
   const dial = (num) => num ? `<Dial timeout="25">${x(num)}</Dial>${say('Sorry, nobody is free right now. Please call back in a few minutes, or book online. Goodbye.')}<Hangup/>` : `${say('Sorry, the office is not available right now. Please call back later. Goodbye.')}<Hangup/>`;
   const twiml = (s) => `<?xml version="1.0" encoding="UTF-8"?><Response>${s}</Response>`;
 
+  // Set when the API refused the extra options once: later calls send a plain request.
+  let plain = false;
   async function claude(s) {
+    try { return await send(s, plain); }
+    catch (e) {
+      // A 400 can mean an option this account or model does not accept: retry without them.
+      if (e.status !== 400 || plain) throw e;
+      log('phone agent: retrying without extra options:', e.message);
+      const r = await send(s, true);
+      plain = true;
+      return r;
+    }
+  }
+  async function send(s, simple) {
     const body = {
       model, max_tokens: 2048,
-      output_config: { effort: 'low' },
-      fallbacks: 'default',
-      cache_control: { type: 'ephemeral' },
       system: [{ type: 'text', text: RULES }, { type: 'text', text: `Company details:\n\n${s.context}` }],
       tools: TOOLS,
       messages: s.messages,
+      ...(simple ? {} : { output_config: { effort: 'low' }, fallbacks: 'default', cache_control: { type: 'ephemeral' } }),
     };
-    const res = await fetch(`${apiUrl}/v1/messages`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'server-side-fallback-2026-07-01' },
-      body: JSON.stringify(body), signal: AbortSignal.timeout(25000),
-    });
+    const headers = { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' };
+    if (!simple) headers['anthropic-beta'] = 'server-side-fallback-2026-07-01';
+    let res;
+    try { res = await fetch(`${apiUrl}/v1/messages`, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(25000) }); }
+    catch (err) { throw new Error(err.name === 'TimeoutError' ? 'Claude took longer than 25 seconds' : `Could not reach Claude: ${err.message}`); }
     const data = await res.json().catch(() => null);
-    if (!res.ok) { const e = new Error((data && data.error && data.error.message) || `HTTP ${res.status}`); e.status = res.status; throw e; }
+    if (!res.ok) { const e = new Error(`Claude API ${res.status}: ${(data && data.error && data.error.message) || res.statusText}`); e.status = res.status; throw e; }
     return data;
   }
 
@@ -243,6 +254,8 @@ function createPhoneAgent({ env, core, publicUrl, log }) {
     try { const r = await think(s, heard); s.misses = 0; return r; }
     catch (e) {
       log('phone agent', e.message);
+      // Shown to the office in the call's transcript, so problems can be fixed.
+      core.voice.say(s.callId, 'system', `Error: ${e.message}`).catch(() => {});
       s.misses = (s.misses || 0) + 1;
       if (s.misses >= 2) { s.outcome = 'transferred'; return { text: 'Sorry, I am having trouble. Let me connect you with our office.', action: 'transfer' }; }
       s.messages.length = s.mark;
