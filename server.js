@@ -358,7 +358,7 @@ async function warmFor(args) {
 // Each limo company connects its own Stripe account; customers pay on Stripe's
 // page and the money goes straight to that company.
 const base = PUBLIC_URL.endsWith('/') ? PUBLIC_URL : PUBLIC_URL + '/';
-const phone = createPhoneAgent({ env: process.env, core, publicUrl: base });
+const phone = createPhoneAgent({ env: process.env, core, publicUrl: base, warm: (a) => warmFor(a) });
 function redirect(res, to) { res.writeHead(302, { Location: to, 'Cache-Control': 'no-store', ...SECURITY_HEADERS }); res.end(); }
 const bearer = (req) => { const a = req.headers.authorization || ''; return a.startsWith('Bearer ') ? a.slice(7) : null; };
 // LimoRelay's own membership payments use the platform's Stripe account (no Stripe-Account header).

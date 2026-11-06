@@ -143,7 +143,7 @@ const x = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g,
 // Words callers often say, to help Twilio's speech recognition.
 const HINTS = 'book a ride, shuttle, airport shuttle, black car, car service, limo, limousine, party bus, prom, wedding, bachelorette, cruise, Pier 66, Pier 91, baggage claim, curbside, car seat, gratuity, reservation, reserve, pick up, pickup, drop off, airport, SeaTac, Paine Field, flight number, Alaska Airlines, Delta, sedan, SUV, Escalade, Suburban, Sprinter, van, mini bus, limo, limousine, chauffeur, hourly, round trip, one way, wine tour, cancel, change my ride, where is my driver, Bellevue, Seattle, Tacoma, Redmond, Kirkland, Everett';
 
-function createPhoneAgent({ env, core, publicUrl, log }) {
+function createPhoneAgent({ env, core, publicUrl, log, warm }) {
   env = env || process.env;
   log = log || ((...a) => console.log(...a));
   const key = String(env.ANTHROPIC_API_KEY || '').trim();
@@ -236,7 +236,11 @@ function createPhoneAgent({ env, core, publicUrl, log }) {
           else { action = 'transfer'; s.outcome = 'transferred'; out = { ok: true }; }
         }
         else if (u.name === 'end_call') { action = action || 'hangup'; out = { ok: true }; }
-        else out = await core.voice.tool(s.callId, u.name, u.input);
+        else {
+          // Look up where the addresses are first, so flat-rate areas (downtown, the cruise piers) are recognized on calls too.
+          if (warm && u.input && u.input.pickup && u.input.dropoff) { try { await warm({ pickup: String(u.input.pickup), dropoff: String(u.input.dropoff) }); } catch (e) { /* quote still works by distance */ } }
+          out = await core.voice.tool(s.callId, u.name, u.input);
+        }
         results.push({ type: 'tool_result', tool_use_id: u.id, content: JSON.stringify(out), ...(out && out.error ? { is_error: true } : {}) });
       }
       s.messages.push({ role: 'user', content: results });
