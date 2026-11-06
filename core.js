@@ -42,6 +42,8 @@
   };
   const YEARLY_MONTHS = 10; // a yearly plan costs 10 months: 2 months free
   const TRIAL_DAYS = 30;
+  // What Carina Ride's phone agent knows at the start (from carinaride.com). The office can edit it under Phone agent.
+  const CARINA_AGENT_NOTES = "Carina Ride: private chauffeur and shuttle service at 16704 International Blvd Unit D, SeaTac, WA 98188, 2 minutes from Sea-Tac Airport. Open 24/7 including holidays. Main line (206) 319-9196, info@carinaride.com, WhatsApp (206) 403-0078 (messages only). Only your group rides, no extra stops, no surge pricing; the price is per vehicle and fixed when booked. 4.9 stars from 181 Google reviews. Chauffeurs are vetted, trained, background-checked and dressed for business.\n\nServices (book these): Sea-Tac Airport car service (door to door, flight tracking, meet and greet at baggage claim with a name sign, or curbside). SeaTac airport shuttle, private or group. Private shuttle to and from Sea-Tac and the cruise piers (Pier 66 and Pier 91, also hotels and homes). Seattle airport limo service. Corporate car service with monthly invoicing and corporate accounts. Sprinter and group vans up to 14 passengers. Hourly chauffeur (keep a car and driver as long as you need). Weddings and events. Game days and concerts at the Seattle stadiums and arenas. Airline crew rides from SEA to crew hotels. Long-distance rides to Vancouver BC, Whistler, Portland, Leavenworth and Suncadia. Black car with car seats. Electric car service (Tesla Model Y). Holiday airport rides. Travel agent accounts with agent pricing on key routes.\n\nTours (send to the office, they plan them): Woodinville wine tours, Seattle private tours, Mount Rainier, Snoqualmie Falls, and any custom tour.\n\nArea: all of Puget Sound, 38 cities, including Seattle, Bellevue, Redmond, Kirkland, Renton, Tacoma, Everett, Woodinville, Tukwila, Burien, Kent, Federal Way, Mercer Island, Issaquah, Sammamish, Bothell, Lynnwood, Edmonds, Shoreline, Mukilteo, Mill Creek, Marysville, Auburn, Puyallup, Lakewood and JBLM, Gig Harbor, Olympia, Lacey, Bainbridge Island, Bremerton, Snoqualmie and North Bend. Airports: Sea-Tac (SEA) and Paine Field (PAE).\n\nFleet (max passengers and bags): Cadillac XTS sedan 3 and 3; Tesla Model Y 3 and 3; Chevrolet Suburban 5 and 5; Lincoln Navigator 5 and 5; Ford Transit 8 passengers; Ford Transit or Mercedes Sprinter 14 passengers. Ask about large items.\n\nCar seats: rear-facing infant, toddler and booster; ask each child's age. Book at least 24 hours ahead when possible. Payment is due at least 24 hours before pickup by the secure card link we text.";
   const DEFAULT_RATES = {
     currency: 'USD', base: 15, perMile: 3.75, minFare: 85, hourly: 95, minHours: 3,
     gratuityPct: 20, taxPct: 0, waitPerMin: 1.5,
@@ -800,6 +802,11 @@
         c.rates.piersSeeded = true;
         const dt = (c.rates.flatRates || []).find((z) => z.id === 'flat_downtown');
         if (!(c.rates.flatRates || []).some((z) => z.id === 'flat_piers')) (c.rates.flatRates = c.rates.flatRates || []).push({ id: 'flat_piers', ...clone(CRUISE_PIERS), prices: clone((dt && dt.prices) || { 'Sedan': 110, 'SUV': 145, 'Business Van': 220, 'Sprinter Van': 275, '22 PAX Mini Bus': 475 }) });
+      }
+      // Phone agent knowledge, added later: Carina Ride starts with the services from carinaride.com.
+      for (const c of d.companies || []) if (c.slug === 'carina-ride' && !(c.phoneAgent && c.phoneAgent.notesSeeded)) {
+        c.phoneAgent = { ...(c.phoneAgent || {}), notesSeeded: true };
+        if (!String(c.phoneAgent.notes || '').trim()) c.phoneAgent.notes = CARINA_AGENT_NOTES;
       }
       // Business discount, added later: Carina Ride starts at 6%, others at 0.
       for (const c of d.companies || []) if (c.adsTag == null) c.adsTag = c.slug === 'carina-ride' ? 'AW-774934890/BN9ZCLC0n7IdEOqiwvEC' : '';
@@ -7282,7 +7289,45 @@
     // booking, tells callers where their ride is, cancels, and passes change
     // requests and anything else to the office. It only ever reads or changes
     // rides booked with the caller's own phone number.
-    const DEFAULT_PHONE = { on: false, number: '', transferTo: '', greeting: '', notes: '', canCancel: true };
+    // What callers say when they book or ask about a ride, grouped by service.
+    // The phone agent reads these (with each company's own additions) so it
+    // understands every way of asking; the Phone agent tab shows them.
+    const CALLER_PHRASES = [
+      { group: 'Airport shuttle', means: 'Book an airport ride (get_quote, then book_ride). Ask the flight number for pickups.', phrases: [
+        'I need a ride to the airport', 'I need a shuttle to SeaTac', 'Can you pick me up from the airport?', 'I am landing tomorrow at 6, can someone pick me up?',
+        'Airport shuttle for 4 people', 'I need a ride from Sea-Tac to my hotel', 'Do you do airport drop-offs?', 'Shared shuttle or private shuttle?',
+        'My flight is Alaska 331, arriving at 5', 'I need a ride to Paine Field', 'Can you take us from the cruise terminal to the airport?', 'Pier 66 to SeaTac',
+        'Pier 91 pickup after our cruise', 'Do you meet us inside at baggage claim?', 'Curbside pickup please', 'We have 6 bags and 2 car seats',
+      ] },
+      { group: 'Black car service', means: 'Book a sedan or SUV ride (get_quote, then book_ride).', phrases: [
+        'I need a black car', 'I need a car service', 'Book me a sedan', 'I need an SUV for 5 people', 'Can you send a car to my house at 5 am?',
+        'I need a ride downtown', 'Point to point ride from Bellevue to Seattle', 'I need a driver for a business meeting', 'Corporate car for my client',
+        'I need a car by the hour', 'Can I have a driver for 4 hours?', 'Round trip to Bellevue and back', 'I need a Tesla', 'Do you have a car with a car seat?',
+        'I need a ride to Vancouver', 'How much to Portland?', 'I need a ride to the stadium for the game', 'Pick me up after the concert',
+      ] },
+      { group: 'Limousine and groups', means: 'Book a large vehicle (SUV, van, Sprinter, mini bus) or hourly ride. Weddings and events are bookings; custom tours go to the office.', phrases: [
+        'I need a limo', 'I need a limousine for a wedding', 'Limo for prom', 'Party bus for a birthday', 'Sprinter van for 12 people', 'Van for a group of 10',
+        'Bachelorette party ride', 'Night out downtown for 6 hours', 'Wedding transportation for the bridal party', 'Shuttle for wedding guests from the hotel',
+        'Funeral transportation', 'Quinceañera limo', 'Anniversary dinner, something fancy', 'We need two cars for a group of 20',
+        'Wine tour in Woodinville', 'Tour of Mount Rainier', 'City tour of Seattle',
+      ] },
+      { group: 'Prices and questions', means: 'Answer from the company details, or quote with get_quote.', phrases: [
+        'How much is it to the airport?', 'What is your rate?', 'Do you charge by the hour?', 'Is gratuity included?', 'Are there any extra fees?',
+        'What cars do you have?', 'How many people fit in the SUV?', 'How many bags can I bring?', 'Do you have car seats?', 'What areas do you serve?',
+        'Are you open 24 hours?', 'How far ahead do I need to book?', 'Can I pay with card?', 'What is your cancellation policy?', 'Do you track my flight?',
+        'What if my flight is late?', 'How long will the driver wait?',
+      ] },
+      { group: 'My reservation', means: 'Use find_rides, change_ride, cancel_ride or request_change for the caller\'s own rides.', phrases: [
+        'I want to edit my reservation', 'Change my pickup time', 'My flight changed', 'Add a stop', 'Change the address', 'Add one more passenger',
+        'Upgrade to an SUV', 'I want to cancel my ride', 'Did my booking go through?', 'Can you resend my confirmation?', 'I did not get the payment link',
+      ] },
+      { group: 'My chauffeur', means: 'Use find_rides for status; help_find_driver when they cannot find the car.', phrases: [
+        'Where is my driver?', 'What is the status of my driver?', 'Is my car on the way?', 'How far away is my chauffeur?', 'What car is picking me up?',
+        'I can\'t find my driver', 'I\'m at baggage claim and don\'t see anyone', 'The driver is not here yet', 'Can I talk to my driver?',
+        'I left something in the car', 'I want to give feedback about my driver',
+      ] },
+    ];
+    const DEFAULT_PHONE = { on: false, number: '', transferTo: '', greeting: '', notes: '', phrases: '', canCancel: true };
     const phcfg = (c) => ({ ...DEFAULT_PHONE, ...(c.phoneAgent || {}) });
     const callsOf = () => db.calls || (db.calls = []);
     // The agent acts as an office login named "Phone agent" (it is not stored as a user).
@@ -7470,11 +7515,12 @@
         `Minimum notice for a booking: ${dcfg(c).minNoticeHours || 0} hours. Free cancellation until ${pol.cancelHours} hours before pickup; after that the fee is ${pol.cancelFeePct}% of the fare. Payment: ${cardsOn(c) ? `card, by a secure link we text after booking. ${chargeNote(c)}.` : 'the office arranges payment.'} Chauffeurs never take payment.`,
         `Caller's number: ${call.key ? call.from : 'hidden'}. ${mine.length ? `Their upcoming rides: ${mine.map((t) => `${t.ref} on ${sayTime(t.pickupAt, c)} from ${t.pickup} (${STATUS_LABELS[t.status]})`).join('; ')}.` : 'No upcoming rides booked from this number.'}`,
         ...(cfg.notes ? [`Notes from the office (follow these):\n${str(cfg.notes, 3000)}`] : []),
+        `Things callers say, and what they mean (callers use many other words too; go by the meaning):\n${CALLER_PHRASES.map((g) => `${g.group}: ${g.phrases.map((x) => `"${x}"`).join(', ')}. ${g.means}`).join('\n')}${cfg.phrases ? `\nMore phrases from the office: ${str(cfg.phrases, 2000).split(/\n+/).map((x) => x.trim()).filter(Boolean).map((x) => `"${x}"`).join(', ')}.` : ''}`,
       ].join('\n\n');
     }
     function callView(x) { return { ...clone(x), transcript: undefined, turns: (x.transcript || []).length }; }
     // Office: the agent's settings and the call log.
-    def('dispatch.phoneAgent', STAFF, false, (ctx) => ({ settings: phcfg(ctx.company), live: !!(live.voiceAgent), calls: callsOf().filter((x) => x.companyId === ctx.company.id).slice(0, 100).map(callView) }));
+    def('dispatch.phoneAgent', STAFF, false, (ctx) => ({ settings: phcfg(ctx.company), phrases: CALLER_PHRASES, live: !!(live.voiceAgent), calls: callsOf().filter((x) => x.companyId === ctx.company.id).slice(0, 100).map(callView) }));
     def('dispatch.callDetail', STAFF, false, (ctx, a) => {
       const x = callsOf().find((y) => y.id === a.id && y.companyId === ctx.company.id);
       if (!x) fail('Call not found.', 404);
@@ -7489,7 +7535,7 @@
       const transferTo = str(s.transferTo, 30);
       if (transferTo && !phoneKey(transferTo)) fail('Enter a phone number to transfer calls to, or leave it blank.');
       if (s.on && !key) fail('Enter the phone number the agent answers before switching it on.');
-      ctx.company.phoneAgent = { on: !!s.on, number, transferTo, greeting: str(s.greeting, 300), notes: str(s.notes, 3000), canCancel: s.canCancel !== false };
+      ctx.company.phoneAgent = { on: !!s.on, number, transferTo, greeting: str(s.greeting, 300), notes: str(s.notes, 3000), phrases: str(s.phrases, 2000), notesSeeded: true, canCancel: s.canCancel !== false };
       return phcfg(ctx.company);
     });
     // Server side (phoneagent.js); never reachable from the browser API.

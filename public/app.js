@@ -4895,9 +4895,14 @@
             </div>
             <label class="stack small">Greeting (leave blank for the standard one)<input class="input" name="greeting" maxlength="300" value="${esc(s.greeting)}" placeholder="Thank you for calling ${esc(session.company.name)}. This is the virtual assistant. How can I help you today?" ${dis}></label>
             <label class="stack small">What the agent should know (areas you serve, special rules, answers to common questions)<textarea class="input" name="notes" rows="5" maxlength="3000" placeholder="We serve Seattle, Bellevue and all three airports. Wine tours and sightseeing are planned with the office." ${dis}>${esc(s.notes)}</textarea></label>
+            <label class="stack small">More things your callers say (one per line). The agent already knows the suggestions below.<textarea class="input" name="phrases" rows="3" maxlength="2000" placeholder="Can you pick us up at the Westin?&#10;Do you go to Snoqualmie Casino?" ${dis}>${esc(s.phrases || '')}</textarea></label>
             <label class="switch"><input type="checkbox" name="canCancel" ${s.canCancel ? 'checked' : ''} ${dis}><span>Let the agent cancel rides (late cancellations keep your fee)</span></label>
             ${isAdmin ? '<div><button class="btn primary sm" type="submit">Save</button></div>' : '<span class="small faint">Only the company admin can change this.</span>'}
           </form>
+          <details class="panel" style="margin-bottom:16px"><summary><b>What callers can say</b> <span class="small muted">(${(d.phrases || []).reduce((n, g) => n + g.phrases.length, 0)} suggestions the agent understands)</span></summary>
+            <div class="stack" style="gap:12px;margin-top:12px">${(d.phrases || []).map((g) => `<div><b class="small">${esc(g.group)}</b>
+              <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:6px">${g.phrases.map((x) => `<span class="pill">${esc(x)}</span>`).join('')}</div></div>`).join('')}</div>
+          </details>
           <h2 style="margin:0 0 8px">Recent calls</h2>
           ${d.calls.length ? `<div class="tablewrap"><table><thead><tr><th>When</th><th>Caller</th><th>What happened</th><th>Rides</th><th>Length</th></tr></thead><tbody>
             ${d.calls.map((c) => `<tr class="click" data-call="${esc(c.id)}"><td class="mono small" style="white-space:nowrap">${esc(fmtDT(c.at))}</td><td>${esc(c.callerName || '')}<br><span class="small faint mono">${esc(c.from || 'Hidden number')}</span></td>

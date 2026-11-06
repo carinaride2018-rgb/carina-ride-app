@@ -141,7 +141,7 @@ const TOOLS = [
 const x = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 // Words callers often say, to help Twilio's speech recognition.
-const HINTS = 'book a ride, reservation, reserve, pick up, pickup, drop off, airport, SeaTac, Paine Field, flight number, Alaska Airlines, Delta, sedan, SUV, Escalade, Suburban, Sprinter, van, mini bus, limo, limousine, chauffeur, hourly, round trip, one way, wine tour, cancel, change my ride, where is my driver, Bellevue, Seattle, Tacoma, Redmond, Kirkland, Everett';
+const HINTS = 'book a ride, shuttle, airport shuttle, black car, car service, limo, limousine, party bus, prom, wedding, bachelorette, cruise, Pier 66, Pier 91, baggage claim, curbside, car seat, gratuity, reservation, reserve, pick up, pickup, drop off, airport, SeaTac, Paine Field, flight number, Alaska Airlines, Delta, sedan, SUV, Escalade, Suburban, Sprinter, van, mini bus, limo, limousine, chauffeur, hourly, round trip, one way, wine tour, cancel, change my ride, where is my driver, Bellevue, Seattle, Tacoma, Redmond, Kirkland, Everett';
 
 function createPhoneAgent({ env, core, publicUrl, log }) {
   env = env || process.env;
