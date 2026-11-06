@@ -619,7 +619,15 @@ async function twilioRoute(req, res, url, raw) {
   // changes" to <PUBLIC_URL>twilio/voice/status (HTTP POST).
   if (url.pathname.startsWith('/twilio/voice') && req.method === 'POST') {
     const params = Object.fromEntries(new URLSearchParams(raw));
-    if (live.on.sms ? !live.verifyTwilio(req.headers['x-twilio-signature'], base + url.pathname.slice(1) + url.search, params) : BLANK) return send(res, 403, 'Forbidden', 'text/plain');
+    // Twilio signs the exact URL it called. Accept PUBLIC_URL, or the host the call
+    // came in on (for example www. or the onrender.com address).
+    const path = url.pathname.slice(1) + url.search, sig = req.headers['x-twilio-signature'];
+    const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+    const signed = !live.on.sms ? true : live.verifyTwilio(sig, base + path, params) || (!!host && live.verifyTwilio(sig, `https://${host}/${path}`, params));
+    if (live.on.sms ? !signed : BLANK) {
+      console.error(`phone agent: refused a call to /${path} because the Twilio signature did not match (${sig ? 'signed' : 'no signature'}, account ${String(params.AccountSid || '').slice(0, 8)}…, PUBLIC_URL ${base}). Check TWILIO_AUTH_TOKEN is the auth token of the Twilio account that owns the number.`);
+      return send(res, 403, 'Forbidden', 'text/plain');
+    }
     try {
       if (url.pathname === '/twilio/voice') return send(res, 200, await phone.answer(params), 'text/xml; charset=utf-8');
       if (url.pathname === '/twilio/voice/turn') { const out = await phone.turn(params); send(res, 200, out, 'text/xml; charset=utf-8'); flushOutbox(); runCharges(); return; }
