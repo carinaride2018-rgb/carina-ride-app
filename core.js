@@ -7413,6 +7413,31 @@
         log(t, 'note', 'Phone agent', `Changed on a call: ${r.changed.join(', ')}`);
         return { changed: r.changed, ref: t.ref, pickupTime: sayTime(t.pickupAt, c), newTotal: t.price.total, difference: r.diff, confirmationTexted: !!(t.passengerPhone && t.smsOk !== false) };
       },
+      // The caller is at the pickup and cannot find the chauffeur: text the chauffeur
+      // where they are, text the caller the car and tracking link, alert the office.
+      help_find_driver(c, call, a) {
+        let t = a.ref ? byRef(c, a.ref) : null;
+        if (a.ref && (!t || !callerCanSee(call, t))) return { error: 'No ride with that number was booked from this phone. Ask for the booking number again.' };
+        if (!t) {
+          const soon = callerTrips(c, call.key).filter((x) => ['assigned', 'accepted', 'en_route', 'arrived', 'confirmed'].includes(x.status))
+            .sort((x, y) => Math.abs(new Date(x.pickupAt) - now()) - Math.abs(new Date(y.pickupAt) - now()));
+          t = soon[0];
+        }
+        if (!t) return { error: 'No ride today was booked from this phone. Ask for the booking number.' };
+        const brief = rideBrief(t, c);
+        const aff = !t.driverId && t.affiliate;
+        const driver = t.driverId ? findUser(t.driverId) : aff && aff.driver ? aff.driver : null;
+        const where = str(a.where, 200), who = t.passengerName || 'Your passenger', back = call.key ? call.from : t.passengerPhone;
+        const msgs = [];
+        if (driver && driver.phone) msgs.push({ recipient: driver.phone, channel: 'sms', kind: 'agent', body: `${c.name}: ${who} (${t.ref}) cannot find you.${where ? ` They are at: ${where}.` : ''}${back ? ` Call or text them at ${back}.` : ''}` });
+        if (t.passengerPhone && (brief.car || brief.trackingLink)) msgs.push({ recipient: t.passengerPhone, channel: 'sms', kind: 'agent', body: `${c.name}: your chauffeur${brief.chauffeur ? ` ${brief.chauffeur}` : ''}${brief.car ? ` is in a ${brief.car}` : ''}.${brief.trackingLink ? ` See where the car is: ${brief.trackingLink}` : ''}` });
+        for (const m of msgs) db.messages.unshift({ id: id('msg'), companyId: c.id, tripId: t.id, ref: t.ref, at: now().toISOString(), ...m });
+        inboxOf().unshift({ id: id('sms'), companyId: c.id, key: call.key || 'call-' + call.id, phone: str(call.from, 30), dir: 'in', body: `[Phone call] Passenger cannot find the chauffeur for ${t.ref}.${where ? ` Passenger is at: ${where}.` : ''}`, at: now().toISOString(), read: false, tripId: t.id, ref: t.ref, call: call.id });
+        log(t, 'note', 'Phone agent', `Caller could not find the chauffeur${where ? ` (at ${where})` : ''}`);
+        call.refs = [...new Set([...(call.refs || []), t.ref])];
+        call.outcome = call.outcome || 'message';
+        return { ...brief, chauffeurTexted: !!(driver && driver.phone), callerTexted: msgs.some((m) => m.recipient === t.passengerPhone), officeAlerted: true, chauffeurAssigned: !!driver };
+      },
       // Messages for the office (lost items, complaints, billing, custom tours) land in the Inbox.
       request_change(c, call, a) {
         const what = str(a.details, 600);

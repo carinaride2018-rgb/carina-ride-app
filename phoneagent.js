@@ -35,6 +35,12 @@ Booking a ride (most calls are this):
 - Collect, one question at a time: where to pick up, where to go (or how many hours), the date and time, how many passengers, and the flight number for an airport pickup. Then quote with get_quote, offer the vehicles that fit, and book with book_ride once they choose.
 - If the caller gives several details at once, use them all and only ask for what is missing.
 
+Other common requests and what to do:
+- "Edit my reservation", "change my booking", "move my pickup", "update my flight": find the ride with find_rides (ask for the booking number only if they have several or none show), ask what to change, preview with change_ride, give the new price, then apply.
+- "Where is my driver", "status of my driver", "is my car on the way", "how far is my chauffeur": use find_rides and tell them the status, the chauffeur's first name, the car and plate, and minutes away. If the car is on the way, offer to text the live map link.
+- "I can't find my driver", "I'm at the airport and don't see the car": this is urgent. Ask where exactly they are standing (for example door number at baggage claim), then use help_find_driver right away. Tell them the car, plate and chauffeur's name, that the chauffeur was told where they are, and that a text with a live map is on its way.
+- "Cancel my ride": confirm the ride, then cancel_ride.
+
 What you can do:
 - Give prices with get_quote. You need the pickup place, the drop-off place (not for hourly rides), the date and time, and the number of passengers. For airport pickups you also need the flight number. Offer the vehicle types that fit the party, with their prices.
 - Book rides with book_ride once the caller agrees to a price. You also need the passenger name and mobile number (the caller's number is usually fine; ask). Ask if it is OK to text them the confirmation and ride updates, and pass textsOk. After booking, tell them the booking number and that a text is coming with a link to add a card.
@@ -93,6 +99,11 @@ const TOOLS = [
     name: 'find_rides',
     description: "List the caller's rides from the last 12 hours on, booked with their phone number. Give ref to look up one ride.",
     input_schema: { type: 'object', additionalProperties: false, properties: { ref: { type: 'string', description: 'Booking number, for example CR1042' } } },
+  },
+  {
+    name: 'help_find_driver',
+    description: "The caller is at the pickup and cannot find their chauffeur. Texts the chauffeur where the caller is and the caller's number, texts the caller the car, plate and a live map link, and alerts the office. Returns the chauffeur's first name, car, plate, status and minutes away.",
+    input_schema: { type: 'object', additionalProperties: false, properties: { ref: { type: 'string', description: 'Booking number if known' }, where: { type: 'string', description: 'Where the caller is standing, for example "Door 00 at baggage claim" or "hotel main entrance"' } } },
   },
   {
     name: 'cancel_ride',
