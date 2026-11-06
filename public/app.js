@@ -2467,6 +2467,7 @@
       <div class="brandhead slim${info.company.banner ? ' withbanner' : ''}">${info.company.banner ? '' : info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : '<div></div>'}
         <div class="bh-phone">${info.company.phone ? `<a href="tel:${esc(info.company.phone)}">${esc(fmtPhone(info.company.phone))}</a>` : ''}${signedHere ? ` · Signed in as ${esc(session.user.name)} · <a href="#customer">My trips</a>` : ''}</div>
         ${signedHere ? '' : `<div class="bh-auth"><a class="btn sm" href="#login.${esc(slug)}">Log in</a><a class="btn sm brand" href="#signup.${esc(slug)}">Sign up</a></div>`}</div>
+      ${info.company.aiPhone ? `<a class="aibox" href="tel:${esc(info.company.aiPhone)}"><span class="aibox-tag">AI agent</span><span class="aibox-text">Book, cancel or edit your bookings</span><b class="aibox-num">${esc(fmtPhone(info.company.aiPhone))}</b></a>` : ''}
       ${info.company.house ? `<p class="housenote">Book a chauffeured car in any US city. Enter the pickup time in that city's local time. A LimoRelay company in that city drives your ride.</p>` : ''}
       <div class="morelinks"><a class="eventlink" href="#request.${esc(slug)}"><b>Book your event</b><span class="small">Weddings, proms, corporate events and groups</span></a>
       <a class="eventlink" href="#agent.${esc(slug)}" id="agent-link"><b>Agent sign-up or login</b><span class="small">Travel agents earn commission on every ride</span></a></div>
@@ -4897,6 +4898,7 @@
             <label class="stack small">What the agent should know (areas you serve, special rules, answers to common questions)<textarea class="input" name="notes" rows="5" maxlength="3000" placeholder="We serve Seattle, Bellevue and all three airports. Wine tours and sightseeing are planned with the office." ${dis}>${esc(s.notes)}</textarea></label>
             <label class="stack small">More things your callers say (one per line). The agent already knows the suggestions below.<textarea class="input" name="phrases" rows="3" maxlength="2000" placeholder="Can you pick us up at the Westin?&#10;Do you go to Snoqualmie Casino?" ${dis}>${esc(s.phrases || '')}</textarea></label>
             <label class="switch"><input type="checkbox" name="canCancel" ${s.canCancel ? 'checked' : ''} ${dis}><span>Let the agent cancel rides (late cancellations keep your fee)</span></label>
+            <label class="switch"><input type="checkbox" name="onPage" ${s.onPage !== false ? 'checked' : ''} ${dis}><span>Show the agent's number at the top of your booking page (while the agent is on)</span></label>
             ${isAdmin ? '<div><button class="btn primary sm" type="submit">Save</button></div>' : '<span class="small faint">Only the company admin can change this.</span>'}
           </form>
           <details class="panel" style="margin-bottom:16px"><summary><b>What callers can say</b> <span class="small muted">(${(d.phrases || []).reduce((n, g) => n + g.phrases.length, 0)} suggestions the agent understands)</span></summary>

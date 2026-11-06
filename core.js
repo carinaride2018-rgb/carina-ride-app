@@ -923,7 +923,7 @@
     const coPayMode = (c) => (payMode === 'demo' ? 'demo' : c && gwKind(c) !== 'stripe' && gwReady(c) ? 'stripe' : payMode);
     const cardsOn = (c) => payOpts(c).card !== false && (payMode === 'demo' || gwReady(c));
     const cashOn = (c) => !!payOpts(c).cash;
-    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), cash: cashOn(c), cardChoice: payOpts(c).card !== false, payMode: coPayMode(c), payVia: payMode === 'demo' ? '' : GATEWAYS[gwKind(c)], logo: c.logo || '', banner: c.banner || '', domain: c.domain || '', adsTag: c.adsTag || '', ...(c.house ? { house: true } : {}) });
+    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), cash: cashOn(c), cardChoice: payOpts(c).card !== false, payMode: coPayMode(c), payVia: payMode === 'demo' ? '' : GATEWAYS[gwKind(c)], logo: c.logo || '', banner: c.banner || '', aiPhone: c.phoneAgent && c.phoneAgent.on && c.phoneAgent.number && c.phoneAgent.onPage !== false ? c.phoneAgent.number : '', domain: c.domain || '', adsTag: c.adsTag || '', ...(c.house ? { house: true } : {}) });
 
     async function hashPw(pw, salt) { return hash(String(pw), salt); }
     async function setPassword(u, pw) { u.salt = randomId(8); u.passHash = await hashPw(pw, u.salt); }
@@ -7327,7 +7327,7 @@
         'I left something in the car', 'I want to give feedback about my driver',
       ] },
     ];
-    const DEFAULT_PHONE = { on: false, number: '', transferTo: '', greeting: '', notes: '', phrases: '', canCancel: true };
+    const DEFAULT_PHONE = { on: false, number: '', transferTo: '', greeting: '', notes: '', phrases: '', canCancel: true, onPage: true };
     const phcfg = (c) => ({ ...DEFAULT_PHONE, ...(c.phoneAgent || {}) });
     const callsOf = () => db.calls || (db.calls = []);
     // The agent acts as an office login named "Phone agent" (it is not stored as a user).
@@ -7535,7 +7535,7 @@
       const transferTo = str(s.transferTo, 30);
       if (transferTo && !phoneKey(transferTo)) fail('Enter a phone number to transfer calls to, or leave it blank.');
       if (s.on && !key) fail('Enter the phone number the agent answers before switching it on.');
-      ctx.company.phoneAgent = { on: !!s.on, number, transferTo, greeting: str(s.greeting, 300), notes: str(s.notes, 3000), phrases: str(s.phrases, 2000), notesSeeded: true, canCancel: s.canCancel !== false };
+      ctx.company.phoneAgent = { on: !!s.on, number, transferTo, greeting: str(s.greeting, 300), notes: str(s.notes, 3000), phrases: str(s.phrases, 2000), notesSeeded: true, canCancel: s.canCancel !== false, onPage: s.onPage !== false };
       return phcfg(ctx.company);
     });
     // Server side (phoneagent.js); never reachable from the browser API.
