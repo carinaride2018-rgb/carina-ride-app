@@ -23,6 +23,7 @@ const { createProviders } = require('./providers.js');
 const { gateway, squareOAuth, onSquareTokens } = require('./gateways.js');
 const { createWebPush } = require('./webpush.js');
 const { createNativePush, isNative } = require('./nativepush.js');
+const { createPhoneAgent } = require('./phoneagent.js');
 
 const PORT = Number(process.env.PORT) || 3000;
 const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'data', 'db.json');
@@ -92,7 +93,7 @@ const core = createCore({
   blank: BLANK,
   // Sample data keeps pretend card payments; a real site without Stripe has none.
   payMode: live.on.cards ? 'stripe' : BLANK ? 'off' : 'demo',
-  live: { ...live.on },
+  live: { ...live.on, voiceAgent: !!String(process.env.ANTHROPIC_API_KEY || '').trim() },
   owner: { name: process.env.OWNER_NAME, email: process.env.OWNER_EMAIL, password: process.env.OWNER_PASSWORD },
   load() {
     try { return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); } catch (e) { return null; }
@@ -339,6 +340,7 @@ async function warmFor(args) {
 // Each limo company connects its own Stripe account; customers pay on Stripe's
 // page and the money goes straight to that company.
 const base = PUBLIC_URL.endsWith('/') ? PUBLIC_URL : PUBLIC_URL + '/';
+const phone = createPhoneAgent({ env: process.env, core, publicUrl: base });
 function redirect(res, to) { res.writeHead(302, { Location: to, 'Cache-Control': 'no-store', ...SECURITY_HEADERS }); res.end(); }
 const bearer = (req) => { const a = req.headers.authorization || ''; return a.startsWith('Bearer ') ? a.slice(7) : null; };
 // LimoRelay's own membership payments use the platform's Stripe account (no Stripe-Account header).
@@ -593,6 +595,22 @@ async function twilioRoute(req, res, url, raw) {
       const r = await core.wakeAnswer({ key: url.searchParams.get('k'), digits: params.Digits });
       return xml(`<Say voice="Polly.Joanna">${r.ok ? 'Thank you. Have a safe drive.' : 'Please press 1 to confirm you are awake.'}</Say>`);
     } catch (e) { console.error('wake call', e); return xml(); }
+  }
+  // Calls to the phone agent (phoneagent.js). In Twilio, set the number's
+  // "A call comes in" webhook to <PUBLIC_URL>twilio/voice and "Call status
+  // changes" to <PUBLIC_URL>twilio/voice/status (HTTP POST).
+  if (url.pathname.startsWith('/twilio/voice') && req.method === 'POST') {
+    const params = Object.fromEntries(new URLSearchParams(raw));
+    if (live.on.sms ? !live.verifyTwilio(req.headers['x-twilio-signature'], base + url.pathname.slice(1) + url.search, params) : BLANK) return send(res, 403, 'Forbidden', 'text/plain');
+    try {
+      if (url.pathname === '/twilio/voice') return send(res, 200, await phone.answer(params), 'text/xml; charset=utf-8');
+      if (url.pathname === '/twilio/voice/turn') { const out = await phone.turn(params); send(res, 200, out, 'text/xml; charset=utf-8'); flushOutbox(); runCharges(); return; }
+      if (url.pathname === '/twilio/voice/status') { await phone.status(params); return send(res, 204, '', 'text/plain'); }
+    } catch (e) {
+      console.error('phone agent', e);
+      return xml(`<Say voice="${String(process.env.PHONE_AGENT_VOICE || 'Google.en-US-Chirp3-HD-Aoede').replace(/[^\w.-]/g, '')}">Sorry, something went wrong. Please call back in a minute.</Say><Hangup/>`);
+    }
+    return send(res, 404, 'Not found', 'text/plain');
   }
   if (url.pathname !== '/twilio/sms' || req.method !== 'POST') return send(res, 404, 'Not found', 'text/plain');
   const params = Object.fromEntries(new URLSearchParams(raw));

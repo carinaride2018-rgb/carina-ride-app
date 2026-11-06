@@ -3378,7 +3378,7 @@
     // What this office login may do (admins: everything). The server checks too.
     const P = isAdmin ? new Proxy({}, { get: () => true }) : (session.user.perms || {});
     const tabs = [
-      { key: 'board', label: 'Board' }, { key: 'inbox', label: 'Inbox' }, { key: 'trips', label: 'Trips' }, { key: 'calendar', label: 'Calendar' }, { key: 'quotes', label: 'Quotes' }, { key: 'flights', label: 'Flights' },
+      { key: 'board', label: 'Board' }, { key: 'inbox', label: 'Inbox' }, { key: 'phone', label: 'Phone agent' }, { key: 'trips', label: 'Trips' }, { key: 'calendar', label: 'Calendar' }, { key: 'quotes', label: 'Quotes' }, { key: 'flights', label: 'Flights' },
       { key: 'drivers', label: 'Drivers' }, { key: 'fleet', label: 'Fleet' }, { key: 'incidents', label: 'Incidents' }, { key: 'customers', label: 'Customers' }, ...(P.reports ? [{ key: 'reports', label: 'Reports' }] : []),
       { key: 'network', label: 'Network' }, { key: 'pricing', label: 'Pricing' }, { key: 'messages', label: 'Texts & emails' },
       { key: 'settings', label: 'Rates & brand' }, ...(isAdmin ? [{ key: 'team', label: 'Team' }] : []),
@@ -3394,7 +3394,7 @@
     const draw = () => {
       const v = shell({ tabs, active: tab, onTab: go2, wide: tab === 'board', search: openSearch });
       if (tab !== 'inbox') inboxBadge();
-      ({ board: drawBoard, inbox: drawInbox, trips: drawTrips, calendar: drawCalendar, quotes: drawQuotes, flights: drawFlights, drivers: drawDrivers, fleet: drawFleet, incidents: drawIncidents, customers: drawCustomers, reports: drawReports, network: drawNetwork, pricing: drawPricing, messages: drawMessages, settings: drawSettings, team: drawTeam })[tab](v);
+      ({ board: drawBoard, inbox: drawInbox, phone: drawPhone, trips: drawTrips, calendar: drawCalendar, quotes: drawQuotes, flights: drawFlights, drivers: drawDrivers, fleet: drawFleet, incidents: drawIncidents, customers: drawCustomers, reports: drawReports, network: drawNetwork, pricing: drawPricing, messages: drawMessages, settings: drawSettings, team: drawTeam })[tab](v);
     };
     // Quick search --------------------------------------------------------------
     // One box for trips (ref, passenger, phone, address, flight), customers,
@@ -3414,7 +3414,7 @@
     }
     function searchPages() {
       const has = (k) => tabs.some((t) => t.key === k);
-      const out = tabs.map((t) => ({ label: t.label, where: 'Page', kw: { board: 'dispatch today live map', inbox: 'texts replies sms', trips: 'bookings rides', calendar: 'week month', quotes: 'events estimates', flights: 'airport arrivals landing', fleet: 'vehicles cars', incidents: 'damage complaints', reports: 'sales revenue', network: 'partners farm out affiliates', pricing: 'surge night weekend holiday', messages: 'templates sms email', settings: 'rates brand settings', team: 'staff dispatchers users access' }[t.key] || '', go: () => jumpTo(t.key) }));
+      const out = tabs.map((t) => ({ label: t.label, where: 'Page', kw: { board: 'dispatch today live map', inbox: 'texts replies sms', phone: 'calls voice ai assistant answering', trips: 'bookings rides', calendar: 'week month', quotes: 'events estimates', flights: 'airport arrivals landing', fleet: 'vehicles cars', incidents: 'damage complaints', reports: 'sales revenue', network: 'partners farm out affiliates', pricing: 'surge night weekend holiday', messages: 'templates sms email', settings: 'rates brand settings', team: 'staff dispatchers users access' }[t.key] || '', go: () => jumpTo(t.key) }));
       const sub = (tabKey, label, kw, set) => { if (has(tabKey)) out.push({ label, where: (tabs.find((t) => t.key === tabKey) || {}).label, kw, go: () => { set(); jumpTo(tabKey); } }); };
       sub('drivers', 'Auto-dispatch', 'wake-up calls auto assign on the way', () => { driverSub = 'auto'; });
       if (P.pay) sub('drivers', 'Driver pay', 'payroll payouts', () => { driverSub = 'pay'; });
@@ -4868,6 +4868,48 @@
         $('#fl-set', v).onsubmit = async (e) => { e.preventDefault(); try { await api('dispatch.saveFlightSettings', formData(e.target)); toast('Flight settings saved.'); last = ''; refresh(); } catch (err) { toast(err.message, true); } };
         $$('tr[data-id]', v).forEach((r) => { r.onclick = (e) => { if (e.target.closest('[data-apply]')) return; tripModal(r.dataset.id, () => { last = ''; refresh(); }); }; });
         $$('[data-apply]', v).forEach((b) => { b.onclick = () => busy(b, async () => { try { await api('dispatch.applyFlight', { id: b.dataset.apply }); toast('Pickup moved. Driver and passenger told.'); last = ''; refresh(); } catch (err) { toast(err.message, true); } }); });
+      }
+      current = { poll: true, refresh };
+      v.innerHTML = '<p class="faint">Loading…</p>';
+      refresh();
+    }
+
+    // Phone agent --------------------------------------------------------------
+    // The AI that answers the company phone: its settings and every call it took.
+    const CALL_OUTCOME = { booked: 'Booked a ride', changed: 'Changed a ride', cancelled: 'Cancelled a ride', message: 'Message for the office', transferred: 'Sent to the office', answered: 'Answered questions', 'hung up': 'Hung up' };
+    function drawPhone(v) {
+      let last = '';
+      async function refresh(silent) {
+        let d;
+        try { d = await api('dispatch.phoneAgent'); } catch (e) { if (!silent) showErr(v, e); return; }
+        const sig = JSON.stringify(d); if (sig === last) return; last = sig;
+        const s = d.settings, dis = isAdmin ? '' : 'disabled';
+        v.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Phone agent</h1>
+            <p class="muted">An AI assistant answers your phone in a natural voice. It gives prices from your rates, books, changes and cancels rides, and tells callers where their chauffeur is. Customized tours go to your office. Messages it takes land in the Inbox.</p></div>
+            <span class="pill ${s.on && d.live ? 's-completed' : 's-cancelled'}">${s.on && d.live ? 'Answering calls' : s.on ? 'On, waiting for the server key' : 'Off'}</span></div>
+          <form class="panel stack" id="pa-set" style="margin-bottom:16px;gap:12px">
+            <label class="switch"><input type="checkbox" name="on" ${s.on ? 'checked' : ''} ${dis}><span>Answer calls with the phone agent</span></label>
+            <div class="row" style="gap:12px;flex-wrap:wrap">
+              <label class="stack small" style="flex:1;min-width:200px">Phone number it answers (your Twilio number)<input class="input" name="number" value="${esc(s.number)}" placeholder="(206) 555-0100" ${dis}></label>
+              <label class="stack small" style="flex:1;min-width:200px">Send calls to this number when a person is needed<input class="input" name="transferTo" value="${esc(s.transferTo)}" placeholder="${esc(session.company.phone || '(206) 555-0147')}" ${dis}></label>
+            </div>
+            <label class="stack small">Greeting (leave blank for the standard one)<input class="input" name="greeting" maxlength="300" value="${esc(s.greeting)}" placeholder="Thank you for calling ${esc(session.company.name)}. This is the virtual assistant. How can I help you today?" ${dis}></label>
+            <label class="stack small">What the agent should know (areas you serve, special rules, answers to common questions)<textarea class="input" name="notes" rows="5" maxlength="3000" placeholder="We serve Seattle, Bellevue and all three airports. Wine tours and sightseeing are planned with the office." ${dis}>${esc(s.notes)}</textarea></label>
+            <label class="switch"><input type="checkbox" name="canCancel" ${s.canCancel ? 'checked' : ''} ${dis}><span>Let the agent cancel rides (late cancellations keep your fee)</span></label>
+            ${isAdmin ? '<div><button class="btn primary sm" type="submit">Save</button></div>' : '<span class="small faint">Only the company admin can change this.</span>'}
+          </form>
+          <h2 style="margin:0 0 8px">Recent calls</h2>
+          ${d.calls.length ? `<div class="tablewrap"><table><thead><tr><th>When</th><th>Caller</th><th>What happened</th><th>Rides</th><th>Length</th></tr></thead><tbody>
+            ${d.calls.map((c) => `<tr class="click" data-call="${esc(c.id)}"><td class="mono small" style="white-space:nowrap">${esc(fmtDT(c.at))}</td><td>${esc(c.callerName || '')}<br><span class="small faint mono">${esc(c.from || 'Hidden number')}</span></td>
+              <td>${esc(CALL_OUTCOME[c.outcome] || (c.endedAt ? 'Answered questions' : 'On the line now'))}</td><td class="mono small">${esc((c.refs || []).join(', '))}</td><td class="small">${c.seconds ? `${Math.floor(c.seconds / 60)}:${String(c.seconds % 60).padStart(2, '0')}` : ''}</td></tr>`).join('')}
+          </tbody></table></div>` : '<div class="panel muted">No calls yet. Once the agent is on, every call shows here with what was said.</div>'}`;
+        $('#pa-set', v).onsubmit = async (e) => { e.preventDefault(); try { await api('dispatch.savePhoneAgent', { settings: formData(e.target) }); toast('Phone agent saved.'); last = ''; refresh(); } catch (err) { toast(err.message, true); } };
+        $$('tr[data-call]', v).forEach((r) => { r.onclick = async () => {
+          let c; try { c = await api('dispatch.callDetail', { id: r.dataset.call }); } catch (err) { toast(err.message, true); return; }
+          openModal({ title: `Call from ${c.callerName || c.from || 'a hidden number'}`, wide: true,
+            body: `<p class="small muted">${esc(fmtDT(c.at))} · ${esc(CALL_OUTCOME[c.outcome] || 'Answered questions')}${(c.refs || []).length ? ` · ${esc(c.refs.join(', '))}` : ''}</p>
+              <div class="stack" style="gap:8px">${(c.transcript || []).map((x) => `<div><b class="small">${x.who === 'agent' ? 'Agent' : 'Caller'}</b><div>${esc(x.text)}</div></div>`).join('') || '<p class="faint">Nothing was said.</p>'}</div>` });
+        }; });
       }
       current = { poll: true, refresh };
       v.innerHTML = '<p class="faint">Loading…</p>';
