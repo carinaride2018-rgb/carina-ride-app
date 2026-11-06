@@ -7436,6 +7436,12 @@
         `Right now it is ${sayTime(now().toISOString(), c)} (${p.date}, ${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')} local).`,
         `Services: point-to-point transfers, airport rides, and by the hour (minimum ${r.minHours} hours).`,
         `Vehicles:\n- ${types.join('\n- ') || 'No vehicles listed yet.'}`,
+        (() => {
+          const ad = (c.pricing && c.pricing.addons) || {}, money = (n) => `$${Math.round(Number(n) * 100) / 100}`;
+          const hourly = vehicleTypesFor(c).map((x) => `${x.type} ${money(r.hourly * (x.multiplier || 1))} an hour`).join(', ');
+          return `Prices (for exact fares always use get_quote): by the hour ${hourly || `from ${money(r.hourly)} an hour`}, minimum ${r.minHours} hours. The shortest ride costs at least ${money(r.minFare)}. ${r.gratuityPct ? `A ${r.gratuityPct}% gratuity is included in quotes.` : ''} ${ad.childSeat ? `Child seat: ${money(ad.childSeat)}.` : ''} ${ad.meetGreet ? `Meet and greet inside the airport: ${money(ad.meetGreet)}.` : ''} Waiting time: ${money(r.waitPerMin)} a minute.`.replace(/\s+/g, ' ').trim();
+        })(),
+        ...(c.terms ? [`Company terms (for questions about policy):\n${str(c.terms, 1500)}`] : []),
         `Minimum notice for a booking: ${dcfg(c).minNoticeHours || 0} hours. Free cancellation until ${pol.cancelHours} hours before pickup; after that the fee is ${pol.cancelFeePct}% of the fare. Payment: ${cardsOn(c) ? `card, by a secure link we text after booking. ${chargeNote(c)}.` : 'the office arranges payment.'} Chauffeurs never take payment.`,
         `Caller's number: ${call.key ? call.from : 'hidden'}. ${mine.length ? `Their upcoming rides: ${mine.map((t) => `${t.ref} on ${sayTime(t.pickupAt, c)} from ${t.pickup} (${STATUS_LABELS[t.status]})`).join('; ')}.` : 'No upcoming rides booked from this number.'}`,
         ...(cfg.notes ? [`Notes from the office (follow these):\n${str(cfg.notes, 3000)}`] : []),

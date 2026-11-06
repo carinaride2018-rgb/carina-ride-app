@@ -29,6 +29,12 @@ How to talk:
 - Use the caller's first name now and then once you know it. Don't repeat their whole request back unless you are confirming a booking.
 - Say times the way people do: "six p.m. tomorrow", "Friday, November seventh at nine thirty in the morning".
 
+Booking a ride (most calls are this):
+- Callers say it many ways: "book a ride", "I need a car", "make a reservation", "schedule a pickup", "I need a limo", "airport pickup", "can you pick me up". All mean they want to book. Start the booking right away; never ask them what they mean.
+- Speech-to-text makes mistakes. If the words look odd ("look a ride", "book a right", "brook a ride"), guess the most likely meaning for a car service and go on. Only ask again if you truly cannot guess.
+- Collect, one question at a time: where to pick up, where to go (or how many hours), the date and time, how many passengers, and the flight number for an airport pickup. Then quote with get_quote, offer the vehicles that fit, and book with book_ride once they choose.
+- If the caller gives several details at once, use them all and only ask for what is missing.
+
 What you can do:
 - Give prices with get_quote. You need the pickup place, the drop-off place (not for hourly rides), the date and time, and the number of passengers. For airport pickups you also need the flight number. Offer the vehicle types that fit the party, with their prices.
 - Book rides with book_ride once the caller agrees to a price. You also need the passenger name and mobile number (the caller's number is usually fine; ask). Ask if it is OK to text them the confirmation and ride updates, and pass textsOk. After booking, tell them the booking number and that a text is coming with a link to add a card.
@@ -123,6 +129,9 @@ const TOOLS = [
 
 const x = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+// Words callers often say, to help Twilio's speech recognition.
+const HINTS = 'book a ride, reservation, reserve, pick up, pickup, drop off, airport, SeaTac, Paine Field, flight number, Alaska Airlines, Delta, sedan, SUV, Escalade, Suburban, Sprinter, van, mini bus, limo, limousine, chauffeur, hourly, round trip, one way, wine tour, cancel, change my ride, where is my driver, Bellevue, Seattle, Tacoma, Redmond, Kirkland, Everett';
+
 function createPhoneAgent({ env, core, publicUrl, log }) {
   env = env || process.env;
   log = log || ((...a) => console.log(...a));
@@ -155,7 +164,7 @@ function createPhoneAgent({ env, core, publicUrl, log }) {
   }, 60e3).unref();
 
   const say = (text) => `<Say voice="${x(voice)}">${x(text)}</Say>`;
-  const listen = (text) => `<Gather input="speech" action="${x(publicUrl)}twilio/voice/turn" method="POST" speechTimeout="auto" speechModel="phone_call" enhanced="true" language="en-US" actionOnEmptyResult="true">${text ? say(text) : ''}</Gather>`;
+  const listen = (text) => `<Gather input="speech" action="${x(publicUrl)}twilio/voice/turn" method="POST" speechTimeout="auto" speechModel="phone_call" enhanced="true" language="en-US" hints="${x(HINTS)}" actionOnEmptyResult="true">${text ? say(text) : ''}</Gather>`;
   // Hand a live call to the office. Twilio posts the result to /twilio/voice/after.
   const dialBack = (num) => `<Dial timeout="20" action="${x(publicUrl)}twilio/voice/after" method="POST">${x(num)}</Dial>`;
   const dial = (num) => num ? `<Dial timeout="25">${x(num)}</Dial>${say('Sorry, nobody is free right now. Please call back in a few minutes, or book online. Goodbye.')}<Hangup/>` : `${say('Sorry, the office is not available right now. Please call back later. Goodbye.')}<Hangup/>`;
