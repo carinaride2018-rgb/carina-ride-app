@@ -194,7 +194,7 @@ function createPhoneAgent({ env, core, publicUrl, log }) {
     const res = await fetch(`${apiUrl}/v1/messages`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'server-side-fallback-2026-07-01' },
-      body: JSON.stringify(body), signal: AbortSignal.timeout(11000),
+      body: JSON.stringify(body), signal: AbortSignal.timeout(25000),
     });
     const data = await res.json().catch(() => null);
     if (!res.ok) { const e = new Error((data && data.error && data.error.message) || `HTTP ${res.status}`); e.status = res.status; throw e; }
@@ -230,10 +230,48 @@ function createPhoneAgent({ env, core, publicUrl, log }) {
       }
       s.messages.push({ role: 'user', content: results });
       if (action) return { text: spoken.join(' '), action };
-      // Twilio waits about 15 seconds for an answer; keep a margin.
-      if (Date.now() - started > 9000) return { text: spoken.join(' ') || 'One moment please.', action: 'listen' };
+      // The caller hears "one moment" while this runs; stop tool loops that run long.
+      if (Date.now() - started > 30000) return { text: spoken.join(' ') || 'One moment please.', action: 'listen' };
     }
     return { text: spoken.join(' '), action: 'transfer' };
+  }
+
+  const FILLERS = ['One moment.', 'Sure, one moment.', 'Let me check that.', 'Okay, one second.'];
+  const within = (promise, ms) => Promise.race([promise, new Promise((ok) => setTimeout(() => ok(null), ms))]);
+  const hold = () => `<Redirect method="POST">${x(publicUrl)}twilio/voice/wait</Redirect>`;
+  async function run(s, heard) {
+    try { const r = await think(s, heard); s.misses = 0; return r; }
+    catch (e) {
+      log('phone agent', e.message);
+      s.misses = (s.misses || 0) + 1;
+      if (s.misses >= 2) { s.outcome = 'transferred'; return { text: 'Sorry, I am having trouble. Let me connect you with our office.', action: 'transfer' }; }
+      s.messages.length = s.mark;
+      return { text: 'Sorry, could you say that again?', action: 'listen' };
+    }
+  }
+  // Speaks an answer, then listens, transfers or hangs up.
+  async function reply(s, r) {
+    const p = { CallSid: s.sid };
+    if (r.text) await core.voice.say(s.callId, 'agent', r.text);
+    if (r.action === 'transfer' && (s.noTransfer || !s.transferTo)) {
+      // Nobody to send the call to: stay on the line and offer a message.
+      r = { text: (r.text ? r.text + ' ' : '') + 'Nobody at the office is free right now. I can take a message so they call you back. What should I tell them?', action: 'listen' };
+      s.outcome = '';
+      s.noTransfer = true;
+    }
+    if (r.action === 'transfer') {
+      s.transferredAt = Date.now();
+      const k = digits(s.from);
+      if (k) sentToOffice.set(k, { caller: s.from, office: digits(s.transferTo), at: Date.now() });
+      s.outcome = 'transferred';
+      return twiml((r.text ? say(r.text) : say('Let me connect you with our office.')) + dialBack(s.transferTo));
+    }
+    if (r.action === 'hangup') {
+      calls.delete(p.CallSid);
+      await core.voice.end(s.callId, {});
+      return twiml(say(r.text || 'Thank you for calling. Goodbye.') + '<Hangup/>');
+    }
+    return twiml(listen(r.text || 'Is there anything else I can help with?') + listen(''));
   }
 
   return {
@@ -250,7 +288,7 @@ function createPhoneAgent({ env, core, publicUrl, log }) {
         if (bounce || (info.transferTo && digits(info.transferTo) === digits(p.From || p.Caller))) return twiml(`${say('Sorry, nobody is free right now. Please call back in a few minutes, or book online. Goodbye.')}<Hangup/>`);
         return twiml(dial(info.transferTo));
       }
-      const s = { callId: info.callId, context: info.context, transferTo: info.transferTo, from, messages: [], lastAt: Date.now(), silences: 0, misses: 0, outcome: '', noTransfer: !!bounce };
+      const s = { sid: p.CallSid, callId: info.callId, context: info.context, transferTo: info.transferTo, from, messages: [], lastAt: Date.now(), silences: 0, misses: 0, outcome: '', noTransfer: !!bounce };
       calls.set(p.CallSid, s);
       if (bounce) {
         sentToOffice.delete(digits(bounce.caller));
@@ -279,34 +317,24 @@ function createPhoneAgent({ env, core, publicUrl, log }) {
       }
       s.silences = 0;
       await core.voice.say(s.callId, 'caller', heard);
-      let r;
-      try { r = await think(s, heard); }
-      catch (e) {
-        log('phone agent', e.message);
-        s.misses++;
-        if (s.misses >= 2) { s.outcome = 'transferred'; r = { text: 'Sorry, I am having trouble. Let me connect you with our office.', action: 'transfer' }; }
-        else { s.messages.length = s.mark; r = { text: 'Sorry, could you say that again?', action: 'listen' }; }
-      }
-      if (r.text) await core.voice.say(s.callId, 'agent', r.text);
-      if (r.action === 'transfer' && (s.noTransfer || !s.transferTo)) {
-        // Nobody to send the call to: stay on the line and offer a message.
-        r = { text: (r.text ? r.text + ' ' : '') + 'Nobody at the office is free right now. I can take a message so they call you back. What should I tell them?', action: 'listen' };
-        s.outcome = '';
-        s.noTransfer = true;
-      }
-      if (r.action === 'transfer') {
-        s.transferredAt = Date.now();
-        const k = digits(s.from);
-        if (k) sentToOffice.set(k, { caller: s.from, office: digits(s.transferTo), at: Date.now() });
-        s.outcome = 'transferred';
-        return twiml((r.text ? say(r.text) : say('Let me connect you with our office.')) + dialBack(s.transferTo));
-      }
-      if (r.action === 'hangup') {
-        calls.delete(p.CallSid);
-        await core.voice.end(s.callId, {});
-        return twiml(say(r.text || 'Thank you for calling. Goodbye.') + '<Hangup/>');
-      }
-      return twiml(listen(r.text || 'Is there anything else I can help with?') + listen(''));
+      // Twilio gives up on a webhook after about 15 seconds. If the answer is not
+      // ready in a few seconds, say "one moment" and come back for it (/wait).
+      s.pending = run(s, heard);
+      const r = await within(s.pending, 3500);
+      if (r) { s.pending = null; return reply(s, r); }
+      s.waits = 0;
+      return twiml(say(FILLERS[Math.floor(Math.random() * FILLERS.length)]) + hold());
+    },
+    // Twilio came back for an answer that was still being worked out.
+    async wait(p) {
+      const s = calls.get(p.CallSid);
+      if (!s) return twiml(say('Sorry, please call us back in a minute.') + '<Hangup/>');
+      s.lastAt = Date.now();
+      if (!s.pending) return twiml(listen('') + listen(''));
+      const r = await within(s.pending, 10000);
+      if (r) { s.pending = null; return reply(s, r); }
+      s.waits = (s.waits || 0) + 1;
+      return twiml((s.waits === 2 ? say('Still checking, thanks for waiting.') : '<Pause length="1"/>') + hold());
     },
     // The office line was dialed and that part of the call is over.
     async after(p) {
