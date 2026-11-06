@@ -2047,7 +2047,7 @@
             <label class="field" data-acct><span id="bk-po-label">PO number</span><input id="bk-po" name="poNumber" value="${esc(state.poNumber)}" autocomplete="off"></label>
             <label class="field" data-acct><span>Cost center <span class="faint">(optional)</span></span><input id="bk-cc" name="costCenter" value="${esc(state.costCenter)}" autocomplete="off"></label>
           </div>` : ''}
-          ${dispatch ? `<label class="field" style="max-width:340px"><span>Custom price ($) <span class="faint">(optional, office only)</span></span><input id="bk-custom" name="priceOverride" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Leave blank to use your rates" value="${esc(state.priceOverride == null ? '' : state.priceOverride)}"><span class="hint">The total the passenger pays for this ride, all in. Customers never see this box.</span></label>` : ''}
+          ${dispatch ? `<label class="field custprice" style="max-width:340px"><span>Custom price ($) <span class="faint">(optional, office only)</span></span><input id="bk-custom" name="priceOverride" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Leave blank to use your rates" value="${esc(state.priceOverride == null ? '' : state.priceOverride)}"><span class="hint">The total the passenger pays for this ride, all in. Customers never see this box.</span></label>` : ''}
           ${creditBal > 0 ? `<label class="switch creditsw" id="bk-creditf"><input type="checkbox" id="bk-credit" ${state.useCredit !== false ? 'checked' : ''}><span>Use my business ride credit (<b>${money(creditBal)}</b> available) on this ride</span></label>` : ''}
           <div class="field"><span>Extras</span>
             <div class="grid3">
@@ -3999,7 +3999,7 @@
                 <label class="field"><span>Add or take off ($)</span><input id="te-adj" name="adjAmount" type="number" step="0.01" placeholder="-20 or 35" ${priceLock} value="${t.adjustment ? t.adjustment.amount : ''}"></label>
                 <label class="field" style="grid-column:span 2"><span>Reason</span><input id="te-adjr" name="adjReason" ${priceLock} placeholder="Goodwill credit, extra luggage…" value="${esc(t.adjustment ? t.adjustment.reason : '')}"></label>
               </div>
-              <label class="field"><span>Custom price ($)</span><input id="te-price" name="priceOverride" type="number" min="0" step="0.01" placeholder="Leave blank to use your rates" ${priceLock} value="${t.priceOverride == null ? '' : t.priceOverride}"></label>
+              <label class="field custprice"><span>Custom price ($)</span><input id="te-price" name="priceOverride" type="number" min="0" step="0.01" placeholder="Leave blank to use your rates" ${priceLock} value="${t.priceOverride == null ? '' : t.priceOverride}"></label>
               ${t.farmIn ? `<p class="small muted">The price was agreed with ${esc(t.farmIn.fromName)} when you accepted the trip.</p>` : ''}
             </fieldset>
             ${accounts.length ? `<div class="grid3">

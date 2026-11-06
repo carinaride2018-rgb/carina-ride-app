@@ -959,3 +959,8 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
 .aibox-text { font-weight: 600; }
 .aibox-num { margin-left: auto; font-size: 20px; color: var(--brand); white-space: nowrap; }
 @media (max-width: 480px) { .aibox-num { margin-left: 0; flex-basis: 100%; } }
+
+/* Office custom price: bold label and box so it stands out (Dawit 2026-11-06) */
+.custprice > span:first-child { font-weight: 800; font-size: 15px; color: #111; }
+.custprice input { border: 2px solid #111 !important; font-weight: 700; font-size: 17px; }
+.custprice input::placeholder { font-weight: 500; }
