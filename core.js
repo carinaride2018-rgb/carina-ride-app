@@ -1045,7 +1045,7 @@
       if (t.payment.status === 'paid') lines.push('Payment: paid. Thank you.');
       else if (t.payment.method === 'account') lines.push('Payment: billed to your company account.');
       else if (t.payment.method === 'cash') lines.push(`Payment: cash, paid to ${c.name} before your ride.`);
-      else if (onFile(t) && t.cardToken) lines.push(`Payment link: ${cardUrl(t)}`);
+      else if (onFile(t) && t.cardToken) lines.push('Your booking is not valid until payment is submitted.', `Payment link: ${cardUrl(t)}`); // shown as a red box in the HTML email (Dawit 2026-11-06)
       lines.push(`Terms and Conditions: ${(c.domain ? linkBase(c) : (opts.publicUrl || 'https://limorelay.com/')).replace(/#.*$/, '')}#terms.${c.slug}`);
       return '\n\n' + lines.join('\n');
     }

@@ -501,6 +501,7 @@ function inlinePic(co) {
   const ext = x[1] === 'jpeg' ? 'jpg' : x[1];
   return { cid: banner ? 'brand-banner' : 'brand-logo', filename: `${banner ? 'banner' : 'logo'}.${ext}`, content: x[2], banner };
 }
+const PAY_WARNING = 'Your booking is not valid until payment is submitted.';
 function emailHtml(m, opt) {
   const co = m.company || {};
   const color = /^#[0-9a-f]{6}$/i.test(co.color || '') ? co.color : '#222222';
@@ -509,6 +510,10 @@ function emailHtml(m, opt) {
   if (lines.length && co.name && lines[0].trim() === `${co.name}:`) lines = lines.slice(1);
   let terms = '';
   lines = lines.filter((l) => { const t = l.match(/^Terms and Conditions:\s*(\S+)\s*$/); if (t) { terms = t[1]; return false; } return true; });
+  // Unpaid booking: the payment link goes in a red box with the warning.
+  let payUrl = '';
+  lines = lines.filter((l) => { const p = l.match(/^Payment link:\s*(https?:\/\/\S+)\s*$/); if (p) { payUrl = p[1]; return false; } return true; });
+  if (payUrl) lines = lines.filter((l) => l.trim() !== PAY_WARNING);
   const blocks = []; let cur = [];
   for (const l of lines) { if (l.trim()) cur.push(l); else if (cur.length) { blocks.push(cur); cur = []; } }
   if (cur.length) blocks.push(cur);
@@ -534,6 +539,7 @@ ${banner ? '' : `<tr><td style="height:5px;background:${color};font-size:0;line-
 ${banner ? `<tr><td style="padding:0;font-size:0;line-height:0">${banner}</td></tr><tr><td style="height:22px;font-size:0;line-height:0">&nbsp;</td></tr>` : `<tr><td style="padding:26px 24px 18px">${logo}</td></tr>`}
 ${title}
 <tr><td style="padding:0 24px 6px;word-break:break-word;overflow-wrap:anywhere">${html}</td></tr>
+${payUrl ? `<tr><td style="padding:0 24px 18px"><table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;background:#d32f2f;border-radius:10px"><tr><td style="padding:18px 16px;text-align:center"><div style="font-size:17px;line-height:1.4;font-weight:800;color:#ffffff">${hesc(PAY_WARNING)}</div><a href="${hesc(payUrl)}" style="display:inline-block;margin-top:14px;padding:12px 28px;background:#ffffff;color:#d32f2f;border-radius:8px;font-size:16px;font-weight:800;text-decoration:none">Pay now</a><div style="margin-top:10px;font-size:12px;line-height:1.4;word-break:break-all"><a href="${hesc(payUrl)}" style="color:#ffffff">${hesc(payUrl)}</a></div></td></tr></table></td></tr>` : ''}
 ${pdfNote}
 <tr><td style="background:#f7f7f8;border-top:1px solid #ececee;padding:18px 24px;text-align:center;font-size:13px;line-height:1.6;color:#333333">${co.name ? `<div style="font-weight:700;color:#111111">${hesc(co.name)}</div>` : ''}${contact ? `<div>${contact}</div>` : ''}${termsLink}</td></tr>
 </table></td></tr></table></body></html>`;
