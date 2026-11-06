@@ -7,7 +7,7 @@
  * answers. Twilio reads the answer out (<Say>) and listens again.
  *
  *   ANTHROPIC_API_KEY     switches the agent on (without it, calls go straight to the office)
- *   PHONE_AGENT_MODEL     optional, default claude-opus-5-5
+ *   PHONE_AGENT_MODEL     optional, default claude-sonnet-5-5 (quick answers on a live call; claude-opus-5-5 is slower)
  *   PHONE_AGENT_VOICE     optional Twilio voice, default Google.en-US-Chirp3-HD-Aoede (a natural, human-sounding voice)
  *
  * In Twilio, set the number's "A call comes in" webhook to <PUBLIC_URL>twilio/voice
@@ -147,7 +147,7 @@ function createPhoneAgent({ env, core, publicUrl, log, warm }) {
   env = env || process.env;
   log = log || ((...a) => console.log(...a));
   const key = String(env.ANTHROPIC_API_KEY || '').trim();
-  const model = String(env.PHONE_AGENT_MODEL || '').trim() || 'claude-opus-5-5';
+  const model = String(env.PHONE_AGENT_MODEL || '').trim() || 'claude-sonnet-5-5';
   const voice = String(env.PHONE_AGENT_VOICE || '').trim() || 'Google.en-US-Chirp3-HD-Aoede';
   const apiUrl = env.LIVERY_TEST_ANTHROPIC_URL || 'https://api.anthropic.com';
   const on = !!key;
@@ -220,7 +220,9 @@ function createPhoneAgent({ env, core, publicUrl, log, warm }) {
     const started = Date.now();
     let spoken = [];
     for (let i = 0; i < 6; i++) {
+      const t0 = Date.now();
       const r = await claude(s);
+      log(`phone agent: Claude answered in ${Date.now() - t0} ms (${model}, step ${i + 1})`);
       s.messages.push({ role: 'assistant', content: r.content });
       const text = r.content.filter((b) => b.type === 'text').map((b) => b.text).join(' ').trim();
       if (text) spoken.push(text);
@@ -335,9 +337,9 @@ function createPhoneAgent({ env, core, publicUrl, log, warm }) {
       s.silences = 0;
       await core.voice.say(s.callId, 'caller', heard);
       // Twilio gives up on a webhook after about 15 seconds. If the answer is not
-      // ready in a few seconds, say "one moment" and come back for it (/wait).
+      // ready in 2.5 seconds, say "one moment" and come back for it (/wait).
       s.pending = run(s, heard);
-      const r = await within(s.pending, 3500);
+      const r = await within(s.pending, 2500);
       if (r) { s.pending = null; return reply(s, r); }
       s.waits = 0;
       return twiml(say(FILLERS[Math.floor(Math.random() * FILLERS.length)]) + hold());
