@@ -706,7 +706,7 @@
     let total = round2(Math.max(0, subtotal + gratuity + tax + extras + adj));
     if (b.priceOverride != null && b.priceOverride !== '') {
       total = round2(num(b.priceOverride, total));
-      lines.push({ label: b.quoteNumber ? `Price from quote ${b.quoteNumber}` : 'Fixed price set by dispatch', amount: null, kind: 'override' });
+      lines.push({ label: b.quoteNumber ? `Price from quote ${b.quoteNumber}` : 'Custom price set by the office', amount: null, kind: 'override' });
     }
     // Credit saved from business rides, spent on a personal ride.
     let credit = 0;
@@ -2370,7 +2370,7 @@
     });
     def('public.quote', 'public', false, (ctx, a) => {
       const c = companyBySlug(a.slug);
-      const b = a.booking || {};
+      const b = { ...(a.booking || {}), priceOverride: null, adjustment: null };
       return { ...quoteFor(c, b, null), flight: flightPreview(c, b), landing: landingPreview(c, b) };
     });
 
@@ -2746,7 +2746,7 @@
       const c = ctx.user.credit || { balance: 0, log: [] };
       return { balance: c.balance, log: c.log.slice(0, 50).map(clone), account: acc && acc.active !== false && acc.reward === 'credit' ? { name: acc.name, pct: acc.discountPct || 0 } : null };
     });
-    def('customer.quote', ['customer'], false, (ctx, a) => { const b = a.booking || {}; return { ...quoteFor(ctx.company, b, ctx.user), flight: flightPreview(ctx.company, b), landing: landingPreview(ctx.company, b) }; });
+    def('customer.quote', ['customer'], false, (ctx, a) => { const b = { ...(a.booking || {}), priceOverride: null, adjustment: null }; return { ...quoteFor(ctx.company, b, ctx.user), flight: flightPreview(ctx.company, b), landing: landingPreview(ctx.company, b) }; });
     def('customer.book', ['customer'], true, (ctx, a) => {
       const agent = ctx.user.agent;
       const payByPassenger = !!(agent && (a.booking || {}).payBy === 'passenger');
@@ -3328,6 +3328,9 @@
     def('dispatch.createTrip', STAFF, true, async (ctx, a) => {
       const [b, rb] = bookingPair(ctx.company, a.booking || {}, { allowPast: true });
       if (!b.passengerName) fail('Enter the passenger name.');
+      // Office only: a custom price for this ride (Dawit 2026-11-06).
+      const cp = (a.booking || {}).priceOverride;
+      if (cp != null && String(cp).trim() !== '') { const v = num(String(cp).replace(/[$,\s]/g, ''), NaN); if (!(v >= 0)) fail('Enter the custom price as a number, for example 150.'); b.priceOverride = round2(v); }
       const mb = moreBookings(ctx.company, a.booking || {}, b, { allowPast: true });
       const plan = repeatPlan(ctx.company, b, a.booking || {});
       let customer = null;
