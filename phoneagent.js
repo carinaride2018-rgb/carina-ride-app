@@ -39,6 +39,7 @@ What you can do:
 - For lost items, complaints, billing questions or anything a person must follow up, take the details and send them with request_change, and tell the caller the office will get back to them.
 - Customized tours (sightseeing, wine tours, multi-stop custom itineraries planned with the office) are the one thing you do not handle: say a tour specialist will help and use transfer_call. Also transfer if the caller has an emergency or keeps insisting on speaking with a person.
 - Use end_call after a goodbye when the caller has nothing else.
+- If transfer_call says nobody at the office is free, do not try again. Offer to take a message with request_change so the office calls back, or keep helping the caller yourself.
 
 Rules:
 - Dates and times: callers speak in local time. Turn "tomorrow at 6 pm" into a date (YYYY-MM-DD) and a 24-hour time (HH:MM) using the current local time given below. Read the date back in words.
@@ -132,6 +133,22 @@ function createPhoneAgent({ env, core, publicUrl, log }) {
   const on = !!key;
   // Calls in progress, by Twilio CallSid. Lost on restart: the caller is then transferred.
   const calls = new Map();
+  // Callers we just sent to the office, by phone (last 10 digits). If the office
+  // line does not answer and forwards the call back here, we must not send it
+  // round again: the agent takes a message instead.
+  const sentToOffice = new Map();
+  const digits = (n) => String(n || '').replace(/\D/g, '').slice(-10);
+  const BOUNCE_MS = 3 * 60e3;
+  function bouncedFrom(from) {
+    const now = Date.now(), k = digits(from);
+    for (const [c, t] of sentToOffice) if (now - t.at > BOUNCE_MS) sentToOffice.delete(c);
+    if (!k) return null;
+    if (sentToOffice.has(k)) return sentToOffice.get(k);
+    // The office phone system may show its own number instead of the caller's.
+    let last = null;
+    for (const t of sentToOffice.values()) if (t.office === k && (!last || t.at > last.at)) last = t;
+    return last;
+  }
   setInterval(() => {
     const cutoff = Date.now() - 15 * 60e3;
     for (const [sid, s] of calls) if (s.lastAt < cutoff) { calls.delete(sid); core.voice.end(s.callId, { outcome: s.outcome || '' }).catch(() => {}); }
@@ -139,6 +156,8 @@ function createPhoneAgent({ env, core, publicUrl, log }) {
 
   const say = (text) => `<Say voice="${x(voice)}">${x(text)}</Say>`;
   const listen = (text) => `<Gather input="speech" action="${x(publicUrl)}twilio/voice/turn" method="POST" speechTimeout="auto" speechModel="phone_call" enhanced="true" language="en-US" actionOnEmptyResult="true">${text ? say(text) : ''}</Gather>`;
+  // Hand a live call to the office. Twilio posts the result to /twilio/voice/after.
+  const dialBack = (num) => `<Dial timeout="20" action="${x(publicUrl)}twilio/voice/after" method="POST">${x(num)}</Dial>`;
   const dial = (num) => num ? `<Dial timeout="25">${x(num)}</Dial>${say('Sorry, nobody is free right now. Please call back in a few minutes, or book online. Goodbye.')}<Hangup/>` : `${say('Sorry, the office is not available right now. Please call back later. Goodbye.')}<Hangup/>`;
   const twiml = (s) => `<?xml version="1.0" encoding="UTF-8"?><Response>${s}</Response>`;
 
@@ -181,7 +200,10 @@ function createPhoneAgent({ env, core, publicUrl, log }) {
       let action = null;
       for (const u of uses) {
         let out;
-        if (u.name === 'transfer_call') { action = 'transfer'; s.outcome = 'transferred'; out = { ok: true }; }
+        if (u.name === 'transfer_call') {
+          if (s.noTransfer || !s.transferTo) out = { error: 'Nobody at the office is free to take the call right now. Do not transfer again. Offer to take a message with request_change so the office calls back, or keep helping the caller.' };
+          else { action = 'transfer'; s.outcome = 'transferred'; out = { ok: true }; }
+        }
         else if (u.name === 'end_call') { action = action || 'hangup'; out = { ok: true }; }
         else out = await core.voice.tool(s.callId, u.name, u.input);
         results.push({ type: 'tool_result', tool_use_id: u.id, content: JSON.stringify(out), ...(out && out.error ? { is_error: true } : {}) });
@@ -198,10 +220,25 @@ function createPhoneAgent({ env, core, publicUrl, log }) {
     on,
     // A call came in.
     async answer(p) {
-      const info = await core.voice.start({ to: p.To || p.Called, from: p.From || p.Caller, sid: p.CallSid });
+      const bounce = bouncedFrom(p.From || p.Caller);
+      const from = bounce ? bounce.caller : (p.From || p.Caller);
+      const info = await core.voice.start({ to: p.To || p.Called, from, sid: p.CallSid });
       if (!info) return twiml(`${say('Sorry, this number is not set up to take calls yet. Goodbye.')}<Hangup/>`);
-      if (!on) { await core.voice.end(info.callId, { outcome: 'transferred' }); return twiml(dial(info.transferTo)); }
-      calls.set(p.CallSid, { callId: info.callId, context: info.context, transferTo: info.transferTo, messages: [], lastAt: Date.now(), silences: 0, misses: 0, outcome: '' });
+      if (!on) {
+        await core.voice.end(info.callId, { outcome: 'transferred' });
+        // Without the agent, a call forwarded back from the office would loop.
+        if (bounce || (info.transferTo && digits(info.transferTo) === digits(p.From || p.Caller))) return twiml(`${say('Sorry, nobody is free right now. Please call back in a few minutes, or book online. Goodbye.')}<Hangup/>`);
+        return twiml(dial(info.transferTo));
+      }
+      const s = { callId: info.callId, context: info.context, transferTo: info.transferTo, from, messages: [], lastAt: Date.now(), silences: 0, misses: 0, outcome: '', noTransfer: !!bounce };
+      calls.set(p.CallSid, s);
+      if (bounce) {
+        sentToOffice.delete(digits(bounce.caller));
+        const hello = 'Sorry, the team could not pick up just now. I can take a message so they call you back, or I can keep helping you myself. What would you like?';
+        s.messages.push({ role: 'user', content: '(This caller was just sent to the office, but nobody answered and the call came back to you. Do not transfer again.)' }, { role: 'assistant', content: hello });
+        await core.voice.say(info.callId, 'agent', hello);
+        return twiml(listen(hello) + listen(''));
+      }
       await core.voice.say(info.callId, 'agent', info.greeting);
       return twiml(listen(info.greeting) + listen(''));
     },
@@ -231,10 +268,18 @@ function createPhoneAgent({ env, core, publicUrl, log }) {
         else { s.messages.length = s.mark; r = { text: 'Sorry, could you say that again?', action: 'listen' }; }
       }
       if (r.text) await core.voice.say(s.callId, 'agent', r.text);
+      if (r.action === 'transfer' && (s.noTransfer || !s.transferTo)) {
+        // Nobody to send the call to: stay on the line and offer a message.
+        r = { text: (r.text ? r.text + ' ' : '') + 'Nobody at the office is free right now. I can take a message so they call you back. What should I tell them?', action: 'listen' };
+        s.outcome = '';
+        s.noTransfer = true;
+      }
       if (r.action === 'transfer') {
-        calls.delete(p.CallSid);
-        await core.voice.end(s.callId, { outcome: 'transferred' });
-        return twiml((r.text ? say(r.text) : say('Let me connect you with our office.')) + dial(s.transferTo));
+        s.transferredAt = Date.now();
+        const k = digits(s.from);
+        if (k) sentToOffice.set(k, { caller: s.from, office: digits(s.transferTo), at: Date.now() });
+        s.outcome = 'transferred';
+        return twiml((r.text ? say(r.text) : say('Let me connect you with our office.')) + dialBack(s.transferTo));
       }
       if (r.action === 'hangup') {
         calls.delete(p.CallSid);
@@ -242,6 +287,26 @@ function createPhoneAgent({ env, core, publicUrl, log }) {
         return twiml(say(r.text || 'Thank you for calling. Goodbye.') + '<Hangup/>');
       }
       return twiml(listen(r.text || 'Is there anything else I can help with?') + listen(''));
+    },
+    // The office line was dialed and that part of the call is over.
+    async after(p) {
+      const s = calls.get(p.CallSid);
+      if (!s) return twiml(`${say('Sorry, nobody is free right now. Please call back in a few minutes, or book online. Goodbye.')}<Hangup/>`);
+      if (p.DialCallStatus === 'completed') {
+        calls.delete(p.CallSid);
+        sentToOffice.delete(digits(s.from));
+        await core.voice.end(s.callId, { outcome: 'transferred', seconds: p.CallDuration });
+        return twiml('<Hangup/>');
+      }
+      // Busy, no answer or failed: the agent takes the call back.
+      sentToOffice.delete(digits(s.from));
+      s.lastAt = Date.now();
+      s.noTransfer = true;
+      s.outcome = '';
+      const back = 'Sorry, the team could not pick up just now. I can take a message so they call you back, or I can keep helping you myself. What would you like?';
+      s.messages.push({ role: 'user', content: '(The office did not answer. The caller is back with you. Do not transfer again.)' }, { role: 'assistant', content: back });
+      await core.voice.say(s.callId, 'agent', back);
+      return twiml(listen(back) + listen(''));
     },
     // Twilio's "Call status changes" callback: the call ended.
     async status(p) {
