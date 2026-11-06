@@ -53,6 +53,8 @@ An AI assistant answers a company's phone. It gives prices from the company's ra
 3. In the Twilio console, open the number. Under **Voice configuration**, set "A call comes in" to Webhook, `HTTP POST`, `https://limorelay.com/twilio/voice`, and "Call status changes" to `https://limorelay.com/twilio/voice/status` (your `PUBLIC_URL` followed by those paths).
 4. Sign in as the company admin, open **Phone agent**, enter the same number, the number to send calls to when a person is needed, and anything the agent should know. Switch it on and save.
 
+5. Optional, agent as backup for your main line: in your main phone system (carrier or Grasshopper-style virtual phone), forward unanswered calls to the Twilio number. Put the Twilio number last, after your own phones, turn off call announce/screening for it, and pass the caller's number as caller ID. If the agent sends a caller to the office and nobody answers there, the agent notices when the call comes back and takes a message instead of transferring again.
+
 Cost: Twilio voice (about 1–2 cents a minute) plus Claude usage per call.
 
 ### Email: Resend
