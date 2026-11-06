@@ -511,9 +511,16 @@ function emailHtml(m, opt) {
   let terms = '';
   lines = lines.filter((l) => { const t = l.match(/^Terms and Conditions:\s*(\S+)\s*$/); if (t) { terms = t[1]; return false; } return true; });
   // Unpaid booking: the payment link goes in a red box with the warning.
-  let payUrl = '';
-  lines = lines.filter((l) => { const p = l.match(/^Payment link:\s*(https?:\/\/\S+)\s*$/); if (p) { payUrl = p[1]; return false; } return true; });
-  if (payUrl) lines = lines.filter((l) => l.trim() !== PAY_WARNING);
+  // The line just above the link is the box's words (default: the booking warning).
+  let payUrl = '', payText = PAY_WARNING;
+  const pi = lines.findIndex((l) => /^Payment link:\s*https?:\/\/\S+\s*$/.test(l));
+  if (pi >= 0) {
+    payUrl = lines[pi].replace(/^Payment link:\s*/, '').trim();
+    const above = pi > 0 ? lines[pi - 1].trim() : '';
+    const takeAbove = above && !/^[A-Z][^:]{0,40}:\s+\S/.test(above);
+    if (takeAbove) payText = above;
+    lines.splice(takeAbove ? pi - 1 : pi, takeAbove ? 2 : 1);
+  }
   const blocks = []; let cur = [];
   for (const l of lines) { if (l.trim()) cur.push(l); else if (cur.length) { blocks.push(cur); cur = []; } }
   if (cur.length) blocks.push(cur);
@@ -540,7 +547,7 @@ ${banner ? '' : `<tr><td style="height:5px;background:${color};font-size:0;line-
 ${banner ? `<tr><td style="padding:0;font-size:0;line-height:0">${banner}</td></tr><tr><td style="height:22px;font-size:0;line-height:0">&nbsp;</td></tr>` : `<tr><td style="padding:26px 24px 18px">${logo}</td></tr>`}
 ${title}
 <tr><td style="padding:0 24px 6px;word-break:break-word;overflow-wrap:anywhere">${html}</td></tr>
-${payUrl ? `<tr><td style="padding:0 24px 18px"><table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;background:#d32f2f;border-radius:10px"><tr><td style="padding:18px 16px;text-align:center"><div style="font-size:17px;line-height:1.4;font-weight:800;color:#ffffff">${hesc(PAY_WARNING)}</div><a href="${hesc(payUrl)}" style="display:inline-block;margin-top:14px;padding:12px 28px;background:#ffffff;color:#d32f2f;border-radius:8px;font-size:16px;font-weight:800;text-decoration:none">Pay now</a><div style="margin-top:10px;font-size:12px;line-height:1.4;word-break:break-all"><a href="${hesc(payUrl)}" style="color:#ffffff">${hesc(payUrl)}</a></div></td></tr></table></td></tr>` : ''}
+${payUrl ? `<tr><td style="padding:0 24px 18px"><table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;background:#d32f2f;border-radius:10px"><tr><td style="padding:18px 16px;text-align:center"><div style="font-size:17px;line-height:1.4;font-weight:800;color:#ffffff">${hesc(payText)}</div><a href="${hesc(payUrl)}" style="display:inline-block;margin-top:14px;padding:12px 28px;background:#ffffff;color:#d32f2f;border-radius:8px;font-size:16px;font-weight:800;text-decoration:none">Pay now</a><div style="margin-top:10px;font-size:12px;line-height:1.4;word-break:break-all"><a href="${hesc(payUrl)}" style="color:#ffffff">${hesc(payUrl)}</a></div></td></tr></table></td></tr>` : ''}
 ${pdfNote}
 <tr><td style="background:#f7f7f8;border-top:1px solid #ececee;padding:18px 24px;text-align:center;font-size:13px;line-height:1.6;color:#333333">${co.name ? `<div style="font-weight:700;color:#111111">${hesc(co.name)}</div>` : ''}${contact ? `<div>${contact}</div>` : ''}${termsLink}</td></tr>
 </table></td></tr></table></body></html>`;

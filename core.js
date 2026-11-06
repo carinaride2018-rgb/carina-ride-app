@@ -1036,6 +1036,8 @@
       return ['', `Pickup when you land: ${lt.ref}`, `Pickup Date and Time: ${fmtLocal(lt.pickupAt, tz, true)}${lt.outOfTown ? ` (${lt.outOfTown.city} time)` : ''}`,
         `Pickup Address: ${lt.pickup}`, `Destination: ${lt.dropoff}`, `Flight: ${lt.flight}`, `Total: $${money(lt.price.total)}`, '', 'We follow your flight and move the pickup if you land late.', ''].join('\n');
     }
+    // Shown in a red box over the payment link in emails (Dawit 2026-11-06).
+    const PAY_WARNING = 'Your booking is not valid until payment is submitted.';
     // Bottom of the booking confirmation email: how to pay, then the terms.
     function confirmFooter(t) {
       const c = findCompany(t.companyId), lines = [];
@@ -1045,7 +1047,7 @@
       if (t.payment.status === 'paid') lines.push('Payment: paid. Thank you.');
       else if (t.payment.method === 'account') lines.push('Payment: billed to your company account.');
       else if (t.payment.method === 'cash') lines.push(`Payment: cash, paid to ${c.name} before your ride.`);
-      else if (onFile(t) && t.cardToken) lines.push('Your booking is not valid until payment is submitted.', `Payment link: ${cardUrl(t)}`); // shown as a red box in the HTML email (Dawit 2026-11-06)
+      else if (onFile(t) && t.cardToken) lines.push(PAY_WARNING, `Payment link: ${cardUrl(t)}`); // shown as a red box in the HTML email (Dawit 2026-11-06)
       lines.push(`Terms and Conditions: ${(c.domain ? linkBase(c) : (opts.publicUrl || 'https://limorelay.com/')).replace(/#.*$/, '')}#terms.${c.slug}`);
       return '\n\n' + lines.join('\n');
     }
@@ -5365,7 +5367,8 @@
     const unbilled = (a) => db.trips.filter((t) => t.accountId === a.id && t.status === 'completed' && !t.invoiceId && t.payment.status !== 'paid');
     const invView = (inv) => {
       const overdueDays = inv.status === 'open' ? Math.floor((now().getTime() - new Date(inv.dueAt).getTime()) / 86400e3) : 0;
-      return { ...clone(inv), overdue: overdueDays > 0, overdueDays: Math.max(0, overdueDays), accountName: (db.accounts.find((x) => x.id === inv.accountId) || {}).name || '' };
+      const c = findCompany(inv.companyId);
+      return { ...clone(inv), payToken: undefined, payUrl: inv.status === 'open' && c && cardsOn(c) ? invPayUrl(c, inv) : '', overdue: overdueDays > 0, overdueDays: Math.max(0, overdueDays), accountName: (inv.billTo && inv.billTo.name) || (db.accounts.find((x) => x.id === inv.accountId) || {}).name || '' };
     };
     function accountSummary(a) {
       const ub = unbilled(a);
@@ -5501,19 +5504,31 @@
       if (a.send !== false) sendInvoice(ctx.company, acc, inv);
       return invView(inv);
     });
+    // The pay-online link for an invoice (#inv.<token>): no login needed.
+    const invPayUrl = (c, inv) => { if (!inv.payToken) inv.payToken = randomId(12); return `${linkBase(c)}#inv.${inv.payToken}`; };
     function sendInvoice(c, acc, inv) {
-      const to = acc.billingEmail || (db.users.find((u) => u.accountId === acc.id) || {}).email;
+      const to = (inv.billTo && inv.billTo.email) || (acc && (acc.billingEmail || (db.users.find((u) => u.accountId === acc.id) || {}).email));
       if (!to) return false;
-      const due = inv.terms ? `due ${fmtLocal(inv.dueAt, c, true).replace(/,? \d+:\d+.*$/, '')}` : 'due on receipt';
+      const who = (inv.billTo && inv.billTo.name) || (acc && acc.name) || '';
+      const due = inv.terms ? fmtLocal(inv.dueAt, c, true).replace(/,? \d+:\d+.*$/, '') : 'On receipt';
+      const rides = inv.lines.map((l) => `${l.ref}: ${fmtLocal(l.date, c, true)}, ${l.route}: $${money(l.amount)}`);
+      const pay = inv.status === 'open' && cardsOn(c) ? ['', inv.group ? PAY_WARNING : 'Pay this invoice online.', `Payment link: ${invPayUrl(c, inv)}`] : [];
       db.messages.unshift({ id: id('msg'), companyId: c.id, tripId: null, ref: inv.number, at: now().toISOString(), recipient: to, channel: 'email', kind: 'invoice',
-        body: `${c.name}: invoice ${inv.number} for ${acc.name}, ${inv.lines.length} trip${inv.lines.length === 1 ? '' : 's'}, total $${money(inv.total)}, ${due}. The itemized invoice is attached.${c.phone ? ` Questions? Call ${c.phone}.` : ''}` });
+        body: [`${c.name}:`, `Bill to: ${who}`, `Rides: ${inv.lines.length}`, `Total: $${money(inv.total)}`, `Due: ${due}`, '', ...rides, ...pay, '', `${c.phone ? `Questions? Call ${c.phone}.` : ''}`, `Sincerely, ${c.name} Team`].join('\n').replace(/\n{3,}/g, '\n\n') });
       inv.sentTo = to; inv.sentAt = now().toISOString();
       return true;
     }
+    // Paid: the invoice and every ride on it (Dawit 2026-11-06).
+    function invoicePaid(inv, method, extra) {
+      Object.assign(inv, { status: 'paid', paidAt: now().toISOString(), paidMethod: method, ...(extra || {}) });
+      for (const t of db.trips.filter((x) => x.invoiceId === inv.id)) {
+        t.payment = { ...t.payment, status: 'paid', method: 'invoice', paidAt: inv.paidAt };
+        log(t, 'paid', inv.paidBy || 'Office', `Paid on invoice ${inv.number}${method ? ` (${method})` : ''}`);
+      }
+    }
     function acctChargeDone(inv, r) {
       if (r.ok) {
-        Object.assign(inv, { status: 'paid', paidAt: now().toISOString(), paidMethod: 'card', charge: { ...inv.charge, status: 'paid', ref: str(r.ref, 80) } });
-        for (const t of db.trips.filter((x) => x.invoiceId === inv.id)) t.payment = { status: 'paid', method: 'invoice', paidAt: inv.paidAt };
+        invoicePaid(inv, 'card', { charge: { ...inv.charge, status: 'paid', ref: str(r.ref, 80) } });
       } else inv.charge = { ...inv.charge, status: 'failed', error: str(r.error, 200) || 'Card declined' };
     }
     def('dispatch.invoices', STAFF, false, (ctx) => db.clientInvoices.filter((i) => i.companyId === ctx.company.id).sort((x, y) => y.issuedAt.localeCompare(x.issuedAt)).map(invView));
@@ -5530,16 +5545,16 @@
       const trips = db.trips.filter((t) => t.invoiceId === inv.id);
       if (a.action === 'paid') {
         if (inv.status !== 'open') fail('Only open invoices can be marked paid.');
-        inv.status = 'paid'; inv.paidAt = now().toISOString(); inv.paidMethod = ['check', 'ach', 'card', 'wire'].includes(a.method) ? a.method : 'check';
-        for (const t of trips) t.payment = { status: 'paid', method: 'invoice', paidAt: inv.paidAt };
+        invoicePaid(inv, ['check', 'ach', 'card', 'wire', 'zelle', 'cash'].includes(a.method) ? a.method : 'check', { paidBy: ctx.user.name });
       } else if (a.action === 'unpaid') {
         if (inv.status !== 'paid') fail('This invoice is not marked paid.');
-        inv.status = 'open'; inv.paidAt = null;
-        for (const t of trips) t.payment = { status: 'unpaid', method: 'account', paidAt: null };
+        inv.status = 'open'; inv.paidAt = null; inv.paidBy = ''; inv.paidMethod = '';
+        for (const t of trips) t.payment = { ...t.payment, status: 'unpaid', method: inv.group ? 'invoice' : 'account', paidAt: null };
       } else if (a.action === 'void') {
         if (inv.status === 'paid') fail('Mark it unpaid before voiding.');
         inv.status = 'void'; inv.voidedAt = now().toISOString();
-        for (const t of trips) { t.invoiceId = null; t.payment = { status: 'unpaid', method: 'account', paidAt: null }; }
+        // A one-off invoice gives each ride back the way it was paid before.
+        for (const t of trips) { const l = inv.lines.find((x) => x.tripId === t.id); t.invoiceId = null; t.payment = inv.group && l && l.before ? clone(l.before) : { status: 'unpaid', method: 'account', paidAt: null }; }
       } else if (a.action === 'chargecard') {
         if (inv.status !== 'open') fail('Only open invoices can be charged.');
         if (!acc || !acc.card) fail(`${acc ? acc.name : 'This account'} has no backup card on file.`);
@@ -5548,9 +5563,57 @@
         if (payMode === 'demo') acctChargeDone(inv, acc.card.last4 === '0341' ? { ok: false, error: 'Card declined' } : { ok: true, ref: `demo_${randomId(5)}` });
       } else if (a.action === 'send') {
         if (inv.status === 'void') fail('This invoice is void.');
-        if (!sendInvoice(ctx.company, acc, inv)) fail(`${acc.name} has no billing email. Add one to the account.`);
+        if (!sendInvoice(ctx.company, acc, inv)) fail(`${(inv.billTo && inv.billTo.name) || (acc && acc.name) || 'This customer'} has no email. Add one first.`);
       } else fail('Unknown action.');
       return invView(inv);
+    });
+
+    // One invoice for several reservations (any customer, upcoming rides too).
+    // The customer pays it online from the emailed link, or the office marks it paid.
+    const invoiceable = (t) => !t.officeDeleted && t.status !== 'cancelled' && !t.invoiceId && t.payment.status !== 'paid' && !(t.payment.charges || []).some((x) => x.status === 'pending');
+    def('dispatch.groupInvoice', STAFF, true, (ctx, a) => {
+      const c = ctx.company;
+      const ids = Array.isArray(a.ids) ? a.ids.map(String).slice(0, 200) : [];
+      const trips = ids.map((tid) => db.trips.find((t) => t.id === tid && t.companyId === c.id)).filter(Boolean).sort((x, y) => x.pickupAt.localeCompare(y.pickupAt));
+      if (!trips.length) fail('Pick the reservations to put on the invoice.');
+      const bad = trips.filter((t) => !invoiceable(t));
+      if (bad.length) fail(`${bad.map((t) => t.ref).join(', ')} can't go on an invoice: ${bad.length === 1 ? 'it is' : 'they are'} cancelled, already paid or already on an invoice.`);
+      const name = str(a.name, 80).trim(), email = str(a.email, 120).trim().toLowerCase();
+      if (!name) fail('Enter who the invoice is for.');
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail('Enter a valid email for the invoice.');
+      const terms = [0, 15, 30, 45].includes(Number(a.terms)) ? Number(a.terms) : 0;
+      const accIds = [...new Set(trips.map((t) => t.accountId || ''))];
+      c.nextInvoice = (c.nextInvoice || 0) + 1;
+      const issued = now();
+      const lines = trips.map((t) => ({ tripId: t.id, ref: t.ref, date: t.pickupAt, passenger: t.passengerName, route: t.dropoff ? `${t.pickup} to ${t.dropoff}` : `${t.pickup} (${t.hours} h)`, vehicle: t.vehicleType, po: t.poNumber || '', costCenter: t.costCenter || '', amount: t.price.total, before: clone(t.payment) }));
+      const inv = {
+        id: id('cinv'), companyId: c.id, accountId: accIds.length === 1 && accIds[0] ? accIds[0] : null, group: true, billTo: { name, email }, payToken: randomId(12),
+        number: `${c.refPrefix}-INV-${String(c.nextInvoice).padStart(4, '0')}`, from: lines[0].date, through: lines[lines.length - 1].date.slice(0, 10), lines,
+        total: round2(lines.reduce((s2, l) => s2 + l.amount, 0)), terms, issuedAt: issued.toISOString(), dueAt: new Date(issued.getTime() + terms * 86400e3).toISOString(),
+        status: 'open', paidAt: null, sentTo: '', sentAt: null, by: ctx.user.name,
+      };
+      db.clientInvoices.push(inv);
+      for (const t of trips) { t.invoiceId = inv.id; t.payment = { ...t.payment, status: 'unpaid', method: 'invoice', paidAt: null }; log(t, 'invoice', ctx.user.name, `On invoice ${inv.number}`); }
+      if (a.send !== false) sendInvoice(c, null, inv);
+      return invView(inv);
+    });
+    // The customer's pay page for an invoice.
+    const invByPayToken = (tok) => { const inv = str(tok, 40) && db.clientInvoices.find((x) => x.payToken === str(tok, 40)); if (!inv || inv.status === 'void') fail('This invoice link is not valid.', 404); return inv; };
+    const invPayPage = (inv) => {
+      const c = findCompany(inv.companyId), acc = inv.accountId && db.accounts.find((x) => x.id === inv.accountId);
+      return { company: pubCompany(c), invoice: { number: inv.number, status: inv.status, total: inv.total, issuedAt: inv.issuedAt, dueAt: inv.dueAt, terms: inv.terms, paidAt: inv.paidAt, billTo: (inv.billTo && inv.billTo.name) || (acc && acc.name) || '',
+        lines: inv.lines.map((l) => ({ ref: l.ref, date: fmtLocal(l.date, c, true), passenger: l.passenger, route: l.route, vehicle: l.vehicle, amount: l.amount })) }, canPay: inv.status === 'open' && cardsOn(c) };
+    };
+    def('public.invoicePay', 'public', false, (ctx, a) => invPayPage(invByPayToken(a.token)));
+    def('public.payInvoice', 'public', true, (ctx, a) => {
+      const inv = invByPayToken(a.token), c = findCompany(inv.companyId);
+      if (inv.status !== 'open') fail('This invoice is already paid.');
+      if (payMode !== 'demo') fail(payMode !== 'off' ? 'You pay on a secure payment page. Reload and try again.' : "Card payments aren't set up yet.");
+      if (!cardsOn(c)) fail("Card payments aren't set up yet.");
+      const k = demoCard(a.card || a, (inv.billTo && inv.billTo.name) || '');
+      if (k.last4 === '0341') fail('The card was declined. Try another card.');
+      invoicePaid(inv, 'card', { paidBy: `${k.brand} ending ${k.last4}` });
+      return invPayPage(inv);
     });
 
     def('dispatch.customers', STAFF, false, (ctx) => db.users.filter((u) => u.companyId === ctx.company.id && u.role === 'customer').map((u) => {
@@ -7012,6 +7075,7 @@
           if (t.status === 'cancelled') fail('This trip was cancelled.');
           if (t.payment.status === 'paid') fail('This trip is already paid.');
           if (t.accountId) fail('This trip is billed to your company account.');
+          if (t.invoiceId) fail('This ride is on an invoice. Pay it from the invoice email.');
           if (onFile(t)) fail('This trip goes on your saved card automatically.');
           const c = findCompany(t.companyId);
           if (!cardsOn(c)) fail(`Online card payment isn't set up yet. Call ${c.name} to pay.`);
@@ -7031,6 +7095,13 @@
           const acc = acctByCardToken(a.token), c = findCompany(acc.companyId);
           if (!cardsOn(c)) fail("Card payments aren't set up yet.");
           return { mode: 'setup', ...via(c), description: `${c.name}, backup card for ${acc.name}`, email: acc.billingEmail || '', name: acc.name, meta: { kind: 'acctcard', token: acc.cardToken }, back: `#acard.${acc.cardToken}` };
+        }
+        // Paying an invoice from its emailed link.
+        if (a.kind === 'cinv') {
+          const inv = invByPayToken(a.token), c = findCompany(inv.companyId);
+          if (inv.status !== 'open') fail('This invoice is already paid.');
+          if (!cardsOn(c)) fail("Card payments aren't set up yet.");
+          return { ...via(c), amount: cents(inv.total), description: `${c.name}, invoice ${inv.number}`, email: (inv.billTo && inv.billTo.email) || '', meta: { kind: 'cinv', token: inv.payToken, ref: inv.number }, back: `#inv.${inv.payToken}` };
         }
         // Saving a card for a ride: from the booking form, the card link, or after a decline.
         if (a.kind === 'card') {
@@ -7144,6 +7215,17 @@
             log(t, 'paid', GATEWAYS[gwKind(c)], `Card payment $${money(p.amount / 100)}`);
           }
           out = { back: '', ref: t.ref };
+        } else if (m.kind === 'cinv') {
+          const inv = db.clientInvoices.find((x) => x.payToken === m.token);
+          if (!inv) fail('Invoice not found.', 404);
+          const c = findCompany(inv.companyId);
+          if (!acctRef(c) || acctRef(c) !== p.account) fail('Payment account does not match.', 403);
+          if (inv.stripeSession !== p.sessionId) {
+            if (inv.status === 'open') invoicePaid(inv, 'card', { paidBy: `Card ending ${str(p.last4, 4) || '••••'}`, stripeSession: p.sessionId, paidAmount: round2(p.amount / 100) });
+            // Paid twice (or after it was voided): keep a note so the office refunds it.
+            else inv.extraPayments = [...(inv.extraPayments || []), { at: now().toISOString(), amount: round2(p.amount / 100), session: p.sessionId }];
+          }
+          out = { back: `#inv.${inv.payToken}`, ref: inv.number };
         } else if (m.kind === 'quote') {
           const q = db.quotes.find((x) => x.token === m.token);
           if (!q) fail('Quote not found.', 404);

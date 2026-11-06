@@ -154,7 +154,7 @@
       <div class="row">${canCharge ? `<button class="btn sm" type="button" id="te-charge">${what}</button>` : ''}${(open || p.failed) && (p.needsCard || p.failed || open) ? `<button class="btn sm" type="button" id="te-cardlink">${p.needsCard || p.failed ? 'Text card link' : 'Text link to change card'}</button>` : ''}
         ${t.payment.status !== 'paid' && t.status !== 'cancelled' ? '<button class="btn sm" type="button" data-pay="cash">Paid in cash</button>' : ''}</div></div>`;
   }
-  const payPill = (t) => t.pay ? cardPill(t) : t.status === 'cancelled' ? '' : t.payment.status !== 'paid' && t.payment.method === 'account' ? '<span class="pill s-accepted">On account</span>' : t.payment.status !== 'paid' && t.payment.method === 'cash' ? '<span class="pill unpaid">Cash due to office</span>' : t.payment.status !== 'paid' && t.payment.deposit ? `<span class="pill s-assigned">Deposit ${esc(money(t.payment.deposit))} paid</span>` : `<span class="pill ${t.payment.status}">${t.payment.status === 'paid' ? 'Paid' + (t.payment.method ? ' · ' + esc(t.payment.method) : '') : 'Unpaid'}</span>`;
+  const payPill = (t) => t.pay ? cardPill(t) : t.status === 'cancelled' ? '' : t.payment.status !== 'paid' && t.payment.method === 'account' ? '<span class="pill s-accepted">On account</span>' : t.payment.status !== 'paid' && t.payment.method === 'cash' ? '<span class="pill unpaid">Cash due to office</span>' : t.payment.status !== 'paid' && t.payment.method === 'invoice' ? '<span class="pill unpaid">On invoice</span>' : t.payment.status !== 'paid' && t.payment.deposit ? `<span class="pill s-assigned">Deposit ${esc(money(t.payment.deposit))} paid</span>` : `<span class="pill ${t.payment.status}">${t.payment.status === 'paid' ? 'Paid' + (t.payment.method ? ' · ' + esc(t.payment.method) : '') : 'Unpaid'}</span>`;
   const toLocalInput = (d) => { if (TZ) { const p = tzParts(d); return `${p.year}-${p.month}-${p.day}T${String(+p.hour % 24).padStart(2, '0')}:${p.minute}`; } const z = new Date(d.getTime() - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 16); };
   const defaultPickup = () => { const d = new Date(Date.now() + 3 * 3600e3); d.setMinutes(Math.ceil(d.getMinutes() / 15) * 15, 0, 0); return toLocalInput(d); };
   const mapsLink = (addr) => 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(addr);
@@ -743,6 +743,7 @@
     if (route.startsWith('review.')) return viewReview(route.slice(7));
     if (route.startsWith('card.')) return viewCard(route.slice(5));
     if (route.startsWith('acard.')) return viewAcctCard(route.slice(6));
+    if (route.startsWith('inv.')) return viewInvoicePay(route.slice(4));
     if (route.startsWith('terms.')) return viewTerms(route.slice(6));
     if (route.startsWith('sms.')) return viewSms(route.slice(4));
     if (route.startsWith('affsend.')) return viewAffSend(route.slice(8));
@@ -1346,6 +1347,49 @@
             d = await api('public.saveAcctCard', { token, card: formData(f) });
             draw('Card saved. Thank you.');
           } catch (err) { showErr($('#ac-err', v), err); }
+        });
+      };
+    };
+    draw('');
+  }
+
+  // An invoice the customer pays online from the emailed link (#inv.<token>).
+  async function viewInvoicePay(token) {
+    current = null;
+    let d;
+    try { d = await api('public.invoicePay', { token }); } catch (e) { const v = shell({}); v.innerHTML = `<div class="panel stack"><h2>Invoice link not found</h2><p class="muted">${esc(e.message)}</p></div>`; return; }
+    const keep = session; session = { company: d.company, user: null }; brandTitle(d.company, 'Invoice');
+    const v = shell({ narrow: true });
+    session = keep;
+    document.documentElement.style.setProperty('--brand', d.company.color);
+    const draw = (msg) => {
+      const i = d.invoice, stripe = d.company.payMode === 'stripe';
+      v.innerHTML = `<div class="stack">
+        ${d.company.logo ? `<img src="${esc(d.company.logo)}" alt="${esc(d.company.name)}" style="max-width:180px;max-height:90px;object-fit:contain">` : ''}
+        <div><h1 style="font-size:24px">Invoice ${esc(i.number)}</h1><p class="muted small">${esc(d.company.name)}${i.billTo ? ` · for ${esc(i.billTo)}` : ''}</p></div>
+        ${msg ? `<div class="note ok">${esc(msg)}</div>` : ''}
+        ${i.status === 'paid' ? `<div class="note ok"><b>Paid. Thank you.</b> All ${i.lines.length} reservation${i.lines.length === 1 ? ' is' : 's are'} paid.</div>` : ''}
+        <div class="panel stack" style="gap:0">${i.lines.map((l) => `<div class="spread" style="padding:10px 0;border-bottom:1px solid var(--line);gap:12px;align-items:flex-start"><div><b class="mono">${esc(l.ref)}</b> <span class="small muted">${esc(l.date)}</span><div class="small">${esc(l.route)}</div><div class="small faint">${esc(l.passenger)} · ${esc(l.vehicle)}</div></div><b class="num nowrap">${money(l.amount)}</b></div>`).join('')}
+          <div class="spread" style="padding:12px 0 0"><b>Total</b><b class="num" style="font-size:20px">${money(i.total)}</b></div></div>
+        ${i.status === 'open' ? d.canPay ? `<form class="panel stack" id="ip-form" novalidate>
+          <div class="note warn" style="background:#d32f2f;color:#fff;border-color:#d32f2f"><b>Your booking is not valid until payment is submitted.</b></div>
+          ${stripe ? '<p class="small muted">You\'ll pay on a secure payment page, then come straight back here.</p>' : `
+          <label class="field"><span>Card number</span><input name="number" class="mono" inputmode="numeric" autocomplete="cc-number" value="4242 4242 4242 4242"></label>
+          <label class="field"><span>Expiry (MM/YY)</span><input name="exp" class="mono" autocomplete="cc-exp" value="12/30"></label>
+          ${d.company.payMode === 'demo' ? '<p class="small faint">Demo: no real card is charged; a card ending 0341 shows a decline.</p>' : ''}`}
+          <div id="ip-err"></div>
+          <button class="btn brand big" type="submit">Pay ${money(i.total)}</button></form>` : `<div class="note">To pay this invoice, call ${esc(d.company.name)}${d.company.phone ? ` at ${esc(d.company.phone)}` : ''}.</div>` : ''}
+      </div>`;
+      const f = $('#ip-form', v);
+      if (!f) return;
+      f.onsubmit = async (e) => {
+        e.preventDefault();
+        await busy($('button[type=submit]', f), async () => {
+          try {
+            if (stripe) { const r = await payApi('checkout', { kind: 'cinv', token }); location.href = r.url; await new Promise(() => {}); }
+            d = await api('public.payInvoice', { token, card: formData(f) });
+            draw('Payment received. Thank you.');
+          } catch (err) { showErr($('#ip-err', v), err); }
         });
       };
     };
@@ -2894,7 +2938,7 @@
           <div class="row">
             ${t.account && t.status !== 'cancelled' ? `<span class="small muted">Billed to ${esc(t.account.name)}${t.poNumber ? ' · PO ' + esc(t.poNumber) : ''}</span>` : ''}
             ${t.pay && (t.pay.needsCard || t.pay.failed) && t.status !== 'cancelled' ? (t.agent && t.agent.payBy === 'passenger' ? `<span class="small muted">Waiting for ${esc((t.passengerName || 'your client').split(' ')[0])} to add a card. <a href="#card.${esc(t.cardToken)}">Add it for them</a></span>` : `<a class="btn brand sm" href="#card.${esc(t.cardToken)}">${t.pay.needsCard ? 'Add a card' : 'Update card'}</a>`) : ''}
-            ${!t.pay && t.status !== 'cancelled' && t.payment.status !== 'paid' && !t.account && session.company.cards !== false ? `<button class="btn brand sm" type="button" data-act="pay" data-id="${t.id}">Pay ${money(t.price.total - (t.payment.deposit || 0))}${t.payment.deposit ? ' balance' : ''}</button>` : ''}
+            ${!t.pay && t.status !== 'cancelled' && t.payment.status !== 'paid' && t.payment.method !== 'invoice' && !t.account && session.company.cards !== false ? `<button class="btn brand sm" type="button" data-act="pay" data-id="${t.id}">Pay ${money(t.price.total - (t.payment.deposit || 0))}${t.payment.deposit ? ' balance' : ''}</button>` : ''}
             ${t.payment.status === 'paid' || t.status === 'completed' ? `<button class="btn sm" type="button" data-act="receipt" data-id="${t.id}">Receipt</button>` : ''}
             ${t.editTerms && t.editTerms.open ? `<button class="btn sm" type="button" data-act="edit" data-id="${t.id}">Change ride</button>` : ''}
             ${canCancel ? `<button class="btn sm danger" type="button" data-act="cancel" data-id="${t.id}">Cancel ride</button>` : ''}
@@ -4590,8 +4634,42 @@
           <div class="seg" id="t-when">${[['today', 'Today'], ['week', 'This week'], ['month', 'This month'], ['upcoming', 'Upcoming'], ['past', 'Past'], ['all', 'All']].map(([k, l]) => `<button type="button" data-when="${k}" aria-pressed="${k === 'upcoming'}">${l}</button>`).join('')}</div>
           <select class="input" style="width:auto" id="t-status"><option value="">All statuses</option><option value="active">In progress</option>${Object.entries(C.STATUS_LABELS).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select>
           <button class="btn sm" type="button" id="t-delall" hidden>Delete all cancelled</button></div>
+        <div class="note row" id="t-selbar" hidden style="margin-bottom:12px;justify-content:space-between;flex-wrap:wrap;gap:8px"><span id="t-seltext"></span><span class="row" style="gap:8px"><button class="btn sm" type="button" id="t-selclear">Clear</button><button class="btn primary sm" type="button" id="t-mkinv">Make one invoice</button></span></div>
         <div id="t-list"></div>`;
       let last = '';
+      // Reservations ticked for one invoice (kept while the list refreshes).
+      const sel = new Map();
+      const invOk = (t) => t.status !== 'cancelled' && t.payment.status !== 'paid' && t.payment.method !== 'invoice' && !(t.account && t.account.invoice);
+      const selBar = () => {
+        const b = $('#t-selbar', v); b.hidden = !sel.size;
+        const tot = [...sel.values()].reduce((n, t) => n + t.price.total, 0);
+        $('#t-seltext', v).innerHTML = `<b>${sel.size}</b> reservation${sel.size === 1 ? '' : 's'} ticked · <b>${money(tot)}</b>`;
+      };
+      $('#t-selclear', v).onclick = () => { sel.clear(); selBar(); $$('[data-sel]', v).forEach((x) => { x.checked = false; }); };
+      $('#t-mkinv', v).onclick = () => {
+        const list = [...sel.values()].sort((x, y) => x.pickupAt.localeCompare(y.pickupAt)), first = list[0];
+        const m = openModal({ title: 'Make one invoice', body: `<form id="gi" class="stack" novalidate>
+          <div class="tablewrap"><table><tbody>${list.map((t) => `<tr><td class="mono small">${esc(t.ref)}</td><td class="small nowrap">${esc(fmtDT(t.pickupAt))}</td><td class="small">${esc(t.passengerName)}</td><td class="r num">${money(t.price.total)}</td></tr>`).join('')}
+            <tr><td colspan="3" class="r"><b>Total</b></td><td class="r num"><b>${money(list.reduce((n, t) => n + t.price.total, 0))}</b></td></tr></tbody></table></div>
+          <div class="grid2"><label class="field"><span>Bill to</span><input name="name" value="${esc((first.account && first.account.name) || first.passengerName || '')}"></label>
+            <label class="field"><span>Email</span><input name="email" type="email" value="${esc(first.passengerEmail || '')}"></label></div>
+          <label class="field"><span>Payment due</span><select name="terms" class="input"><option value="0">On receipt</option><option value="15">Net 15</option><option value="30">Net 30</option></select></label>
+          <label class="switch"><input type="checkbox" name="send" checked><span>Email it now with a Pay now link</span></label>
+          <p class="small faint">When the invoice is paid, online or marked paid by you, every reservation on it changes to Paid.</p>
+          <div id="gi-err"></div></form>`,
+          footer: '<button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="gi-go">Make invoice</button>' });
+        $('[data-close]', m).onclick = closeModal;
+        $('#gi-go', m).onclick = (e) => busy(e.currentTarget, async () => {
+          const fd = formData($('#gi', m));
+          try {
+            const inv = await api('dispatch.groupInvoice', { ids: list.map((t) => t.id), name: fd.name, email: fd.email, terms: Number(fd.terms), send: !!$('#gi [name=send]', m).checked });
+            closeModal(); sel.clear(); selBar();
+            toast(`${inv.number} made for ${money(inv.total)}${inv.sentTo ? `, emailed to ${inv.sentTo}` : ''}.`);
+            last = ''; refresh();
+            invoiceModal(inv.id, () => { last = ''; refresh(); });
+          } catch (err) { showErr($('#gi-err', m), err); }
+        });
+      };
       // Today, this week (Monday to Sunday) and this month ask for that date range.
       const rangeOf = (k) => {
         const a = new Date(); a.setHours(0, 0, 0, 0);
@@ -4622,12 +4700,14 @@
         const label = { range: { today: 'today', week: 'this week', month: 'this month' }[when], upcoming: 'upcoming', past: 'past', all: f.q || f.status ? 'found' : 'in total' }[w];
         $('#t-count', v).innerHTML = `<b>${trips.length}${cap}</b> reservation${trips.length === 1 ? '' : 's'} ${esc(label)}`;
         trips = trips.slice(0, shown);
-        $('#t-list', v).innerHTML = trips.length ? `<div class="tablewrap"><table><thead><tr><th>Pickup</th><th>Ref</th><th>Passenger</th><th>Route</th><th>Vehicle</th><th>Driver</th><th>Status</th><th class="r">Total</th><th></th></tr></thead><tbody>
-          ${trips.map((t) => `<tr class="click" data-id="${t.id}"><td class="mono small" style="white-space:nowrap">${esc(fmtDT(t.pickupAt))}</td><td class="mono small">${esc(t.ref)}</td><td>${esc(t.passengerName)}</td>
+        $('#t-list', v).innerHTML = trips.length ? `<div class="tablewrap"><table><thead><tr><th title="Tick reservations to put on one invoice"></th><th>Pickup</th><th>Ref</th><th>Passenger</th><th>Route</th><th>Vehicle</th><th>Driver</th><th>Status</th><th class="r">Total</th><th></th></tr></thead><tbody>
+          ${trips.map((t) => `<tr class="click" data-id="${t.id}"><td>${invOk(t) ? `<input type="checkbox" data-sel="${t.id}" aria-label="Put ${esc(t.ref)} on an invoice" ${sel.has(t.id) ? 'checked' : ''}>` : ''}</td><td class="mono small" style="white-space:nowrap">${esc(fmtDT(t.pickupAt))}</td><td class="mono small">${esc(t.ref)}</td><td>${esc(t.passengerName)}</td>
             <td class="small" style="min-width:220px">${esc(t.pickup)}${t.dropoff ? `<br><span class="faint">→ ${esc(t.dropoff)}</span>` : ''}${t.flight ? `<br><span class="mono faint">✈ ${esc(t.flight)}</span>` : ''}</td><td class="small">${esc(t.vehicle ? t.vehicle.name : t.vehicleType)}</td>
             <td class="small">${t.driver ? esc(t.driver.name) : '<span class="warntext">Unassigned</span>'}</td><td>${pill(t)}</td><td class="r num">${money(t.price.total)}<br>${payPill(t)}</td><td>${canReturn(t) ? `<button class="btn sm nowrap" type="button" data-ret="${t.id}" title="Book the ride back for ${esc(t.passengerName)}">↩ Return</button>` : ''}<button class="btn sm nowrap" type="button" data-del="${t.id}" title="Delete ${esc(t.ref)}">Delete</button></td></tr>`).join('')}
           </tbody></table></div>${more > 0 ? `<div class="row" style="justify-content:center;margin-top:12px"><button class="btn" type="button" id="t-more">Show ${Math.min(more, 50)} more</button></div>` : ''}` : `<div class="panel muted">${w === 'range' ? `No trips ${{ today: 'today', week: 'this week', month: 'this month' }[when]}.` : all && w !== 'all' ? `No ${w} trips. <button type="button" class="linkbtn" data-when="all">See all trips</button>` : 'No trips match.'}</div>`;
         $$('tr[data-id]', v).forEach((r) => { r.onclick = () => tripModal(r.dataset.id, () => { last = ''; refresh(); }); });
+        $$('[data-sel]', v).forEach((x) => { x.onclick = (e) => e.stopPropagation(); x.onchange = () => { const t = trips.find((y) => y.id === x.dataset.sel); if (x.checked) sel.set(t.id, t); else sel.delete(t.id); selBar(); }; });
+        selBar();
         $$('[data-ret]', v).forEach((b) => { b.onclick = (e) => {
           e.stopPropagation();
           returnModal(trips.find((x) => x.id === b.dataset.ret), (r) => { closeModal(); toast(`Return trip ${r.ref} booked. We sent ${r.passengerName || 'the passenger'} a confirmation.${r.landingTrip ? ` The pickup where they land is ${r.landingTrip.ref}.` : ''}`); last = ''; refresh(); tripModal(r.id, () => { last = ''; refresh(); }); });
@@ -5587,18 +5667,19 @@
         body: `<div class="invoice" id="inv-print">
           <div class="spread" style="align-items:flex-start"><div><h2 style="margin:0">${esc(c.name)}</h2><div class="small muted">${esc(c.phone || '')}${c.email ? ' · ' + esc(c.email) : ''}</div></div>
             <div style="text-align:right"><div class="label">Invoice</div><b class="mono">${esc(i.number)}</b><div>${invPill(i)}</div></div></div>
-          <div class="grid2"><div><span class="label">Bill to</span><div><b>${esc(a.name || i.accountName)}</b></div><div class="small">${esc(a.contact || '')}</div><div class="small">${esc(a.address || '')}</div><div class="small mono">${esc(a.billingEmail || '')}</div>${a.taxId ? `<div class="small">Tax ID / EIN: ${esc(a.taxId)}</div>` : ''}</div>
+          <div class="grid2"><div><span class="label">Bill to</span><div><b>${esc((i.billTo && i.billTo.name) || a.name || i.accountName)}</b></div>${i.billTo ? `<div class="small mono">${esc(i.billTo.email)}</div>` : ''}<div class="small">${esc(a.contact || '')}</div><div class="small">${esc(a.address || '')}</div><div class="small mono">${esc(a.billingEmail || '')}</div>${a.taxId ? `<div class="small">Tax ID / EIN: ${esc(a.taxId)}</div>` : ''}</div>
             <dl class="kv small"><dt>Issued</dt><dd>${esc(fmtDate(i.issuedAt))}</dd><dt>Terms</dt><dd>${esc(TERMS[i.terms] || '')}</dd><dt>Due</dt><dd>${esc(fmtDate(i.dueAt))}</dd>${i.sentAt ? `<dt>Emailed</dt><dd>${esc(fmtDate(i.sentAt))} to ${esc(i.sentTo)}</dd>` : ''}${i.paidAt ? `<dt>Paid</dt><dd>${esc(fmtDate(i.paidAt))}${i.paidMethod ? ' by ' + esc(i.paidMethod.toUpperCase()) : ''}</dd>` : ''}</dl></div>
           <div class="tablewrap"><table><thead><tr><th>Date</th><th>Ref</th><th>Passenger</th><th>Trip</th><th>PO</th><th>Cost center</th><th class="r">Amount</th></tr></thead><tbody>
             ${i.lines.map((l) => `<tr><td class="small">${esc(fmtDate(l.date))}</td><td class="mono small">${esc(l.ref)}</td><td>${esc(l.passenger)}</td><td class="small">${esc(l.route)} · ${esc(l.vehicle)}</td><td class="small mono">${esc(l.po)}</td><td class="small">${esc(l.costCenter)}</td><td class="r num">${money(l.amount)}</td></tr>`).join('')}
             <tr><td colspan="6" class="r"><b>Total due</b></td><td class="r num"><b>${money(i.total)}</b></td></tr></tbody></table></div>
           <p class="small faint">Amounts include gratuity and any discounts shown on each trip's receipt.</p></div>
           ${i.charge && i.charge.status === 'failed' && i.status === 'open' ? `<div class="note warn">Charging the card ending ${esc(i.charge.last4)} failed: ${esc(i.charge.error)}.</div>` : ''}${i.charge && i.charge.status === 'pending' ? `<div class="note">Charging the card ending ${esc(i.charge.last4)}…</div>` : ''}${i.charge && i.charge.status === 'paid' ? `<p class="small muted">Paid with the backup card ending ${esc(i.charge.last4)} (${esc(fmtDate(i.charge.at))}, ${esc(i.charge.by)}).</p>` : ''}`,
-        footer: `<button class="btn" type="button" id="inv-print-btn">Print or save PDF</button>
+        footer: `${i.payUrl ? '<button class="btn" type="button" id="inv-copy">Copy pay link</button>' : ''}<button class="btn" type="button" id="inv-print-btn">Print or save PDF</button>
           ${i.status === 'open' && a.card && !(i.charge && i.charge.status === 'pending') ? `<button class="btn" type="button" data-ia="chargecard">Charge backup card (${esc(cardName(a.card))})</button>` : ''}
-          ${i.status === 'open' ? '<button class="btn" type="button" data-ia="send">Email again</button><button class="btn danger" type="button" data-ia="void">Void</button><select class="input" id="inv-method" style="width:auto"><option value="check">Check</option><option value="ach">ACH</option><option value="wire">Wire</option><option value="card">Card</option></select><button class="btn primary" type="button" data-ia="paid">Mark paid</button>' : ''}
+          ${i.status === 'open' ? '<button class="btn" type="button" data-ia="send">Email again</button><button class="btn danger" type="button" data-ia="void">Void</button><select class="input" id="inv-method" style="width:auto"><option value="check">Check</option><option value="zelle">Zelle</option><option value="cash">Cash</option><option value="ach">ACH</option><option value="wire">Wire</option><option value="card">Card</option></select><button class="btn primary" type="button" data-ia="paid">Mark paid</button>' : ''}
           ${i.status === 'paid' ? '<button class="btn" type="button" data-ia="unpaid">Mark unpaid</button>' : ''}`,
       });
+      const cp = $('#inv-copy', m); if (cp) cp.onclick = async () => { try { await navigator.clipboard.writeText(i.payUrl); toast('Pay link copied.'); } catch (e) { prompt('Copy the pay link:', i.payUrl); } };
       $('#inv-print-btn', m).onclick = () => { document.body.classList.add('printing-invoice'); window.print(); setTimeout(() => document.body.classList.remove('printing-invoice'), 500); };
       $$('[data-ia]', m).forEach((b) => { b.onclick = () => {
         if (b.dataset.ia === 'void' && !b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'Click again to void'; return; }
