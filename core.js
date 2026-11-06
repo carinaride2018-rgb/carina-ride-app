@@ -1285,7 +1285,9 @@
       return list.map((m, i) => {
         try {
           return cleanBooking(company, { ...raw, service: 'transfer', pickup: m && m.pickup, dropoff: m && m.dropoff, pickupAt: m && m.pickupAt, flight: (m && m.flight) || '',
-            stopList: [], stopWaits: [], meetGreet: !!(m && m.pickup && isAirport(m.pickup)) && !!b.meetGreet, returnAt: undefined, returnFlight: undefined, landing: undefined, repeat: undefined, moreRides: undefined, promoCode: '' }, o);
+            stopList: [], stopWaits: [], meetGreet: !!(m && m.pickup && isAirport(m.pickup)) && !!b.meetGreet, returnAt: undefined, returnFlight: undefined, landing: undefined, repeat: undefined, moreRides: undefined, promoCode: '',
+            // A different traveler on this ride (office booking several people for one customer).
+            ...(m && str(m.passengerName, 80).trim() ? { passengerName: str(m.passengerName, 80).trim(), passengerPhone: str(m.passengerPhone, 30).trim(), signName: '' } : {}) }, o);
         } catch (e) { if (e instanceof ApiError) e.message = `Ride ${i + 2}: ` + e.message; throw e; }
       });
     }

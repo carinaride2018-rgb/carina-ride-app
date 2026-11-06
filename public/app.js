@@ -2182,7 +2182,9 @@
           <label class="field"><span>Pickup time</span><input type="time" step="300" data-mr="${i}" data-k="time" value="${esc(m.time)}"></label>
           <label class="field"><span>Flight <span class="faint">(airport pickup)</span></span><input class="mono" data-mr="${i}" data-k="flight" placeholder="AS 330 or Alaska 330" autocomplete="off" value="${esc(m.flight)}"></label></div>
         <label class="field"><span>Pickup address</span><input data-mr="${i}" data-k="pickup" autocomplete="off" placeholder="Hotel, pier, airport or street address" value="${esc(m.pickup)}"></label>
-        <label class="field"><span>Drop-off address</span><input data-mr="${i}" data-k="dropoff" autocomplete="off" placeholder="Where to?" value="${esc(m.dropoff)}"></label></div>`).join('');
+        <label class="field"><span>Drop-off address</span><input data-mr="${i}" data-k="dropoff" autocomplete="off" placeholder="Where to?" value="${esc(m.dropoff)}"></label>
+        ${dispatch ? `<div class="grid2"><label class="field"><span>Traveler name <span class="faint">(if someone else)</span></span><input data-mr="${i}" data-k="travName" autocomplete="off" placeholder="Same as ride 1" value="${esc(m.travName || '')}"></label>
+          <label class="field"><span>Traveler mobile</span><input data-mr="${i}" data-k="travPhone" type="tel" autocomplete="off" placeholder="Same as ride 1" value="${esc(m.travPhone || '')}"></label></div>` : ''}</div>`).join('');
       $$('[data-mr]', box).forEach((inp) => {
         const upd = () => { moreList[+inp.dataset.mr][inp.dataset.k] = inp.value; requote(); };
         inp.addEventListener('input', upd); inp.addEventListener('change', upd);
@@ -2265,7 +2267,7 @@
       if (repOn) out.repeat = { on: true, days: $$('[data-rday]:checked', host).map((x) => x.dataset.rday), until: repUntil };
       if (retOn && state.service !== 'hourly') { out.returnAt = rwhen && !isNaN(rwhen) ? rwhen.toISOString() : 'missing'; out.returnFlight = retFlight; }
       const mr = state.service === 'hourly' ? [] : moreList.filter((m) => m.pickup.trim() || m.dropoff.trim());
-      if (mr.length) out.moreRides = mr.map((m) => { const w = m.date && m.time ? atLocal(`${m.date}T${m.time}`) : null; return { pickupAt: w && !isNaN(w) ? w.toISOString() : '', pickup: m.pickup.trim(), dropoff: m.dropoff.trim(), flight: m.flight.trim() }; });
+      if (mr.length) out.moreRides = mr.map((m) => { const w = m.date && m.time ? atLocal(`${m.date}T${m.time}`) : null; return { pickupAt: w && !isNaN(w) ? w.toISOString() : '', pickup: m.pickup.trim(), dropoff: m.dropoff.trim(), flight: m.flight.trim(), ...(dispatch && (m.travName || '').trim() ? { passengerName: m.travName.trim(), passengerPhone: (m.travPhone || '').trim() } : {}) }; });
       out.moreList = moreList;
       // The nationwide site reads the times as the pickup city's local time.
       if (opts.info.company && opts.info.company.house) { try { out.browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { /* server keeps the time as sent */ } }
