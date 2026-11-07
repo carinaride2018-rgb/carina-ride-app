@@ -59,7 +59,7 @@
     // Stops are priced by the extra miles they add plus the wait booked at each
     // one (stopWait minutes by default, at the waiting rate). extraStop is an
     // optional fixed fee on top.
-    addons: { childSeat: 15, meetGreet: 25, extraStop: 0, stopWait: 10 },
+    addons: { childSeat: 20, boosterSeat: 0, meetGreet: 25, extraStop: 0, stopWait: 10 },
     peakDates: [],
     promos: [],
   };
@@ -657,11 +657,14 @@
     // Add-ons
     let addons = 0;
     const ad = p.addons || DEFAULT_PRICING.addons;
-    const childSeats = Math.max(0, Math.min(4, Math.round(num(b.childSeats, 0))));
+    const childSeats = Math.max(0, Math.min(3, Math.round(num(b.childSeats, 0))));
+    const boosterSeats = Math.max(0, Math.min(3, Math.round(num(b.boosterSeats, 0))));
     const stops = via.length || Math.max(0, Math.min(10, Math.round(num(b.stops, 0))));
     // A flat rate is all inclusive (Dawit 2026-11-02): gratuity, tax, surcharges and add-ons are in the
     // price. Only changes to the trip are added: stops on the way and waiting time.
-    if (childSeats) { const a = isFlat ? 0 : round2(childSeats * ad.childSeat); addons += a; lines.push({ label: `Child seat × ${childSeats}${isFlat ? ' (included)' : ''}`, amount: a, kind: 'addon' }); }
+    // Car seats are charged on every ride, flat rates too; booster seats are free unless the company sets a price.
+    if (childSeats) { const a = round2(childSeats * num(ad.childSeat, 0)); addons += a; lines.push({ label: `Car seat, infant to 5 years × ${childSeats}`, amount: a, kind: 'addon' }); }
+    if (boosterSeats) { const a = round2(boosterSeats * num(ad.boosterSeat, 0)); addons += a; lines.push({ label: `Booster seat, 6 to 8 years × ${boosterSeats}${a ? '' : ' (free)'}`, amount: a, kind: 'addon' }); }
     if (b.meetGreet) { const a = isFlat ? 0 : round2(ad.meetGreet); addons += a; lines.push({ label: `Meet & greet inside${isFlat ? ' (included)' : ''}`, amount: a, kind: 'addon' }); }
     if (stops && service !== 'hourly') {
       const defWait = num(ad.stopWait, 10), fee = num(ad.extraStop, 0);
@@ -793,6 +796,10 @@
         if (!(c.rates.flatRates || []).length) c.rates.flatRates = [{ id: 'flat_downtown', ...clone(DOWNTOWN_SEATTLE), prices: { 'Sedan': 110, 'SUV': 145, 'Business Van': 220, 'Sprinter Van': 275, '22 PAX Mini Bus': 475 } }];
       }
       // Dawit 2026-11-05: 22 PAX Mini Bus flat rate goes from $450 to $475 (downtown and cruise piers), once.
+      // Car seats (infant to 5) $20 each, booster seats (6 to 8) free (Dawit 2026-11-06).
+      for (const c of d.companies) if (c.pricing && c.pricing.addons && !c.pricing.seats20 && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
+        c.pricing.seats20 = true; c.pricing.addons.childSeat = 20; c.pricing.addons.boosterSeat = 0;
+      }
       for (const c of d.companies) if (c.rates && !c.rates.minibus475 && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
         c.rates.minibus475 = true;
         for (const z of c.rates.flatRates || []) if (z.prices && Number(z.prices['22 PAX Mini Bus']) === 450) z.prices['22 PAX Mini Bus'] = 475;
@@ -1571,7 +1578,8 @@
         ...('smsOk' in b ? { smsOk: b.smsOk === true || b.smsOk === 'on' || b.smsOk === 'true' } : {}),
         ...(b.useCredit === true || b.useCredit === 'true' ? { useCredit: true } : {}),
         passengerEmail: str(b.passengerEmail, 120).toLowerCase(),
-        childSeats: Math.max(0, Math.min(4, Math.round(num(b.childSeats, 0)))),
+        childSeats: Math.max(0, Math.round(num(b.childSeats, 0))),
+        boosterSeats: Math.max(0, Math.round(num(b.boosterSeats, 0))),
         meetGreet: !!b.meetGreet && b.meetGreet !== 'false',
         stops: Math.max(0, Math.min(10, Math.round(num(b.stops, 0)))),
         accountId: null,
@@ -1614,6 +1622,9 @@
       if (!allowPast && when.getTime() < now().getTime() - 5 * 60000) fail('Pickup time is in the past. Choose a later time.');
       out.pickupAt = when.toISOString();
       if (!(out.passengers >= 1 && out.passengers <= 60)) fail('Passengers must be between 1 and 60.');
+      if (out.childSeats > 3) fail('Up to 3 car seats per vehicle. Call us for more.');
+      if (out.boosterSeats > 3) fail('Up to 3 booster seats per vehicle. Call us for more.');
+      if (!force && out.childSeats + out.boosterSeats > out.passengers) fail('Each car seat or booster seat is for a child passenger. Add the children to the passenger count.');
       const fleet = company.house ? houseTypes(company).filter((v) => v.type === out.vehicleType) : db.vehicles.filter((v) => v.companyId === company.id && v.status === 'active' && v.type === out.vehicleType);
       if (!fleet.length && !force) fail(`${company.name} has no ${out.vehicleType} available. Choose another vehicle.`);
       const cap = fleet.length ? Math.max(...fleet.map((v) => v.capacity)) : 60;
@@ -2372,7 +2383,7 @@
       const ap = airportInfo(lp.dest.code);
       const lb = cleanBooking(c, {
         service: 'transfer', pickup: `${ap.name}, ${ap.address}`, dropoff: drop, pickupAt: lp.arrivesAt, flight: t.flight, vehicleType: t.vehicleType, passengers: t.passengers,
-        passengerName: t.passengerName, passengerPhone: t.passengerPhone, passengerEmail: t.passengerEmail, meetGreet: !!raw.landing.meetGreet, signName: t.signName, bags: t.bags || 0, childSeats: t.childSeats || 0,
+        passengerName: t.passengerName, passengerPhone: t.passengerPhone, passengerEmail: t.passengerEmail, meetGreet: !!raw.landing.meetGreet, signName: t.signName, bags: t.bags || 0, childSeats: t.childSeats || 0, boosterSeats: t.boosterSeats || 0,
         accountId: t.accountId, poNumber: t.poNumber, costCenter: t.costCenter, prefs: t.prefs, notes: `Pickup when they land in ${ap.city} after ${t.ref}.`, ...('smsOk' in t ? { smsOk: t.smsOk } : {}),
       }, { allowPast: true });
       const lt = newTrip(c, lb, customer, source, by, '', true);
@@ -2998,7 +3009,7 @@
     // preview: true returns the new price without saving. On save the card is
     // charged or refunded the difference when the fare was already paid, the
     // passenger gets a new confirmation and the office an email.
-    const EDITABLE = ['pickupAt', 'pickup', 'dropoff', 'hours', 'service', 'passengers', 'bags', 'vehicleType', 'flight', 'notes', 'childSeats', 'meetGreet', 'signName', 'passengerName', 'passengerPhone', 'stopList', 'stopWaits'];
+    const EDITABLE = ['pickupAt', 'pickup', 'dropoff', 'hours', 'service', 'passengers', 'bags', 'vehicleType', 'flight', 'notes', 'childSeats', 'boosterSeats', 'meetGreet', 'signName', 'passengerName', 'passengerPhone', 'stopList', 'stopWaits'];
     def('customer.editTrip', ['customer'], true, (ctx, a) => {
       const t = db.trips.find((x) => x.id === a.id && x.customerId === ctx.user.id && !x.hiddenByCustomer);
       if (!t) fail('Trip not found.', 404);
@@ -3021,12 +3032,12 @@
       const price = priceFor(ctx.company, tt, tt.priceCtx);
       const diff = round2(price.total - t.price.total);
       if (a.preview) return { price, diff, fareCharged: onFile(t) && payState(t).fare };
-      const show = (o) => ({ when: fmtLocal(o.pickupAt, ctx.company, true), pickup: o.pickup, dropoff: o.service === 'hourly' ? `${o.hours} h as directed` : o.dropoff, flight: o.flight, vehicle: o.vehicleType, pax: String(o.passengers), bags: String(o.bags || 0), seats: String(o.childSeats || 0), mg: o.meetGreet ? 'Yes' : 'No', name: o.passengerName, phone: o.passengerPhone, stops: (o.stopList || []).join('; '), notes: o.notes });
+      const show = (o) => ({ when: fmtLocal(o.pickupAt, ctx.company, true), pickup: o.pickup, dropoff: o.service === 'hourly' ? `${o.hours} h as directed` : o.dropoff, flight: o.flight, vehicle: o.vehicleType, pax: String(o.passengers), bags: String(o.bags || 0), seats: String(o.childSeats || 0), boosters: String(o.boosterSeats || 0), mg: o.meetGreet ? 'Yes' : 'No', name: o.passengerName, phone: o.passengerPhone, stops: (o.stopList || []).join('; '), notes: o.notes });
       const before = show(t), oldPick = t.pickupAt, oldType = t.vehicleType, oldTotal = t.price.total;
       Object.assign(t, b);
       if (t.pickupAt !== oldPick) t.scheduledPickupAt = t.pickupAt;
       const after = show(t);
-      const LABELS = { when: 'Pickup Date and Time', pickup: 'Pickup Address', dropoff: 'Destination', flight: 'Flight', vehicle: 'Vehicle', pax: 'Passengers', bags: 'Bags', seats: 'Child seats', mg: 'Meet and greet', name: 'Passenger', phone: 'Cellphone', stops: 'Stops', notes: 'Notes' };
+      const LABELS = { when: 'Pickup Date and Time', pickup: 'Pickup Address', dropoff: 'Destination', flight: 'Flight', vehicle: 'Vehicle', pax: 'Passengers', bags: 'Bags', seats: 'Car seats', boosters: 'Booster seats', mg: 'Meet and greet', name: 'Passenger', phone: 'Cellphone', stops: 'Stops', notes: 'Notes' };
       const changed = Object.keys(LABELS).filter((k) => (before[k] || '') !== (after[k] || '')).map((k) => [LABELS[k], before[k], after[k]]);
       if (!changed.length) fail('Nothing was changed.');
       // A new time or vehicle goes back to dispatch for a chauffeur.
@@ -3420,7 +3431,7 @@
       const p = a.patch || {};
       const priceOnly = ['notes', 'priceOverride', 'adjustment'];
       if (t.farmout && !t.farmout.outside && Object.keys(p).some((k) => !priceOnly.includes(k))) fail(`This trip is with ${t.farmout.toName}. Take it back from them before changing the details.`);
-      const affKey = () => JSON.stringify([t.pickupAt, t.pickup, t.dropoff, t.stopList, t.stopWaits, t.vehicleType, t.passengers, t.bags, t.flight, t.passengerName, t.passengerPhone, t.notes, t.hours, t.service, t.childSeats, t.meetGreet, t.signName]);
+      const affKey = () => JSON.stringify([t.pickupAt, t.pickup, t.dropoff, t.stopList, t.stopWaits, t.vehicleType, t.passengers, t.bags, t.flight, t.passengerName, t.passengerPhone, t.notes, t.hours, t.service, t.childSeats, t.boosterSeats, t.meetGreet, t.signName]);
       const affBefore = t.farmout && t.farmout.outside && !t.farmout.done ? affKey() : null;
       if (['completed', 'cancelled'].includes(t.status) && Object.keys(p).some((k) => !priceOnly.includes(k))) fail('This trip is closed. Only notes and price can change.');
       const before = t.pickupAt;
@@ -4728,7 +4739,7 @@
       const sent = f.fromCompanyId === me.id;
       const view = parent ? {
         pickupAt: parent.pickupAt, pickup: parent.pickup, dropoff: parent.dropoff, service: parent.service, serviceLabel: SERVICES[parent.service], hours: parent.hours,
-        vehicleType: parent.vehicleType, passengers: parent.passengers, flight: parent.flight, childSeats: parent.childSeats, meetGreet: parent.meetGreet, stops: parent.stops, stopList: parent.stopList ? parent.stopList.slice() : undefined, stopWaits: parent.stopWaits ? parent.stopWaits.slice() : undefined, bags: parent.bags || 0, signName: parent.signName || '', prefs: parent.prefs ? clone(parent.prefs) : undefined,
+        vehicleType: parent.vehicleType, passengers: parent.passengers, flight: parent.flight, childSeats: parent.childSeats, boosterSeats: parent.boosterSeats, meetGreet: parent.meetGreet, stops: parent.stops, stopList: parent.stopList ? parent.stopList.slice() : undefined, stopWaits: parent.stopWaits ? parent.stopWaits.slice() : undefined, bags: parent.bags || 0, signName: parent.signName || '', prefs: parent.prefs ? clone(parent.prefs) : undefined,
         passengerName: parent.passengerName, notes: parent.notes, status: sent ? parent.status : (child ? child.status : null),
       } : null;
       const out = {
@@ -4809,7 +4820,7 @@
         ...(t.service === 'hourly' ? [`Service: By the hour, ${t.hours} h`] : []), ...(t.flight ? [`Flight: ${t.flight}`] : []),
         `Vehicle: ${t.vehicleType}`, `Passengers: ${t.passengers}`, ...(t.bags ? [`Suitcases: ${t.bags}`] : []),
         `Passenger: ${t.passengerName || '-'}`, ...(t.passengerPhone ? [`Passenger Mobile: ${t.passengerPhone}`] : []), ...(t.signName ? [`Sign: ${t.signName}`] : []),
-        ...(t.childSeats ? [`Child Seats: ${t.childSeats}`] : []), ...(t.meetGreet ? ['Meet and Greet: Yes'] : []), ...(t.notes ? [`Notes: ${t.notes.replace(/\n/g, ' ')}`] : []),
+        ...(t.childSeats ? [`Car Seats (infant to 5): ${t.childSeats}`] : []), ...(t.boosterSeats ? [`Booster Seats (6 to 8): ${t.boosterSeats}`] : []), ...(t.meetGreet ? ['Meet and Greet: Yes'] : []), ...(t.notes ? [`Notes: ${t.notes.replace(/\n/g, ' ')}`] : []),
         ...(rate != null ? [`You Are Paid: $${money(rate)}`] : []),
       ].join('\n'));
       return b;
@@ -5525,7 +5536,7 @@
         id: p.id, mine, from: p.fromName, ref: p.ref, place: clone(p.place), mode: p.mode, rate: p.rate, note: p.note, status: p.status, statusLabel: POST_LABELS[p.status],
         expiresAt: p.expiresAt, createdAt: p.createdAt, takenBy: p.takenBy || null, tripId: mine ? p.tripId : null, sentTo: mine ? p.to.length : undefined,
         bids: mine ? p.bids.map((b) => { const bc = findCompany(b.companyId); return { ...clone(b), acceptRate: bc ? memberCard(bc, me).acceptRate : null, tripsDone: bc ? tripsDone(bc) : 0 }; }) : undefined, myBid: bid ? clone(bid) : null, bidCount: p.bids.length,
-        trip: t ? { pickupAt: t.pickupAt, pickup: t.pickup, dropoff: t.dropoff, serviceLabel: SERVICES[t.service], service: t.service, hours: t.hours, vehicleType: t.vehicleType, passengers: t.passengers, bags: t.bags || 0, flight: t.flight, meetGreet: t.meetGreet, childSeats: t.childSeats, ...(mine ? { price: t.price.total, passengerName: t.passengerName } : {}) } : null,
+        trip: t ? { pickupAt: t.pickupAt, pickup: t.pickup, dropoff: t.dropoff, serviceLabel: SERVICES[t.service], service: t.service, hours: t.hours, vehicleType: t.vehicleType, passengers: t.passengers, bags: t.bags || 0, flight: t.flight, meetGreet: t.meetGreet, childSeats: t.childSeats, boosterSeats: t.boosterSeats || 0, ...(mine ? { price: t.price.total, passengerName: t.passengerName } : {}) } : null,
       };
     }
     function makePost(me, t, place, mode, rate, note, expiresAt, by, auto) {
@@ -6308,7 +6319,7 @@
       }
       if ('busyPct' in a) p.busyPct = pct(a.busyPct, 'busy-time surcharge');
       if ('busyThreshold' in a) p.busyThreshold = pct(a.busyThreshold, 'busy-time trigger', 100);
-      if (a.addons) for (const k of ['childSeat', 'meetGreet', 'extraStop', 'stopWait']) if (k in a.addons) p.addons[k] = k === 'stopWait' ? Math.round(pct(a.addons[k], 'wait booked at each stop', 240)) : pct(a.addons[k], 'add-on price', 1000);
+      if (a.addons) for (const k of ['childSeat', 'boosterSeat', 'meetGreet', 'extraStop', 'stopWait']) if (k in a.addons) p.addons[k] = k === 'stopWait' ? Math.round(pct(a.addons[k], 'wait booked at each stop', 240)) : pct(a.addons[k], 'add-on price', 1000);
       if (Array.isArray(a.peakDates)) {
         p.peakDates = a.peakDates.filter((d) => d && (d.date || d.label)).map((d) => {
           if (!dateOk(d.date)) fail('Each busy date needs a real date.');
@@ -7760,7 +7771,7 @@
         service: a.service === 'hourly' ? 'hourly' : 'transfer',
         pickup: str(a.pickup, 200), dropoff: str(a.dropoff, 200),
         pickupAt: agentPickup(c, a), hours: a.hours, passengers: Math.max(1, Math.round(num(a.passengers, 1))),
-        vehicleType: a.vehicleType, flight: str(a.flight, 20), childSeats: a.childSeats || 0, meetGreet: !!a.meetGreet,
+        vehicleType: a.vehicleType, flight: str(a.flight, 20), childSeats: a.childSeats || 0, boosterSeats: a.boosterSeats || 0, meetGreet: !!a.meetGreet,
         passengerName: str(a.passengerName, 80), passengerPhone: str(a.passengerPhone, 30) || str(from, 30), passengerEmail: str(a.passengerEmail, 120),
         notes: str(a.notes, 400), promoCode: str(a.promoCode, 30),
         ...(typeof a.textsOk === 'boolean' ? { smsOk: a.textsOk } : {}),
@@ -7841,7 +7852,7 @@
           const lp = localParts(t.pickupAt, c.timezone);
           booking.pickupAt = agentPickup(c, { date: a.date || lp.date, time: a.time || `${String(lp.hour).padStart(2, '0')}:${String(lp.minute).padStart(2, '0')}` });
         }
-        for (const k of ['pickup', 'dropoff', 'hours', 'passengers', 'vehicleType', 'flight', 'notes', 'childSeats', 'meetGreet', 'passengerName']) if (a[k] != null && a[k] !== '') booking[k] = a[k];
+        for (const k of ['pickup', 'dropoff', 'hours', 'passengers', 'vehicleType', 'flight', 'notes', 'childSeats', 'boosterSeats', 'meetGreet', 'passengerName']) if (a[k] != null && a[k] !== '') booking[k] = a[k];
         if (a.service) booking.service = a.service === 'hourly' ? 'hourly' : 'transfer';
         if (!Object.keys(booking).length) fail('Say what to change.');
         if (booking.vehicleType || booking.passengers) {
@@ -7908,7 +7919,7 @@
         (() => {
           const ad = (c.pricing && c.pricing.addons) || {}, money = (n) => `$${Math.round(Number(n) * 100) / 100}`;
           const hourly = vehicleTypesFor(c).map((x) => `${x.type} ${money(r.hourly * (x.multiplier || 1))} an hour`).join(', ');
-          return `Prices (for exact fares always use get_quote): by the hour ${hourly || `from ${money(r.hourly)} an hour`}, minimum ${r.minHours} hours. The shortest ride costs at least ${money(r.minFare)}. ${r.gratuityPct ? `A ${r.gratuityPct}% gratuity is included in quotes.` : ''} ${ad.childSeat ? `Child seat: ${money(ad.childSeat)}.` : ''} ${ad.meetGreet ? `Meet and greet inside the airport: ${money(ad.meetGreet)}.` : ''} Waiting time: ${money(r.waitPerMin)} a minute.`.replace(/\s+/g, ' ').trim();
+          return `Prices (for exact fares always use get_quote): by the hour ${hourly || `from ${money(r.hourly)} an hour`}, minimum ${r.minHours} hours. The shortest ride costs at least ${money(r.minFare)}. ${r.gratuityPct ? `A ${r.gratuityPct}% gratuity is included in quotes.` : ''} ${ad.childSeat ? `Car seat (infant to 5 years): ${money(ad.childSeat)} each, up to 3.` : ''} Booster seat (6 to 8 years): ${num(ad.boosterSeat, 0) ? `${money(ad.boosterSeat)} each` : 'free'}, up to 3. ${ad.meetGreet ? `Meet and greet inside the airport: ${money(ad.meetGreet)}.` : ''} Waiting time: ${money(r.waitPerMin)} a minute.`.replace(/\s+/g, ' ').trim();
         })(),
         ...(c.terms ? [`Company terms (for questions about policy):\n${str(c.terms, 1500)}`] : []),
         `Minimum notice for a booking: ${dcfg(c).minNoticeHours || 0} hours. Free cancellation until ${pol.cancelHours} hours before pickup; after that the fee is ${pol.cancelFeePct}% of the fare. Payment: ${cardsOn(c) ? `card, by a secure link we text after booking. ${chargeNote(c)}.` : 'the office arranges payment.'} Chauffeurs never take payment.`,
