@@ -1340,7 +1340,7 @@
         const t2 = newTrip(company, b2, customer, source, by, '', true); tag(t2, i + 2);
         if (t.termsAgreed) t2.termsAgreed = t.termsAgreed;
         let r2 = null;
-        if (rb2) { r2 = newTrip(company, rb2, customer, source, by, '', true); tag(r2, i + 2); linkReturn(t2, r2); if (t.termsAgreed) r2.termsAgreed = t.termsAgreed; }
+        if (rb2) { r2 = newTrip(company, { ...rb2, returnOf: t2.id }, customer, source, by, '', true); tag(r2, i + 2); linkReturn(t2, r2); if (t.termsAgreed) r2.termsAgreed = t.termsAgreed; }
         made.push(t2); if (r2) made.push(r2);
       });
       const to = t.passengerPhone || t.passengerEmail;
@@ -1751,7 +1751,7 @@
         source, createdAt: now().toISOString(), history: [],
       };
       if (t.payment.method === 'card_on_file') { t.cardToken = randomId(6); if (customer && customer.card) t.card = clone(customer.card); }
-      t.price = quote(company, t, ctx);
+      t.price = priceFor(company, t, ctx);
       if (t.price.credit > 0 && customer) {
         // The credit is taken now; repricing never takes more than this.
         ctx.creditMax = t.price.credit;
@@ -1766,7 +1766,34 @@
       return t;
     }
 
-    function reprice(t) { t.price = quote(findCompany(t.companyId), t, t.priceCtx); if (t.payment && onFile(t) && (t.payment.charges || []).length) settle(t); }
+    // A return trip costs exactly what its first ride costs (Dawit 2026-11-06):
+    // the same fare, surcharges, add-ons, discounts, gratuity and tax, whatever
+    // the direction, time of day or pickup fees. Only the return's own extras
+    // (wait time, tolls, an office adjustment) are added. A custom price on the
+    // return, or another vehicle type, prices the return on its own.
+    function sameAsFirst(r, priced) {
+      const t = r.returnOf && db.trips.find((x) => x.id === r.returnOf);
+      if (!t || !t.price || r.service === 'hourly' || t.vehicleType !== r.vehicleType) return priced;
+      if (r.priceOverride != null && r.priceOverride !== '') return priced;
+      const o = t.price, custom = t.priceOverride != null && t.priceOverride !== '';
+      const base = custom ? round2(num(o.total, 0) + num(o.credit, 0)) : round2(num(o.subtotal, 0) + num(o.gratuity, 0) + num(o.tax, 0));
+      const lines = custom ? [{ label: `Same price as ${t.ref}`, amount: base, kind: 'fare' }] : clone((o.lines || []).filter((l) => !['extra', 'adjustment', 'credit', 'override'].includes(l.kind)));
+      const own = (priced.lines || []).filter((l) => l.kind === 'extra' || l.kind === 'adjustment');
+      return {
+        ...priced, lines: [...lines, ...own, { label: `Return trip: same price as ${t.ref}`, amount: null, kind: 'override' }],
+        fare: custom ? base : o.fare, surcharges: custom ? 0 : o.surcharges, addons: custom ? 0 : o.addons, discounts: custom ? 0 : o.discounts,
+        subtotal: custom ? base : o.subtotal, gratuity: custom ? 0 : o.gratuity, tax: custom ? 0 : o.tax, credit: 0,
+        total: round2(Math.max(0, base + num(priced.extras, 0) + num(priced.adjustment, 0))), sameAs: t.ref,
+      };
+    }
+    function priceFor(company, t, ctx) { return sameAsFirst(t, quote(company, t, ctx)); }
+    function reprice(t) {
+      t.price = priceFor(findCompany(t.companyId), t, t.priceCtx);
+      if (t.payment && onFile(t) && (t.payment.charges || []).length) settle(t);
+      // The return follows its first ride.
+      const r = t.returnId && db.trips.find((x) => x.id === t.returnId && x.returnOf === t.id);
+      if (r && !['completed', 'cancelled'].includes(r.status) && !r.invoiceId) reprice(r);
+    }
 
     // ---- Flight monitoring ---------------------------------------------------
     // When the flight itself is due: arrivals land at the pickup time; for
@@ -2780,7 +2807,7 @@
       const wantsLanding = !!((a.booking || {}).landing && a.booking.landing.on);
       const t = newTrip(ctx.company, b, ctx.user, 'online', ctx.user.name, (a.booking || {}).promoCode, wantsLanding || mb.length > 0);
       let r = null;
-      if (rb) { r = newTrip(ctx.company, rb, ctx.user, 'online', ctx.user.name, ''); linkReturn(t, r); }
+      if (rb) { r = newTrip(ctx.company, { ...rb, returnOf: t.id }, ctx.user, 'online', ctx.user.name, ''); linkReturn(t, r); }
       const lt = wantsLanding ? landingTrip(ctx.company, t, a.booking, ctx.user, 'online', ctx.user.name) : null;
       const more = bookMore(ctx.company, t, mb, ctx.user, 'online', ctx.user.name);
       if (lt || more.length) notify(t, 'booked');
@@ -2991,7 +3018,7 @@
       const h = byAgent ? dcfg(ctx.company).minNoticeHours || 0 : et.hours;
       if (new Date(b.pickupAt).getTime() < now().getTime() + h * 3600e3 - 60e3) fail(byAgent ? `The new pickup must be at least ${h} hours from now.` : `Online changes need the new pickup at least ${h} hours away. For a sooner pickup, call ${ctx.company.name}${ctx.company.phone ? ` at ${ctx.company.phone}` : ''}.`);
       const tt = { ...clone(t), ...b };
-      const price = quote(ctx.company, tt, tt.priceCtx);
+      const price = priceFor(ctx.company, tt, tt.priceCtx);
       const diff = round2(price.total - t.price.total);
       if (a.preview) return { price, diff, fareCharged: onFile(t) && payState(t).fare };
       const show = (o) => ({ when: fmtLocal(o.pickupAt, ctx.company, true), pickup: o.pickup, dropoff: o.service === 'hourly' ? `${o.hours} h as directed` : o.dropoff, flight: o.flight, vehicle: o.vehicleType, pax: String(o.passengers), bags: String(o.bags || 0), seats: String(o.childSeats || 0), mg: o.meetGreet ? 'Yes' : 'No', name: o.passengerName, phone: o.passengerPhone, stops: (o.stopList || []).join('; '), notes: o.notes });
@@ -3349,7 +3376,7 @@
       const wantsLanding = !!((a.booking || {}).landing && a.booking.landing.on);
       const t = newTrip(ctx.company, b, customer, 'phone', ctx.user.name, (a.booking || {}).promoCode, wantsLanding || mb.length > 0);
       let r = null;
-      if (rb) { r = newTrip(ctx.company, rb, customer, 'phone', ctx.user.name, ''); linkReturn(t, r); }
+      if (rb) { r = newTrip(ctx.company, { ...rb, returnOf: t.id }, customer, 'phone', ctx.user.name, ''); linkReturn(t, r); }
       const lt = wantsLanding ? landingTrip(ctx.company, t, a.booking, customer, 'phone', ctx.user.name) : null;
       const more = bookMore(ctx.company, t, mb, customer, 'phone', ctx.user.name);
       if (lt || more.length) notify(t, 'booked');
@@ -3379,7 +3406,7 @@
         if (!lp) fail('The pickup when they land needs the flight they take out.');
         if (!str(a.landing.dropoff, 200)) fail(`Enter where to take them in ${lp.dest.city}.`);
       }
-      const r = newTrip(ctx.company, b, customer, 'phone', ctx.user.name, '', wantsLanding);
+      const r = newTrip(ctx.company, { ...b, returnOf: t.id }, customer, 'phone', ctx.user.name, '', wantsLanding);
       // The card the first ride was booked with covers the return too.
       if (r.payment.method === 'card_on_file' && !r.card && t.card) r.card = clone(t.card);
       linkReturn(t, r);
@@ -5091,7 +5118,7 @@
       const by = `${x.name} (outside affiliate)`;
       const tag = (t) => { t.affIn = { affId: x.id, name: x.name, theirRef, pending: true, token: randomId(16), passengerMsgs: !!x.passengerMsgs, email: x.email }; made.push(t); return t; };
       const first = tag(newTrip(c, b, null, 'affiliate', by, '', true));
-      if (rb) linkReturn(first, tag(newTrip(c, rb, null, 'affiliate', by, '', true)));
+      if (rb) linkReturn(first, tag(newTrip(c, { ...rb, returnOf: first.id }, null, 'affiliate', by, '', true)));
       for (const m of bookMore(c, first, mb, null, 'affiliate', by)) tag(m);
       const lines = made.map((t) => `${t.ref}: ${fmtLocal(t.pickupAt, c, true)}, ${t.pickup}${t.dropoff ? ' to ' + t.dropoff : ''}, ${t.vehicleType}, ${t.passengers} pax`);
       officeMail(c, made[0], 'aff_in', [`${x.name} sent you ${made.length === 1 ? 'a trip' : made.length + ' trips'}${theirRef ? ` (their ref ${theirRef})` : ''}. Accept or decline on the Board.`, '', ...lines].join('\n'));
