@@ -4642,6 +4642,7 @@
       v.innerHTML = `<div class="pagehead"><div class="row" style="gap:12px;align-items:baseline"><h1>Trips</h1><span class="tcount" id="t-count"></span></div><div class="row"><button class="btn" type="button" id="t-bin">&#128465; Deleted trips</button><button class="btn" type="button" id="t-import">Import from a spreadsheet</button><button class="btn primary" type="button" id="t-new">New booking</button></div></div>
         <div class="row" style="margin-bottom:14px"><input class="input" style="max-width:320px" id="t-q" type="search" placeholder="Search name, reference, address, flight">
           <div class="seg" id="t-when">${[['today', 'Today'], ['week', 'This week'], ['month', 'This month'], ['upcoming', 'Upcoming'], ['past', 'Past'], ['all', 'All']].map(([k, l]) => `<button type="button" data-when="${k}" aria-pressed="${k === 'upcoming'}">${l}</button>`).join('')}</div>
+          <button class="btn donebtn" type="button" data-when="completed" id="t-done" aria-pressed="false">&#10003; Completed trips</button>
           <select class="input" style="width:auto" id="t-status"><option value="">All statuses</option><option value="active">In progress</option>${Object.entries(C.STATUS_LABELS).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select>
           <button class="btn sm" type="button" id="t-delall" hidden>Delete all cancelled</button></div>
         <div class="note row" id="t-selbar" hidden style="margin-bottom:12px;justify-content:space-between;flex-wrap:wrap;gap:8px"><span id="t-seltext"></span><span class="row" style="gap:8px"><button class="btn sm" type="button" id="t-selclear">Clear</button><button class="btn primary sm" type="button" id="t-mkinv">Make one invoice</button></span></div>
@@ -4692,13 +4693,18 @@
       async function refresh(silent) {
         let trips;
         const inRange = ['today', 'week', 'month'].includes(when);
-        try { trips = await api('dispatch.trips', inRange ? { ...f, ...rangeOf(when) } : f); } catch (e) { if (!silent) showErr($('#t-list', v), e); return; }
+        const doneView = when === 'completed';
+        try { trips = await api('dispatch.trips', inRange ? { ...f, ...rangeOf(when) } : doneView ? { ...f, status: 'completed' } : f); } catch (e) { if (!silent) showErr($('#t-list', v), e); return; }
         const sig = JSON.stringify(trips) + when + shown; if (sig === last) return; last = sig;
         // Upcoming (soonest first) by default; past trips newest first. A search or
         // status filter looks through everything.
         const open = (t) => !['completed', 'cancelled'].includes(t.status);
         const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
-        const w = inRange ? 'range' : f.q || f.status ? 'all' : when;
+        const w = doneView ? 'completed' : inRange ? 'range' : f.q || f.status ? 'all' : when;
+        // Completed trips live in their own basket (Completed trips button); the
+        // day, week, month, upcoming and past lists leave them out.
+        if (['range', 'upcoming', 'past'].includes(w)) trips = trips.filter((t) => t.status !== 'completed');
+        if (w === 'completed') trips.sort((x, y) => y.pickupAt.localeCompare(x.pickupAt));
         if (w === 'range') trips.sort((x, y) => x.pickupAt.localeCompare(y.pickupAt));
         const all = trips.length;
         const cancelledCount = trips.filter((t) => t.status === 'cancelled').length;
@@ -4706,15 +4712,15 @@
         else if (w === 'past') trips = trips.filter((t) => !open(t) && new Date(t.pickupAt) < dayStart).sort((x, y) => y.pickupAt.localeCompare(x.pickupAt));
         const more = trips.length - shown;
         // Reservation count for what is on screen (the chosen dates, filter or search).
-        const cap = !inRange && all >= 300 && w !== 'upcoming' ? '+' : '';
-        const label = { range: { today: 'today', week: 'this week', month: 'this month' }[when], upcoming: 'upcoming', past: 'past', all: f.q || f.status ? 'found' : 'in total' }[w];
+        const cap = !inRange && all >= 300 && w !== 'upcoming' && trips.length >= 300 ? '+' : '';
+        const label = { range: { today: 'today', week: 'this week', month: 'this month' }[when], upcoming: 'upcoming', past: 'past', completed: f.q ? 'completed found' : 'completed', all: f.q || f.status ? 'found' : 'in total' }[w];
         $('#t-count', v).innerHTML = `<b>${trips.length}${cap}</b> reservation${trips.length === 1 ? '' : 's'} ${esc(label)}`;
         trips = trips.slice(0, shown);
         $('#t-list', v).innerHTML = trips.length ? `<div class="tablewrap"><table><thead><tr><th title="Tick reservations to put on one invoice"></th><th>Pickup</th><th>Ref</th><th>Passenger</th><th>Route</th><th>Vehicle</th><th>Driver</th><th>Status</th><th class="r">Total</th><th></th></tr></thead><tbody>
           ${trips.map((t) => `<tr class="click" data-id="${t.id}"><td>${invOk(t) ? `<input type="checkbox" data-sel="${t.id}" aria-label="Put ${esc(t.ref)} on an invoice" ${sel.has(t.id) ? 'checked' : ''}>` : ''}</td><td class="mono small" style="white-space:nowrap">${esc(fmtDT(t.pickupAt))}</td><td class="mono small">${esc(t.ref)}</td><td>${esc(t.passengerName)}</td>
             <td class="small" style="min-width:220px">${esc(t.pickup)}${t.dropoff ? `<br><span class="faint">→ ${esc(t.dropoff)}</span>` : ''}${t.flight ? `<br><span class="mono faint">✈ ${esc(t.flight)}</span>` : ''}</td><td class="small">${esc(t.vehicle ? t.vehicle.name : t.vehicleType)}</td>
             <td class="small">${t.driver ? esc(t.driver.name) : '<span class="warntext">Unassigned</span>'}</td><td>${pill(t)}</td><td class="r num">${money(t.price.total)}<br>${payPill(t)}</td><td>${canReturn(t) ? `<button class="btn sm nowrap" type="button" data-ret="${t.id}" title="Book the ride back for ${esc(t.passengerName)}">↩ Return</button>` : ''}<button class="btn sm nowrap" type="button" data-del="${t.id}" title="Delete ${esc(t.ref)}">Delete</button></td></tr>`).join('')}
-          </tbody></table></div>${more > 0 ? `<div class="row" style="justify-content:center;margin-top:12px"><button class="btn" type="button" id="t-more">Show ${Math.min(more, 50)} more</button></div>` : ''}` : `<div class="panel muted">${w === 'range' ? `No trips ${{ today: 'today', week: 'this week', month: 'this month' }[when]}.` : all && w !== 'all' ? `No ${w} trips. <button type="button" class="linkbtn" data-when="all">See all trips</button>` : 'No trips match.'}</div>`;
+          </tbody></table></div>${more > 0 ? `<div class="row" style="justify-content:center;margin-top:12px"><button class="btn" type="button" id="t-more">Show ${Math.min(more, 50)} more</button></div>` : ''}` : `<div class="panel muted">${w === 'completed' ? 'No completed trips.' : w === 'range' ? `No trips ${{ today: 'today', week: 'this week', month: 'this month' }[when]}.` : all && w !== 'all' ? `No ${w} trips. <button type="button" class="linkbtn" data-when="all">See all trips</button>` : 'No trips match.'}</div>`;
         $$('tr[data-id]', v).forEach((r) => { r.onclick = () => tripModal(r.dataset.id, () => { last = ''; refresh(); }); });
         $$('[data-sel]', v).forEach((x) => { x.onclick = (e) => e.stopPropagation(); x.onchange = () => { const t = trips.find((y) => y.id === x.dataset.sel); if (x.checked) sel.set(t.id, t); else sel.delete(t.id); selBar(); }; });
         selBar();
@@ -4748,8 +4754,8 @@
         }; });
       };
       let when = 'upcoming', shown = 50;
-      const setWhen = (k) => { when = k; shown = 50; $$('#t-when button', v).forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.when === k))); refresh(); };
-      $$('#t-when button', v).forEach((b) => { b.onclick = () => setWhen(b.dataset.when); });
+      const setWhen = (k) => { when = k; shown = 50; $$('#t-when button, #t-done', v).forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.when === k))); refresh(); };
+      $$('#t-when button, #t-done', v).forEach((b) => { b.onclick = () => setWhen(b.dataset.when); });
       let st = null;
       $('#t-q', v).oninput = (e) => { f.q = e.target.value; clearTimeout(st); st = setTimeout(() => { last = ''; refresh(); }, 200); };
       $('#t-status', v).onchange = (e) => { f.status = e.target.value; last = ''; refresh(); };
