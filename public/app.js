@@ -2305,6 +2305,8 @@
       if (pb) pb.innerHTML = landPrice(lp, dispatch ? 'Enter where to take them to see the price.' : 'Enter where you are going to see the price.');
       return lp;
     }
+    // A return trip costs exactly what the first ride costs (the server prices it the same way).
+    const sameRet = (q, r) => r && !r.error && q ? { ...r, total: (q.lines || []).some((l) => l.kind === 'override') ? Math.round(((q.total || 0) + (q.credit || 0)) * 100) / 100 : Math.round(((q.subtotal || 0) + (q.gratuity || 0) + (q.tax || 0)) * 100) / 100, lines: q.lines, sameAs: true } : r;
     const returnOf = (b) => ({ ...b, pickup: b.dropoff, dropoff: b.pickup, stopList: (b.stopList || []).slice().reverse(), stopWaits: (b.stopWaits || []).slice().reverse(), pickupAt: b.returnAt, flight: b.returnFlight || '', returnAt: undefined });
     async function requote() {
       clearTimeout(qt);
@@ -2318,7 +2320,8 @@
           const withRet = b.returnAt && b.returnAt !== 'missing';
           const mr = (b.moreRides || []).map((m, i) => ({ ...m, n: i + 2 }));
           const moreQ = (m) => (m.pickup && m.dropoff && m.pickupAt ? opts.quoteFn({ ...b, service: 'transfer', pickup: m.pickup, dropoff: m.dropoff, pickupAt: m.pickupAt, flight: m.flight, stopList: [], stopWaits: [], returnAt: undefined, returnFlight: undefined, landing: undefined, repeat: undefined, moreRides: undefined, moreList: undefined, promoCode: '' }).catch((e) => ({ error: e.message })) : Promise.resolve(null));
-          const [q, rq, ...mq] = await Promise.all([opts.quoteFn(b), withRet ? opts.quoteFn(returnOf(b)).catch(() => null) : null, ...mr.map(moreQ)]);
+          const [q, rq0, ...mq] = await Promise.all([opts.quoteFn(b), withRet ? opts.quoteFn(returnOf(b)).catch(() => null) : null, ...mr.map(moreQ)]);
+          const rq = sameRet(q, rq0);
           if (n !== qn) return;
           const lp = drawLanding(q.landing), lpOn = lp && state.landOn;
           const sbtn = $('#bk-submit', host); if (sbtn && !opts.submitLabel) sbtn.textContent = mr.length ? `Book these ${mr.length + 1} rides` : 'Book this ride';
@@ -2444,7 +2447,7 @@
         try {
           const one = { ...b, vehicleType: v.type, childSeats: 0, meetGreet: false, promoCode: '', returnAt: undefined, landing: undefined };
           const ret = b.returnAt && b.returnAt !== 'missing' ? opts.quoteFn(returnOf({ ...one, returnAt: b.returnAt, returnFlight: b.returnFlight })) : null;
-          const q = await opts.quoteFn(one), r = ret ? await ret : null;
+          const q = await opts.quoteFn(one), r = sameRet(q, ret ? await ret : null);
           if (vpKey === key) el.textContent = r ? `${money(q.total + r.total)} round trip` : money(q.total);
         } catch (e) { if (vpKey === key) el.textContent = ''; }
       }));
