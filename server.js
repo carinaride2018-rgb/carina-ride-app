@@ -24,6 +24,7 @@ const { gateway, squareOAuth, onSquareTokens } = require('./gateways.js');
 const { createWebPush } = require('./webpush.js');
 const { createNativePush, isNative } = require('./nativepush.js');
 const { createPhoneAgent } = require('./phoneagent.js');
+const { createHighLevel } = require('./highlevel.js');
 
 const PORT = Number(process.env.PORT) || 3000;
 const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'data', 'db.json');
@@ -299,7 +300,7 @@ function limited(ip) {
 
 // Hosts put the app behind a proxy; only then is X-Forwarded-For the visitor.
 const clientIp = (req) => (TRUST_PROXY && String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()) || req.socket.remoteAddress;
-const LIMITED = new Set(['auth.login', 'auth.signup', 'public.requestQuote', 'public.acceptQuote', 'public.rate', 'public.requestTrial', 'auth.changeEmail', 'public.forgotPassword', 'public.setPassword', 'owner.testEmail', 'owner.testSms', 'public.companySignup', 'public.guestBook', 'public.affAnswer', 'public.affChauffeur', 'public.affStatus', 'public.affNoShow', 'public.affExtras', 'public.affGotIt', 'public.affSend', 'public.affDriverLink', 'public.saveAcctCard']);
+const LIMITED = new Set(['auth.login', 'auth.signup', 'public.requestQuote', 'public.acceptQuote', 'public.rate', 'public.requestTrial', 'auth.changeEmail', 'public.forgotPassword', 'public.setPassword', 'owner.testEmail', 'owner.testSms', 'dispatch.testHighlevel', 'public.companySignup', 'public.guestBook', 'public.affAnswer', 'public.affChauffeur', 'public.affStatus', 'public.affNoShow', 'public.affExtras', 'public.affGotIt', 'public.affSend', 'public.affDriverLink', 'public.saveAcctCard']);
 
 // ---- Outside services ---------------------------------------------------------
 
@@ -652,6 +653,50 @@ async function twilioRoute(req, res, url, raw) {
   } catch (e) { console.error('incoming text', e); xml(); }
 }
 
+// ---- HighLevel link (core.js hl, highlevel.js) -------------------------------------
+// A HighLevel workflow posts each new lead to <PUBLIC_URL>hooks/highlevel/<company>/<key>
+// ("Webhook" action, POST). The secret key in the address is the password.
+const hlApi = createHighLevel();
+async function highlevelHook(req, res, url, raw) {
+  if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'Use POST.' });
+  const [slug, key] = url.pathname.slice('/hooks/highlevel/'.length).split('/');
+  let body = {};
+  try { body = /^\s*[{[]/.test(raw) ? JSON.parse(raw) : Object.fromEntries(new URLSearchParams(raw)); }
+  catch (e) { return send(res, 400, { ok: false, error: 'The webhook body must be JSON.' }); }
+  try {
+    const r = await core.hl.inbound(decodeURIComponent(slug || ''), decodeURIComponent(key || ''), body);
+    if (r.status !== 200) return send(res, r.status, { ok: false, error: r.error });
+    send(res, 200, { ok: true, quote: r.number, duplicate: !!r.duplicate });
+    flushOutbox();
+  } catch (e) { console.error('highlevel webhook', e); send(res, 500, { ok: false, error: 'Something went wrong on the server.' }); }
+}
+async function testHighlevel(token) {
+  const job = await core.hl.creds(token);
+  if (!job) { const e = new Error('Only the company admin can test the HighLevel link.'); e.status = 403; throw e; }
+  let r;
+  try { r = await hlApi.test(job); } catch (e) { r = { ok: false, error: e.message }; }
+  await core.hl.tested(job.companyId, r);
+  return r;
+}
+// Every 2 minutes: move HighLevel quotes for rides booked, done or cancelled.
+let hlRunning = false;
+async function hlRun() {
+  if (hlRunning) return;
+  hlRunning = true;
+  try {
+    const jobs = await core.hl.pending(20), results = [];
+    for (const job of jobs) {
+      const out = { kind: job.kind, id: job.id, ref: job.ref, want: job.want };
+      try { Object.assign(out, await hlApi.sync(job)); }
+      catch (e) { out.error = e.message; if (e.lostOpp) out.clearOpp = true; }
+      results.push(out);
+    }
+    await core.hl.synced(results);
+  } catch (e) { console.error('highlevel sync', e.message); }
+  hlRunning = false;
+}
+setInterval(hlRun, 120000).unref();
+
 // The owner's Connections screen: which services are real. Never shows keys.
 async function connections(token) {
   const me = await core.call(token, 'auth.me', {});
@@ -718,6 +763,12 @@ const server = http.createServer((req, res) => {
     req.on('end', () => payRoute(req, res, url, Buffer.concat(chunks).toString('utf8')));
     return;
   }
+  if (url.pathname.startsWith('/hooks/highlevel/')) {
+    const chunks = []; let size = 0;
+    req.on('data', (c) => { size += c.length; if (size > 2e5) req.destroy(); else chunks.push(c); });
+    req.on('end', () => highlevelHook(req, res, url, Buffer.concat(chunks).toString('utf8')));
+    return;
+  }
   if (url.pathname.startsWith('/twilio/')) {
     const chunks = []; let size = 0;
     req.on('data', (c) => { size += c.length; if (size > 1e5) req.destroy(); else chunks.push(c); });
@@ -745,6 +796,7 @@ const server = http.createServer((req, res) => {
       if (method === 'owner.connections') return send(res, 200, { ok: true, data: await connections(token) });
       if (method === 'owner.testEmail') return send(res, 200, { ok: true, data: await testEmail(token, args) });
       if (method === 'owner.testSms') return send(res, 200, { ok: true, data: await testSms(token, args) });
+      if (method === 'dispatch.testHighlevel') return send(res, 200, { ok: true, data: await testHighlevel(token) });
       await warmFor(args);
       const data = await core.call(token, method, args);
       send(res, 200, { ok: true, data });

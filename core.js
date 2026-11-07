@@ -4115,6 +4115,271 @@
       return quoteView(q, true);
     });
 
+    // ---- HighLevel link (Dawit 2026-11-06) ------------------------------------
+    // Leads from the company's HighLevel funnel arrive as quotes here (a
+    // HighLevel workflow posts them to the inbound address). When the ride is
+    // booked, done or cancelled, the matching HighLevel opportunity is moved, so
+    // HighLevel stops chasing customers who already booked and its ads reports
+    // count real sales. The network calls are made by server.js (highlevel.js).
+    const HL_DEFAULT = { on: false, locationId: '', pipeline: 'Quote Pipeline', bookedStage: 'Booked', doneStage: 'Job Complete', token: '', key: '', since: '' };
+    const hlcfg = (c) => ({ ...HL_DEFAULT, ...(c.hl || {}) });
+    const hlToken = (h) => { if (!h.token) return ''; if (!opts.unseal) return h.token; const o = opts.unseal(h.token); return o && o.token ? o.token : ''; };
+    const hlBase = () => (opts.publicUrl || '').replace(/#.*$/, '').replace(/\/?$/, '/');
+    function hlView(c) {
+      const h = hlcfg(c);
+      return {
+        on: !!h.on, locationId: h.locationId, pipeline: h.pipeline, bookedStage: h.bookedStage, doneStage: h.doneStage, tokenSet: !!h.token,
+        inboundUrl: h.key ? `${hlBase()}hooks/highlevel/${c.slug}/${h.key}` : '', since: h.since || '',
+        received: h.received || 0, lastLeadAt: h.lastLeadAt || null, synced: h.synced || 0, lastOkAt: h.lastOkAt || null,
+        lastError: h.lastError || '', lastErrorAt: h.lastErrorAt || null, lastTest: h.lastTest || null,
+      };
+    }
+    def('dispatch.highlevel', ['admin'], false, (ctx) => hlView(ctx.company));
+    def('dispatch.saveHighlevel', ['admin'], true, (ctx, a) => {
+      const c = ctx.company, h = hlcfg(c);
+      const locationId = str(a.locationId, 60).replace(/\s+/g, '');
+      if (locationId && !/^[A-Za-z0-9]{8,40}$/.test(locationId)) fail('Enter the HighLevel Location ID: letters and numbers only (Settings, Business Profile).');
+      const token = str(a.token, 400).replace(/\s+/g, '');
+      if (token && token.length < 20) fail('That token looks too short. Copy the whole Private Integration token from HighLevel.');
+      const next = { ...h, locationId, pipeline: str(a.pipeline, 80) || HL_DEFAULT.pipeline, bookedStage: str(a.bookedStage, 80) || HL_DEFAULT.bookedStage, doneStage: str(a.doneStage, 80) || HL_DEFAULT.doneStage };
+      if (token) next.token = opts.seal ? opts.seal({ token }) : token;
+      if (a.clearToken) next.token = '';
+      if (!next.key || a.newKey) next.key = randomId(16);
+      next.on = !!a.on;
+      if (next.on && !next.since) next.since = now().toISOString();
+      // Also update rides booked in the last N days (to catch up the old quotes once).
+      if (a.backfillDays) {
+        const d = Math.round(num(a.backfillDays, 0));
+        if (!(d >= 1 && d <= 365)) fail('Choose 1 to 365 days.');
+        next.since = new Date(now().getTime() - d * 864e5).toISOString();
+      }
+      c.hl = next;
+      return hlView(c);
+    });
+
+    // Every field of the webhook, by a key folded to letters and digits:
+    // "Pickup Address", pickup_address and customData.pickupAddress all become pickupaddress.
+    function hlFields(body) {
+      const f = {};
+      const put = (k, v) => {
+        const n = String(k).toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (!n || n in f || v == null || typeof v === 'object') return;
+        const s = str(v, 400);
+        if (s) f[n] = s;
+      };
+      const walk = (o, depth) => {
+        if (!o || typeof o !== 'object' || depth > 2) return;
+        for (const [k, v] of Object.entries(o)) {
+          if (Array.isArray(v)) {
+            if (v.every((x) => x == null || typeof x !== 'object')) put(k, v.filter((x) => x != null).join(', '));
+            else for (const x of v) if (x && typeof x === 'object' && x.name != null) put(x.name, x.value);
+          } else if (v && typeof v === 'object') walk(v, depth + 1);
+          else put(k, v);
+        }
+      };
+      walk(body && body.customData, 0);
+      walk(body, 0);
+      return f;
+    }
+    function hlPick(f, exact, loose) {
+      for (const n of exact) if (f[n]) return f[n];
+      for (const n of loose || []) { const k = Object.keys(f).find((x) => x.includes(n)); if (k) return f[k]; }
+      return '';
+    }
+    function hlWhen(c, dateIn, timeIn) {
+      const d = str(dateIn, 80), t = str(timeIn, 40);
+      if (!d) return '';
+      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(d) && !t) { const x = new Date(d); if (!isNaN(x)) return x.toISOString(); }
+      const p2 = (n) => String(n).padStart(2, '0');
+      let date = '', m;
+      if ((m = d.match(/(\d{4})-(\d{1,2})-(\d{1,2})/))) date = `${m[1]}-${p2(m[2])}-${p2(m[3])}`;
+      else if ((m = d.match(/(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})/))) date = `${m[3].length === 2 ? '20' + m[3] : m[3]}-${p2(m[1])}-${p2(m[2])}`;
+      else {
+        const clean = d.replace(/\b(\d{1,2})(st|nd|rd|th)\b/i, '$1').replace(/\bat\b.*$/i, '').replace(/\d{1,2}:\d{2}.*$/, '');
+        const year = /\b\d{4}\b/.test(clean) ? '' : ` ${now().getUTCFullYear()}`;
+        const x = new Date(clean + year);
+        if (!isNaN(x)) {
+          date = `${x.getFullYear()}-${p2(x.getMonth() + 1)}-${p2(x.getDate())}`;
+          // "Jan 4" typed in November means next January.
+          if (year && date < todayIn(c)) date = `${x.getFullYear() + 1}-${p2(x.getMonth() + 1)}-${p2(x.getDate())}`;
+        }
+      }
+      if (!date) return '';
+      // The time: from the time field, or from the date field once the date part is taken out.
+      const src = t || d.replace(/\d{4}-\d{1,2}-\d{1,2}T?|\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}/g, ' ');
+      const tm = [...src.matchAll(/\b(\d{1,2})(?::(\d{2}))?\s*([ap]\.?\s?m\.?)?(?=\W|$)/gi)].find((x) => x[2] || x[3]);
+      let time = '';
+      if (tm) {
+        const ap = tm[3] ? tm[3].replace(/[\s.]/g, '').toLowerCase() : '';
+        time = `${tm[1]}:${tm[2] || '00'}${ap ? ' ' + ap : ''}`;
+      }
+      const iso = localToIso(date, time || '12:00', c);
+      return iso ? iso + (time ? '' : '|notime') : '';
+    }
+    function hlVehicle(text, pax) {
+      const s = fold(text);
+      if (/\bbus\b|coach|22/.test(s)) return '22 PAX Mini Bus';
+      if (/sprinter|\b1[0-5]\b/.test(s)) return 'Sprinter Van';
+      if (/\bvan\b|transit|\b[6-9]\b/.test(s)) return 'Business Van';
+      if (/suv|suburban|escalade|navigator|yukon|tahoe/.test(s)) return 'SUV';
+      if (/sedan|tesla|\bcar\b|xts|town ?car/.test(s)) return 'Sedan';
+      return pax <= 3 ? 'Sedan' : pax <= 5 ? 'SUV' : pax <= 8 ? 'Business Van' : pax <= 14 ? 'Sprinter Van' : '22 PAX Mini Bus';
+    }
+    function hlLead(c, body) {
+      const f = hlFields(body);
+      const first = hlPick(f, ['firstname']), last = hlPick(f, ['lastname']);
+      const lead = {
+        contactId: str((body && body.contact && body.contact.id) || hlPick(f, ['contactid']), 60),
+        opportunityId: str((body && body.opportunity && body.opportunity.id) || hlPick(f, ['opportunityid']), 60),
+        name: hlPick(f, ['fullname', 'name', 'contactname']) || [first, last].filter(Boolean).join(' '),
+        phone: hlPick(f, ['phone', 'phonenumber', 'mobile']), email: hlPick(f, ['email', 'emailaddress']).toLowerCase(),
+        service: hlPick(f, ['servicetype', 'service', 'typeofservice']),
+        pickup: hlPick(f, ['pickupaddress', 'pickuplocation', 'pickup', 'pickupfrom', 'from'], ['pickupaddr', 'pickuploc']),
+        dropoff: hlPick(f, ['dropoffaddress', 'dropofflocation', 'dropoff', 'destination', 'dropoffto', 'to'], ['dropoffaddr', 'dropoffloc', 'destination']),
+        date: hlPick(f, ['pickupdate', 'pickupdatetime', 'date', 'servicedate', 'traveldate', 'tripdate', 'eventdate'], ['pickupdate']),
+        time: hlPick(f, ['pickuptime', 'time', 'servicetime'], ['pickuptime']),
+        passengers: hlPick(f, ['numberofpassengers', 'passengers', 'passengercount', 'pax', 'howmanypassengers', 'guests'], ['passeng']),
+        vehicle: hlPick(f, ['vehicletype', 'vehicle', 'vehiclepreference', 'preferredvehicle'], ['vehicle']),
+        flight: hlPick(f, ['flightnumber', 'flight', 'flightno', 'airlineflight'], ['flight']),
+        hours: hlPick(f, ['hours', 'numberofhours', 'howmanyhours']),
+        notes: hlPick(f, ['notes', 'message', 'specialrequests', 'comments', 'additionalinformation', 'additionalnotes'], ['specialrequest', 'comment']),
+        value: hlPick(f, ['quotedprice', 'quote', 'price', 'value', 'opportunityvalue', 'monetaryvalue']),
+      };
+      return lead;
+    }
+    function hlQuote(c, lead) {
+      const pax = Math.max(1, Math.min(60, Math.round(num((String(lead.passengers).match(/\d+/) || [])[0], 1))));
+      const hourly = /hour|as directed|charter/i.test(lead.service);
+      const when = hlWhen(c, lead.date, lead.time);
+      const raw = {
+        service: hourly ? 'hourly' : 'transfer', pickup: lead.pickup, dropoff: lead.dropoff, pickupAt: when.replace(/\|notime$/, ''),
+        hours: Math.round(num((String(lead.hours).match(/\d+/) || [])[0], 0)) || undefined, passengers: pax,
+        vehicleType: hlVehicle(lead.vehicle, pax), flight: lead.flight,
+      };
+      const problems = [];
+      if (when.endsWith('|notime')) problems.push('Pickup time not given (set to 12:00 PM)');
+      let lines = [];
+      try {
+        const b = cleanBooking(c, raw, { allowPast: true, force: true });
+        let unitPrice = null;
+        // Flat-rate rides get their flat price straight away; others wait for the office.
+        if (flatFor(c, b, b.vehicleType)) { try { unitPrice = round2(quoteFor(c, b, null).total); } catch (e) { unitPrice = null; } }
+        lines = [{ service: b.service, pickup: b.pickup, dropoff: b.dropoff, pickupAt: b.pickupAt, hours: b.hours, vehicleType: b.vehicleType, flight: b.flight, count: 1, passengers: pax, notes: str(lead.notes, 200), phone: '', unitPrice }];
+      } catch (e) { problems.push(`Add the ride: ${e.message}`); }
+      const contact = { name: str(lead.name, 80) || str(lead.phone, 30) || str(lead.email, 120) || 'HighLevel lead', phone: str(lead.phone, 30), email: /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(lead.email) ? str(lead.email, 120) : '', org: '' };
+      const said = [['Service', lead.service], ['Pickup', lead.pickup], ['Drop-off', lead.dropoff], ['Date', lead.date], ['Time', lead.time], ['Passengers', lead.passengers], ['Vehicle', lead.vehicle], ['Flight', lead.flight], ['Hours', lead.hours], ['HighLevel price', lead.value]].filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join('; ');
+      c.nextQuote = (c.nextQuote || 0) + 1;
+      const q = {
+        id: id('quote'), companyId: c.id, number: `${c.refPrefix}-Q-${String(c.nextQuote).padStart(4, '0')}`, token: randomId(8), status: 'new', source: 'highlevel',
+        customerId: null, contact, eventType: 'Other', eventName: str(lead.service, 100) || 'Website lead',
+        notes: str([problems.join('. '), said ? `From HighLevel: ${said}` : '', lead.notes].filter(Boolean).join('\n'), 800),
+        lines, message: '', validUntil: '', createdAt: now().toISOString(), history: [], tripIds: [],
+        hl: { contactId: lead.contactId, opportunityId: lead.opportunityId },
+      };
+      qlog(q, 'Came in from HighLevel', 'HighLevel');
+      db.quotes.push(q);
+      const o = officeEmail(c);
+      if (o) db.messages.unshift({ id: id('msg'), companyId: c.id, tripId: null, quoteId: q.id, ref: q.number, at: now().toISOString(), recipient: o, channel: 'email', kind: 'office',
+        body: `New lead from HighLevel: quote ${q.number} for ${contact.name}${contact.phone ? `, ${contact.phone}` : ''}.\n${said || 'No ride details were sent.'}${problems.length ? `\nTo do: ${problems.join('. ')}.` : ''}\n\nOpen Quotes in LimoRelay to price and send it.` });
+      return q;
+    }
+    // What HighLevel should show for a trip: booked, done or lost.
+    const hlWant = (t) => t.status === 'cancelled' ? 'lost' : t.status === 'completed' ? 'done' : 'booked';
+    // The fare for the whole booking: a round trip or a quote's rides count once, together.
+    function hlValue(t) {
+      const group = db.trips.filter((x) => x.companyId === t.companyId && x.status !== 'cancelled' && !x.officeDeleted && (x.id === t.id || (t.quoteId && x.quoteId === t.quoteId) || x.id === t.returnId || x.returnId === t.id));
+      return round2(group.reduce((s, x) => s + num(x.price && x.price.total, 0), 0));
+    }
+    const hlSafeEq = (a, b) => { a = String(a || ''); b = String(b || ''); if (!a || a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0; };
+    // Server side (server.js); never reachable from the browser API.
+    const hl = {
+      async inbound(slug, key, body) {
+        await ensure();
+        const c = db.companies.find((x) => x.slug === str(slug, 80));
+        const h = c && hlcfg(c);
+        if (!c || !hlSafeEq(key, h.key)) return { status: 404, error: 'Not found' };
+        if (!h.on || c.status !== 'active') return { status: 409, error: 'The HighLevel link is switched off in LimoRelay.' };
+        const lead = hlLead(c, body && typeof body === 'object' ? body : {});
+        if (!lead.phone && !lead.email && !lead.name) return { status: 400, error: 'No name, phone or email in the webhook.' };
+        // HighLevel can send the same lead twice; one quote per contact per 10 minutes.
+        const since = now().getTime() - 10 * 60e3;
+        const dup = db.quotes.find((q) => q.companyId === c.id && q.source === 'highlevel' && new Date(q.createdAt).getTime() > since && ((lead.contactId && q.hl && q.hl.contactId === lead.contactId) || (lead.phone && phoneKey(q.contact.phone) && phoneKey(q.contact.phone) === phoneKey(lead.phone))));
+        if (dup) return { status: 200, number: dup.number, duplicate: true };
+        const q = hlQuote(c, lead);
+        c.hl = { ...h, received: (h.received || 0) + 1, lastLeadAt: now().toISOString() };
+        save(db);
+        return { status: 200, number: q.number };
+      },
+      // For the Test button: the company's keys, for its own admin only.
+      async creds(token) {
+        await ensure();
+        const s = token && db.sessions[token];
+        const u = s && findUser(s.userId);
+        if (!u || u.role !== 'admin' || u.active === false) return null;
+        const c = findCompany(u.companyId), h = c && hlcfg(c);
+        if (!c) return null;
+        return { companyId: c.id, token: hlToken(h), locationId: h.locationId, pipeline: h.pipeline, bookedStage: h.bookedStage, doneStage: h.doneStage };
+      },
+      async tested(companyId, result) {
+        await ensure();
+        const c = findCompany(companyId);
+        if (!c) return;
+        c.hl = { ...hlcfg(c), lastTest: { at: now().toISOString(), ok: !!result.ok, note: str(result.note || result.error, 300) } };
+        save(db);
+      },
+      // Trips (and HighLevel quotes that ended without a ride) whose HighLevel state is behind.
+      async pending(max) {
+        await ensure();
+        const jobs = [], nowIso = now().toISOString();
+        for (const c of db.companies) {
+          const h = hlcfg(c);
+          if (!h.on || !h.locationId || c.status !== 'active') continue;
+          const token = hlToken(h);
+          if (!token) continue;
+          const base = { companyId: c.id, token, locationId: h.locationId, pipeline: h.pipeline, bookedStage: h.bookedStage, doneStage: h.doneStage };
+          const due = (s, want) => !(s && s.state === want) && !(s && s.want === want && ((s.tries || 0) >= 5 || (s.retryAt && s.retryAt > nowIso)));
+          const trips = db.trips.filter((t) => t.companyId === c.id && !t.officeDeleted && (t.createdAt || '') >= h.since).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+          for (const t of trips) {
+            const want = hlWant(t);
+            if (!due(t.hlSync, want)) continue;
+            // A trip cancelled before HighLevel ever heard of it: nothing to undo there.
+            if (want === 'lost' && !(t.hlSync && t.hlSync.oppId) && !(t.quoteId)) { t.hlSync = { state: 'lost', at: nowIso, note: 'Cancelled before it was sent to HighLevel' }; continue; }
+            const q = t.quoteId && db.quotes.find((x) => x.id === t.quoteId);
+            const cust = t.customerId && findUser(t.customerId);
+            jobs.push({ ...base, kind: 'trip', id: t.id, ref: t.ref, want, value: hlValue(t), phone: t.passengerPhone || (cust && cust.phone) || (q && q.contact.phone) || '', email: t.passengerEmail || (cust && cust.email) || (q && q.contact.email) || '',
+              contactId: (t.hlSync && t.hlSync.contactId) || (q && q.hl && q.hl.contactId) || '', opportunityId: (t.hlSync && t.hlSync.oppId) || (q && q.hl && q.hl.opportunityId) || '' });
+            if (jobs.length >= (max || 20)) return jobs;
+          }
+          for (const q of db.quotes) {
+            if (q.companyId !== c.id || q.source !== 'highlevel' || (q.tripIds || []).length || !['declined', 'cancelled', 'expired'].includes(qStatus(q, c)) || !due(q.hlSync, 'lost')) continue;
+            jobs.push({ ...base, kind: 'quote', id: q.id, ref: q.number, want: 'lost', value: 0, phone: q.contact.phone, email: q.contact.email, contactId: (q.hl && q.hl.contactId) || '', opportunityId: (q.hl && q.hl.opportunityId) || '' });
+            if (jobs.length >= (max || 20)) return jobs;
+          }
+        }
+        return jobs;
+      },
+      async synced(results) {
+        await ensure();
+        const at = now().toISOString();
+        for (const r of results || []) {
+          const x = r.kind === 'quote' ? db.quotes.find((q) => q.id === r.id) : db.trips.find((t) => t.id === r.id);
+          const c = x && findCompany(x.companyId);
+          if (!x || !c) continue;
+          const prev = x.hlSync || {}, h = hlcfg(c);
+          if (r.ok || r.skip) {
+            x.hlSync = { state: r.want, at, ...(r.oppId || prev.oppId ? { oppId: r.oppId || prev.oppId } : {}), ...(r.contactId || prev.contactId ? { contactId: r.contactId || prev.contactId } : {}), ...(r.skip ? { note: str(r.skip, 200) } : {}) };
+            c.hl = r.ok ? { ...h, synced: (h.synced || 0) + 1, lastOkAt: at } : h;
+          } else {
+            if (r.clearOpp) { delete prev.oppId; const q = x.quoteId ? db.quotes.find((y) => y.id === x.quoteId) : r.kind === 'quote' ? x : null; if (q && q.hl) q.hl.opportunityId = ''; }
+            const tries = (prev.want === r.want ? prev.tries || 0 : 0) + 1;
+            x.hlSync = { ...prev, want: r.want, tries, retryAt: new Date(now().getTime() + tries * 10 * 60e3).toISOString(), error: str(r.error, 200) };
+            c.hl = { ...h, lastError: str(`${r.ref}: ${r.error}`, 300), lastErrorAt: at };
+          }
+        }
+        if ((results || []).length) save(db);
+      },
+    };
+
     def('dispatch.messages', STAFF, false, (ctx) => db.messages.filter((m) => m.companyId === ctx.company.id).slice(0, 150).map(hideLink));
 
     // ---- Two-way texting ------------------------------------------------------
@@ -7710,6 +7975,7 @@
       seo,
       voice,
       pay,
+      hl,
       // A text someone sent to the platform's Twilio number.
       // The driver pressed a key on the wake-up call.
       async wakeAnswer({ key, digits }) {

@@ -5339,7 +5339,7 @@
         </div>
         <div class="row" style="margin-bottom:12px"><div class="seg" role="group" aria-label="Show">${[['open', 'Open'], ['booked', 'Booked'], ['closed', 'Declined or expired'], ['all', 'All']].map(([k, l]) => `<button type="button" data-qf="${k}" aria-pressed="${quoteFilter === k}">${l}</button>`).join('')}</div></div>
         <div class="tablewrap"><table><thead><tr><th>Quote</th><th>Event</th><th>Contact</th><th>First pickup</th><th class="r">Vehicles</th><th class="r">Total</th><th>Status</th></tr></thead><tbody>
-          ${shown.map((q) => `<tr class="click" data-q="${q.id}"><td class="mono small">${esc(q.number)}${q.source === 'online' ? '' : '<br><span class="faint">by phone</span>'}</td><td><b>${esc(q.eventName || q.eventType)}</b>${q.eventName ? `<br><span class="small muted">${esc(q.eventType)}</span>` : ''}</td><td class="small">${esc(q.contact.name)}${q.contact.org ? `<br><span class="muted">${esc(q.contact.org)}</span>` : ''}</td><td class="small">${q.eventDate ? esc(fmtDT(q.eventDate)) : '—'}</td><td class="r num">${vehicles(q)}</td><td class="r num">${q.total ? money(q.total) : '—'}</td><td>${qPill(q)}</td></tr>`).join('') || `<tr><td colspan="7" class="faint">No quotes here. Share your request link so customers can ask for one.</td></tr>`}
+          ${shown.map((q) => `<tr class="click" data-q="${q.id}"><td class="mono small">${esc(q.number)}${q.source === 'online' ? '' : q.source === 'highlevel' ? '<br><span class="faint">from HighLevel</span>' : '<br><span class="faint">by phone</span>'}</td><td><b>${esc(q.eventName || q.eventType)}</b>${q.eventName ? `<br><span class="small muted">${esc(q.eventType)}</span>` : ''}</td><td class="small">${esc(q.contact.name)}${q.contact.org ? `<br><span class="muted">${esc(q.contact.org)}</span>` : ''}</td><td class="small">${q.eventDate ? esc(fmtDT(q.eventDate)) : '—'}</td><td class="r num">${vehicles(q)}</td><td class="r num">${q.total ? money(q.total) : '—'}</td><td>${qPill(q)}</td></tr>`).join('') || `<tr><td colspan="7" class="faint">No quotes here. Share your request link so customers can ask for one.</td></tr>`}
         </tbody></table></div>`;
       $$('[data-qf]', v).forEach((b) => { b.onclick = () => { quoteFilter = b.dataset.qf; drawQuotes(v); }; });
       $$('tr[data-q]', v).forEach((r) => { r.onclick = () => quoteModal(r.dataset.q, () => drawQuotes(v)); });
@@ -5358,7 +5358,7 @@
         title: q ? `Quote ${q.number}` : 'New quote',
         wide: true,
         body: `<form id="qm" class="stack" novalidate>
-          ${q ? `<div class="spread"><div class="row">${qPill(q)}<span class="small muted">${q.source === 'online' ? 'Requested online' : 'Taken by phone'} ${esc(fmtDT(q.createdAt))}${q.customer ? ' · customer account ' + esc(q.customer.name) : ''}</span></div>
+          ${q ? `<div class="spread"><div class="row">${qPill(q)}<span class="small muted">${q.source === 'online' ? 'Requested online' : q.source === 'highlevel' ? 'Came in from HighLevel' : 'Taken by phone'} ${esc(fmtDT(q.createdAt))}${q.customer ? ' · customer account ' + esc(q.customer.name) : ''}</span></div>
             ${['sent', 'expired', 'accepted', 'declined'].includes(q.status) ? `<a class="btn sm" href="#quote.${esc(q.token)}" target="_blank" rel="noopener">Customer's page</a>` : ''}</div>` : ''}
           ${q && q.status === 'declined' && q.declineReason ? `<div class="note">Declined: “${esc(q.declineReason)}”</div>` : ''}
           ${q && q.status === 'accepted' ? `<div class="note">Booked ${esc(fmtDT(q.decidedAt))}${q.depositPaid ? `, deposit ${money(q.depositPaid.amount)} paid by ${esc(q.depositPaid.method)}` : q.card ? `, ${esc(cardName(q.card))} on file` : q.needsCard ? ', waiting for the customer to add a card' : ''}. Trips: ${q.trips.map((t) => `<button type="button" class="linkbtn mono" data-trip="${t.id}">${esc(t.ref)}</button>`).join(' ')}</div>` : ''}
@@ -5383,7 +5383,7 @@
       });
       const form = $('#qm', m), err = $('#qm-err', m);
       const paint = () => { const t = rides.total(); $('#qm-total', m).textContent = money(t); $('#qm-dep', m).textContent = 'No deposit · card on file'; };
-      const rides = rideEditor($('#qm-rides', m), { vehicleTypes: info.vehicleTypes, slug: session.company.slug, staff: true, locked: !editable, lines: q ? q.lines : [{ ...blankRide(), vehicleType: 'SUV' }], onChange: paint });
+      const rides = rideEditor($('#qm-rides', m), { vehicleTypes: info.vehicleTypes, slug: session.company.slug, staff: true, locked: !editable, lines: q && q.lines.length ? q.lines : [{ ...blankRide(), vehicleType: 'SUV' }], onChange: paint });
       paint();
       $$('[data-close]', m).forEach((b) => { b.onclick = closeModal; });
       $$('[data-trip]', m).forEach((b) => { b.onclick = () => tripModal(b.dataset.trip, done); });
@@ -6058,6 +6058,7 @@
             <label class="switch"><input type="checkbox" name="payCash" id="rs-paycash" ${s.company.cash ? 'checked' : ''} ${ro}><span>Cash, paid to the office (mark the ride paid in Trips)</span></label>
 </div>
           <div class="panel stack" id="rs-cards"><h2>Card payments</h2><p class="small faint">Loading…</p></div>
+          ${isAdmin ? '<div class="panel stack" id="rs-hl"><h2>HighLevel</h2><p class="small faint">Loading…</p></div>' : ''}
           <div id="rs-err"></div>
           ${isAdmin ? '<div class="savebar"><button class="btn primary" type="submit">Save rates and brand</button></div>' : ''}
         </form>`;
@@ -6099,6 +6100,48 @@
         if (sc) sc.onclick = () => busy(sc, async () => { try { const r = await payApi('connect'); location.href = r.url; await new Promise(() => {}); } catch (err) { toast(err.message, true); } });
       };
       drawCards();
+      // HighLevel link: leads come in as quotes; booked, done and cancelled rides move the HighLevel quote.
+      const drawHl = async () => {
+        const box = $('#rs-hl', v);
+        if (!box) return;
+        let h;
+        try { h = await api('dispatch.highlevel'); } catch (e) { box.innerHTML = `<h2>HighLevel</h2><div class="err">${esc(e.message)}</div>`; return; }
+        const when = (x) => (x ? esc(fmtDT(x)) : 'never');
+        box.innerHTML = `<div class="spread"><h2>HighLevel</h2>${h.on ? '<span class="pill s-on_board">On</span>' : '<span class="pill off">Off</span>'}</div>
+          <p class="small muted">Connect the HighLevel account your marketing runs on. New leads from your HighLevel quote form arrive here as quotes. When a ride is booked, finished or cancelled, its HighLevel quote moves to ${esc(h.bookedStage)}, ${esc(h.doneStage)} or Lost, so HighLevel stops texting customers who already booked and your ads reports count real sales.</p>
+          <div class="grid2"><label class="field"><span>Location ID</span><input data-hl="locationId" class="mono" value="${esc(h.locationId)}" placeholder="HighLevel: Settings, Business Profile"></label>
+            <label class="field"><span>Private Integration token</span><input data-hl="token" type="password" class="mono" autocomplete="new-password" placeholder="${h.tokenSet ? 'Saved. Paste a new one to replace it.' : 'pit-…'}">
+              <span class="hint">HighLevel: Settings, Private Integrations, Create. Allow contacts (read) and opportunities (read and write). Stored encrypted and never shown again.</span></label></div>
+          <div class="grid3"><label class="field"><span>Pipeline</span><input data-hl="pipeline" value="${esc(h.pipeline)}"></label>
+            <label class="field"><span>Stage for booked rides</span><input data-hl="bookedStage" value="${esc(h.bookedStage)}"></label>
+            <label class="field"><span>Stage for finished rides</span><input data-hl="doneStage" value="${esc(h.doneStage)}"></label></div>
+          <label class="switch"><input type="checkbox" data-hl="on" ${h.on ? 'checked' : ''}><span>Link is on</span></label>
+          <div class="field"><span>Address for the HighLevel webhook</span><div class="row"><input class="input mono grow" id="rs-hlurl" readonly value="${esc(h.inboundUrl || 'Save once to make the address.')}">${h.inboundUrl ? '<button class="btn" type="button" id="rs-hlcopy">Copy</button>' : ''}</div>
+            <span class="hint">In the HighLevel workflow that runs when a quote form is sent, add the action Webhook (POST) with this address. Keep it private: anyone with it can send you leads.</span></div>
+          <p class="small faint">Leads received: ${h.received} (last ${when(h.lastLeadAt)}). HighLevel quotes moved: ${h.synced} (last ${when(h.lastOkAt)}).${h.lastTest ? ` Last test ${when(h.lastTest.at)}: ${esc(h.lastTest.note || (h.lastTest.ok ? 'OK' : 'failed'))}` : ''}</p>
+          ${h.lastError ? `<div class="err">Last problem (${when(h.lastErrorAt)}): ${esc(h.lastError)}</div>` : ''}
+          <div id="rs-hlerr"></div>
+          <div class="row"><button class="btn primary" type="button" id="rs-hlsave">Save HighLevel link</button><button class="btn" type="button" id="rs-hltest">Test the token</button>
+            <button class="btn" type="button" id="rs-hlback" title="Also move the HighLevel quotes for rides booked in the last 120 days">Catch up last 120 days</button>
+            ${h.inboundUrl ? '<button class="btn" type="button" id="rs-hlkey">New webhook address</button>' : ''}</div>`;
+        const val = (k) => { const i = $(`[data-hl="${k}"]`, box); return i.type === 'checkbox' ? i.checked : i.value; };
+        const save = async (btn, extra) => busy(btn, async () => {
+          try {
+            await api('dispatch.saveHighlevel', { on: val('on'), locationId: val('locationId'), token: val('token'), pipeline: val('pipeline'), bookedStage: val('bookedStage'), doneStage: val('doneStage'), ...(extra || {}) });
+            toast(extra && extra.backfillDays ? 'Rides from the last 120 days will be sent to HighLevel over the next few minutes.' : extra && extra.newKey ? 'New address made. Put it in the HighLevel webhook; the old one stops working.' : 'HighLevel link saved.');
+            drawHl();
+          } catch (e) { showErr($('#rs-hlerr', box), e); }
+        });
+        $('#rs-hlsave', box).onclick = (e) => save(e.currentTarget);
+        $('#rs-hlback', box).onclick = (e) => { if (confirm('Move the HighLevel quotes for every ride booked in the last 120 days? Customers with an open quote in HighLevel get marked won.')) save(e.currentTarget, { backfillDays: 120, on: true }); };
+        const nk = $('#rs-hlkey', box); if (nk) nk.onclick = (e) => { if (confirm('Make a new webhook address? The current one stops working right away.')) save(e.currentTarget, { newKey: true }); };
+        const cp = $('#rs-hlcopy', box); if (cp) cp.onclick = async () => { const inp = $('#rs-hlurl', box); try { await navigator.clipboard.writeText(inp.value); toast('Address copied.'); } catch (e) { inp.select(); toast('Press Ctrl+C or ⌘C to copy.'); } };
+        $('#rs-hltest', box).onclick = (e) => busy(e.currentTarget, async () => {
+          try { const r = await api('dispatch.testHighlevel'); if (r.ok) toast(r.note || 'Connected.'); else showErr($('#rs-hlerr', box), r.error || 'The test failed.'); }
+          catch (err) { showErr($('#rs-hlerr', box), err); }
+        });
+      };
+      if (isAdmin) drawHl();
       $('#rs-copy', v).onclick = async () => {
         const inp = $('#rs-link', v);
         try { await navigator.clipboard.writeText(inp.value); toast('Link copied.'); } catch (e) { inp.select(); toast('Press Ctrl+C or ⌘C to copy.'); }
