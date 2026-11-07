@@ -90,7 +90,7 @@ const TOOLS = [
       passengerName: { type: 'string' }, passengerPhone: { type: 'string', description: 'Mobile number for ride texts' },
       passengerEmail: { type: 'string', description: 'Email for the confirmation and receipt, spelled back and confirmed with the caller' },
       textsOk: { type: 'boolean', description: 'The passenger agreed to get ride texts' },
-      childSeats: { type: 'integer' }, meetGreet: { type: 'boolean', description: 'Chauffeur meets them inside the airport with a name sign' },
+      childSeats: { type: 'integer', description: 'Car seats for children from infant to 5 years, up to 3' }, boosterSeats: { type: 'integer', description: 'Booster seats for children 6 to 8 years, up to 3' }, meetGreet: { type: 'boolean', description: 'Chauffeur meets them inside the airport with a name sign' },
       notes: { type: 'string', description: 'Anything the chauffeur should know' },
       promoCode: { type: 'string' },
     } },
@@ -118,7 +118,7 @@ const TOOLS = [
       date: { type: 'string', description: 'New local date, YYYY-MM-DD' }, time: { type: 'string', description: 'New local time, HH:MM 24-hour' },
       service: { type: 'string', enum: ['transfer', 'hourly'] }, pickup: { type: 'string' }, dropoff: { type: 'string' }, hours: { type: 'integer' },
       passengers: { type: 'integer' }, vehicleType: { type: 'string' }, flight: { type: 'string' }, notes: { type: 'string' },
-      childSeats: { type: 'integer' }, meetGreet: { type: 'boolean' }, passengerName: { type: 'string' },
+      childSeats: { type: 'integer', description: 'Car seats for children from infant to 5 years, up to 3' }, boosterSeats: { type: 'integer', description: 'Booster seats for children 6 to 8 years, up to 3' }, meetGreet: { type: 'boolean' }, passengerName: { type: 'string' },
     } },
   },
   {

@@ -1932,9 +1932,10 @@
     if (opts.info && opts.info.company) setTz(opts.info.company);
     // opts: { info: {rates, addons, vehicleTypes}, mode, initial, quoteFn, submitLabel, onSubmit }
     const vt = opts.info.vehicleTypes;
-    const ad = opts.info.addons || { childSeat: 15, meetGreet: 25, extraStop: 20 };
+    const ad = opts.info.addons || { childSeat: 20, boosterSeat: 0, meetGreet: 25, extraStop: 20 };
+    const seatPrice = (n) => (Number(n) > 0 ? `${money(n)} each` : 'free');
     const dflt = defaultPickup();
-    const init = Object.assign({ service: 'transfer', date: dflt.slice(0, 10), time: dflt.slice(11, 16), pickup: '', dropoff: '', hours: opts.info.rates.minHours, passengers: 1, vehicleType: (vt[0] || {}).type, flight: '', notes: '', passengerName: '', passengerPhone: '', passengerEmail: '', smsOk: opts.mode === 'dispatch', childSeats: 0, meetGreet: false, stops: 0, promoCode: '', accountId: '', poNumber: '', costCenter: '' }, opts.initial || {});
+    const init = Object.assign({ service: 'transfer', date: dflt.slice(0, 10), time: dflt.slice(11, 16), pickup: '', dropoff: '', hours: opts.info.rates.minHours, passengers: 1, vehicleType: (vt[0] || {}).type, flight: '', notes: '', passengerName: '', passengerPhone: '', passengerEmail: '', smsOk: opts.mode === 'dispatch', childSeats: 0, boosterSeats: 0, meetGreet: false, stops: 0, promoCode: '', accountId: '', poNumber: '', costCenter: '' }, opts.initial || {});
     const accts = opts.accounts || [];
     // opts.biz: the Personal / Business switch for a signed-in customer.
     const biz = opts.biz || null;
@@ -2051,8 +2052,9 @@
           ${creditBal > 0 ? `<label class="switch creditsw" id="bk-creditf"><input type="checkbox" id="bk-credit" ${state.useCredit !== false ? 'checked' : ''}><span>Use my business ride credit (<b>${money(creditBal)}</b> available) on this ride</span></label>` : ''}
           <div class="field"><span>Extras</span>
             <div class="grid3">
-              <label class="field"><span class="small muted">Child seats (${money(ad.childSeat)} each)</span><input id="bk-child" name="childSeats" type="number" min="0" max="4" value="${esc(state.childSeats)}"></label>
-              <label class="switch" style="align-self:end;min-height:40px;grid-column:span 2"><input type="checkbox" id="bk-meet" name="meetGreet" ${state.meetGreet ? 'checked' : ''}><span>Meet &amp; greet: chauffeur waits inside with a name sign (${money(ad.meetGreet)})</span></label>
+              <label class="field"><span class="small muted">Car seats, infant to 5 years (${seatPrice(ad.childSeat)})</span><select id="bk-child" name="childSeats">${[0, 1, 2, 3].map((n) => `<option value="${n}" ${Number(state.childSeats) === n ? 'selected' : ''}>${n ? n : 'None'}</option>`).join('')}</select></label>
+              <label class="field"><span class="small muted">Booster seats, 6 to 8 years (${seatPrice(ad.boosterSeat)})</span><select id="bk-booster" name="boosterSeats">${[0, 1, 2, 3].map((n) => `<option value="${n}" ${Number(state.boosterSeats) === n ? 'selected' : ''}>${n ? n : 'None'}</option>`).join('')}</select></label>
+              <label class="switch" style="align-self:end;min-height:40px"><input type="checkbox" id="bk-meet" name="meetGreet" ${state.meetGreet ? 'checked' : ''}><span>Meet &amp; greet: chauffeur waits inside with a name sign (${money(ad.meetGreet)})</span></label>
             </div>
             <label class="field" id="bk-signf" hidden><span>Name on the greeting sign</span><input id="bk-sign" name="signName" maxlength="60" value="${esc(state.signName)}" placeholder="Leave blank to use the passenger name"></label></div>
           <fieldset class="fs repfs"><legend><label class="switch"><input type="checkbox" id="bk-rep" name="repOn" ${state.repOn ? 'checked' : ''}><span>Repeat this ride</span></label></legend>
@@ -2445,7 +2447,7 @@
       await Promise.all(vt.map(async (v) => {
         const el = $(`[data-vprice="${CSS.escape(v.type)}"]`, form); if (!el) return;
         try {
-          const one = { ...b, vehicleType: v.type, childSeats: 0, meetGreet: false, promoCode: '', returnAt: undefined, landing: undefined };
+          const one = { ...b, vehicleType: v.type, childSeats: 0, boosterSeats: 0, meetGreet: false, promoCode: '', returnAt: undefined, landing: undefined };
           const ret = b.returnAt && b.returnAt !== 'missing' ? opts.quoteFn(returnOf({ ...one, returnAt: b.returnAt, returnFlight: b.returnFlight })) : null;
           const q = await opts.quoteFn(one), r = sameRet(q, ret ? await ret : null);
           if (vpKey === key) el.textContent = r ? `${money(q.total + r.total)} round trip` : money(q.total);
@@ -2973,7 +2975,7 @@
             <label class="field"><span>Flight number <span class="faint">(airport pickups)</span></span><input name="flight" value="${esc(t.flight || '')}" placeholder="AS 331"></label>
             <label class="field"><span>Vehicle</span><select name="vehicleType">${vts.map((v) => `<option value="${esc(v.type)}" ${v.type === t.vehicleType ? 'selected' : ''}>${esc(v.type)} · up to ${v.capacity} passengers, ${v.bags} suitcases</option>`).join('')}</select></label>
             <div class="grid2"><label class="field"><span>Passengers</span><input name="passengers" type="number" min="1" max="60" value="${t.passengers}"></label><label class="field"><span>Suitcases</span><input name="bags" type="number" min="0" max="40" value="${t.bags || 0}"></label></div>
-            <div class="grid2"><label class="field"><span>Child seats${ad.childSeat ? ` (${money(ad.childSeat)} each)` : ''}</span><input name="childSeats" type="number" min="0" max="4" value="${t.childSeats || 0}"></label>
+            <div class="grid2"><label class="field"><span>Car seats, infant to 5${ad.childSeat ? ` (${money(ad.childSeat)} each)` : ''}</span><input name="childSeats" type="number" min="0" max="3" value="${t.childSeats || 0}"></label><label class="field"><span>Booster seats, 6 to 8${Number(ad.boosterSeat) > 0 ? ` (${money(ad.boosterSeat)} each)` : ' (free)'}</span><input name="boosterSeats" type="number" min="0" max="3" value="${t.boosterSeats || 0}"></label></div><div class="grid2">
               <label class="check" style="align-self:end;padding-bottom:10px"><input type="checkbox" name="meetGreet" ${t.meetGreet ? 'checked' : ''}><span>Meet &amp; greet${ad.meetGreet ? ` (${money(ad.meetGreet)})` : ''}</span></label></div>
             <div class="grid2"><label class="field"><span>${t.agent ? "Client's name" : 'Passenger name'}</span><input name="passengerName" value="${esc(t.passengerName || '')}"></label><label class="field"><span>${t.agent ? "Client's mobile" : 'Passenger mobile'}</span><input name="passengerPhone" type="tel" value="${esc(t.passengerPhone || '')}"></label></div>
             <label class="field"><span>Notes for the chauffeur</span><textarea name="notes" rows="2">${esc(t.notes || '')}</textarea></label>
@@ -3351,7 +3353,8 @@
     const p = t.prefs || {};
     return [
       t.bags ? `${t.bags} suitcase${t.bags > 1 ? 's' : ''}` : '',
-      t.childSeats ? `${t.childSeats} child seat${t.childSeats > 1 ? 's' : ''}` : '',
+      t.childSeats ? `${t.childSeats} car seat${t.childSeats > 1 ? 's' : ''} (infant to 5)` : '',
+      t.boosterSeats ? `${t.boosterSeats} booster seat${t.boosterSeats > 1 ? 's' : ''} (6 to 8)` : '',
       t.meetGreet ? `Meet & greet, sign “${t.signName || t.passengerName || 'passenger'}”` : '',
       !(t.stopList && t.stopList.length) && t.stops ? `${t.stops} extra stop${t.stops > 1 ? 's' : ''}` : '',
       p.temp ? `${C.TEMPS[p.temp]} cabin` : '', p.music ? C.MUSIC[p.music] : '', p.quiet ? 'Quiet ride' : '',
@@ -3977,7 +3980,8 @@
               <label class="field"><span>Flight</span><input id="te-flight" name="flight" class="mono" value="${esc(t.flight)}" ${lock}></label>
             </div>
             <div class="grid3">
-              <label class="field"><span>Child seats</span><input id="te-child" name="childSeats" type="number" min="0" max="4" value="${t.childSeats || 0}" ${lock}></label>
+              <label class="field"><span>Car seats (infant to 5)</span><input id="te-child" name="childSeats" type="number" min="0" max="3" value="${t.childSeats || 0}" ${lock}></label>
+              <label class="field"><span>Booster seats (6 to 8)</span><input id="te-booster" name="boosterSeats" type="number" min="0" max="3" value="${t.boosterSeats || 0}" ${lock}></label>
               <label class="field"><span>Suitcases</span><input id="te-bags" name="bags" type="number" min="0" max="40" value="${t.bags || 0}" ${lock}></label>
               <label class="switch" style="align-self:end;min-height:40px"><input type="checkbox" id="te-meet" name="meetGreet" ${t.meetGreet ? 'checked' : ''} ${lock}><span>Meet &amp; greet</span></label>
             </div>
@@ -4373,7 +4377,7 @@
           <div class="spread"><b>${esc(r.partnerName)} offers you a trip</b><b class="num" style="font-size:20px">${money(r.rate)}</b></div>
           <div class="small muted">${tripLine(r.trip)} · ${esc(r.trip.serviceLabel)}${r.trip.service === 'hourly' ? `, ${r.trip.hours} h` : ''}</div>
           <div class="route"><i></i><div>${esc(r.trip.pickup)}</div>${r.trip.dropoff ? `<span class="bar"></span><span></span><i class="end"></i><div>${esc(r.trip.dropoff)}</div>` : ''}</div>
-          <div class="small">${r.trip.flight ? `Flight <span class="mono">${esc(r.trip.flight)}</span> · ` : ''}Passenger ${esc(r.trip.passengerName || '')}${r.trip.meetGreet ? ' · Meet & greet' : ''}${r.trip.childSeats ? ` · ${r.trip.childSeats} child seat(s)` : ''}</div>
+          <div class="small">${r.trip.flight ? `Flight <span class="mono">${esc(r.trip.flight)}</span> · ` : ''}Passenger ${esc(r.trip.passengerName || '')}${r.trip.meetGreet ? ' · Meet & greet' : ''}${r.trip.childSeats ? ` · ${r.trip.childSeats} car seat(s)` : ''}${r.trip.boosterSeats ? ` · ${r.trip.boosterSeats} booster seat(s)` : ''}</div>
           ${r.note ? `<div class="note">“${esc(r.note)}”</div>` : ''}
           <div class="row"><button class="btn primary" type="button" data-accept="${r.id}">Accept for ${money(r.rate)}</button>
             <input class="input grow" style="min-width:160px" data-reason="${r.id}" placeholder="Reason if you decline (optional)"><button class="btn" type="button" data-decline="${r.id}">Decline</button></div>
@@ -4462,7 +4466,7 @@
       const postPill = (p) => `<span class="pill ${({ open: 's-assigned', closed: 's-assigned', taken: 's-completed', awarded: 's-completed', expired: 'off', cancelled: 'off' })[p.status] || ''}">${esc(p.statusLabel)}</span>`;
       const tripBits = (p) => `<div class="small muted">${tripLine(p.trip)} · ${esc(p.trip.serviceLabel)}${p.trip.service === 'hourly' ? `, ${p.trip.hours} h` : ''}${p.trip.bags ? ` · ${p.trip.bags} bags` : ''}</div>
           <div class="route"><i></i><div>${esc(p.trip.pickup)}</div>${p.trip.dropoff ? `<span class="bar"></span><span></span><i class="end"></i><div>${esc(p.trip.dropoff)}</div>` : ''}</div>
-          ${p.trip.flight || p.trip.meetGreet || p.trip.childSeats ? `<div class="small">${p.trip.flight ? `Flight <span class="mono">${esc(p.trip.flight)}</span>` : ''}${p.trip.meetGreet ? ' · Meet & greet' : ''}${p.trip.childSeats ? ` · ${p.trip.childSeats} child seat(s)` : ''}</div>` : ''}
+          ${p.trip.flight || p.trip.meetGreet || p.trip.childSeats || p.trip.boosterSeats ? `<div class="small">${p.trip.flight ? `Flight <span class="mono">${esc(p.trip.flight)}</span>` : ''}${p.trip.meetGreet ? ' · Meet & greet' : ''}${p.trip.childSeats ? ` · ${p.trip.childSeats} car seat(s)` : ''}${p.trip.boosterSeats ? ` · ${p.trip.boosterSeats} booster seat(s)` : ''}</div>` : ''}
           ${p.note ? `<div class="note">“${esc(p.note)}”</div>` : ''}`;
       const live = (p) => ['open', 'closed'].includes(p.status);
       host.innerHTML = `<p class="muted small" style="margin-top:0">Trips posted by members for ${esc([...b.airports, ...b.cities].join(', ') || 'your cities')}. Change your cities under Settings.</p>
@@ -5844,7 +5848,7 @@
           <div class="panel stack"><h2>Pickup location fees</h2><p class="small muted">Added to the fare when the pickup address contains one of the words, for example stadiums after a game. Customers see it as its own line before they book. The highest matching place applies.</p><div id="pr-locs"></div>${isAdmin ? '<div><button class="btn sm" type="button" id="pr-addloc">Add a place</button></div>' : ''}</div>
           <div class="panel stack"><h2>Busy dates</h2><p class="small muted">Holidays, proms, graduations, concerts. The highest matching date applies.</p><div id="pr-peaks"></div>${isAdmin ? '<div><button class="btn sm" type="button" id="pr-addpeak">Add a date</button></div>' : ''}</div>
           <div class="panel stack"><h2>Add-ons</h2>
-            <div class="grid3"><label class="field"><span>Child seat, each ($)</span>${numIn('pr-child', 'childSeat', p.addons.childSeat, 0.5)}</label>
+            <div class="grid3"><label class="field"><span>Car seat, infant to 5, each ($)</span>${numIn('pr-child', 'childSeat', p.addons.childSeat, 0.5)}</label><label class="field"><span>Booster seat, 6 to 8, each ($, 0 = free)</span>${numIn('pr-booster', 'boosterSeat', p.addons.boosterSeat || 0, 0.5)}</label>
               <label class="field"><span>Meet &amp; greet inside ($)</span>${numIn('pr-meet', 'meetGreet', p.addons.meetGreet, 0.5)}</label>
               <label class="field"><span>Wait booked at each stop (min)</span>${numIn('pr-swait', 'stopWait', p.addons.stopWait == null ? 10 : p.addons.stopWait, 5, 'max="240"')}</label></div>
             <div class="grid3"><label class="field"><span>Stop fee, each, optional ($)</span>${numIn('pr-stop', 'extraStop', p.addons.extraStop, 0.5)}</label></div>
@@ -5892,7 +5896,7 @@
           const f = formData(e.target);
           await busy($('button[type=submit]', e.target), async () => {
             try {
-              await api('dispatch.savePricing', { nightPct: f.nightPct, nightStart: f.nightStart, nightEnd: f.nightEnd, weekendPct: f.weekendPct, bizPct: f.bizPct, busyPct: f.busyPct, busyThreshold: f.busyThreshold, addons: { childSeat: f.childSeat, meetGreet: f.meetGreet, extraStop: f.extraStop, stopWait: f.stopWait }, peakDates: peaks, promos, locationFees: locs });
+              await api('dispatch.savePricing', { nightPct: f.nightPct, nightStart: f.nightStart, nightEnd: f.nightEnd, weekendPct: f.weekendPct, bizPct: f.bizPct, busyPct: f.busyPct, busyThreshold: f.busyThreshold, addons: { childSeat: f.childSeat, boosterSeat: f.boosterSeat, meetGreet: f.meetGreet, extraStop: f.extraStop, stopWait: f.stopWait }, peakDates: peaks, promos, locationFees: locs });
               toast('Pricing saved.'); drawPricing(v);
             } catch (err) { showErr($('#pr-err', v), err); }
           });
