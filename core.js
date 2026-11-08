@@ -796,6 +796,10 @@
         if (!(c.rates.flatRates || []).length) c.rates.flatRates = [{ id: 'flat_downtown', ...clone(DOWNTOWN_SEATTLE), prices: { 'Sedan': 110, 'SUV': 145, 'Business Van': 220, 'Sprinter Van': 275, '22 PAX Mini Bus': 475 } }];
       }
       // Dawit 2026-11-05: 22 PAX Mini Bus flat rate goes from $450 to $475 (downtown and cruise piers), once.
+      // Carina Ride's booking pages look like carinaride.com: dark page, red #c8302c (Dawit 2026-11-07).
+      for (const c of d.companies || []) if (!c.styleSeeded && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
+        c.styleSeeded = true; c.color = '#c8302c'; c.pageStyle = 'dark';
+      }
       // Car seats (infant to 5) $20 each, booster seats (6 to 8) free (Dawit 2026-11-06).
       for (const c of d.companies) if (c.pricing && c.pricing.addons && !c.pricing.seats20 && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
         c.pricing.seats20 = true; c.pricing.addons.childSeat = 20; c.pricing.addons.boosterSeat = 0;
@@ -930,7 +934,7 @@
     const coPayMode = (c) => (payMode === 'demo' ? 'demo' : c && gwKind(c) !== 'stripe' && gwReady(c) ? 'stripe' : payMode);
     const cardsOn = (c) => payOpts(c).card !== false && (payMode === 'demo' || gwReady(c));
     const cashOn = (c) => !!payOpts(c).cash;
-    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), cash: cashOn(c), cardChoice: payOpts(c).card !== false, payMode: coPayMode(c), payVia: payMode === 'demo' ? '' : GATEWAYS[gwKind(c)], logo: c.logo || '', banner: c.banner || '', aiPhone: c.phoneAgent && c.phoneAgent.on && c.phoneAgent.number && c.phoneAgent.onPage !== false ? c.phoneAgent.number : '', domain: c.domain || '', adsTag: c.adsTag || '', ...(c.house ? { house: true } : {}) });
+    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), cash: cashOn(c), cardChoice: payOpts(c).card !== false, payMode: coPayMode(c), payVia: payMode === 'demo' ? '' : GATEWAYS[gwKind(c)], logo: c.logo || '', banner: c.banner || '', aiPhone: c.phoneAgent && c.phoneAgent.on && c.phoneAgent.number && c.phoneAgent.onPage !== false ? c.phoneAgent.number : '', domain: c.domain || '', adsTag: c.adsTag || '', pageStyle: c.pageStyle === 'dark' ? 'dark' : 'light', ...(c.house ? { house: true } : {}) });
 
     async function hashPw(pw, salt) { return hash(String(pw), salt); }
     async function setPassword(u, pw) { u.salt = randomId(8); u.passHash = await hashPw(pw, u.salt); }
@@ -6243,6 +6247,7 @@
       if (!name) fail('Enter the company name.');
       const color = /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color : c.color;
       Object.assign(c, { name, tagline: str(a.tagline, 120), color, phone: str(a.phone, 30), email: str(a.email, 120) });
+      if ('pageStyle' in a) c.pageStyle = a.pageStyle === 'dark' ? 'dark' : 'light';
       if ('terms' in a) c.terms = str(a.terms, 6000);
       if (a.payOptions) {
         const po = { card: a.payOptions.card !== false, cash: !!a.payOptions.cash };
