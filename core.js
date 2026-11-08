@@ -1832,7 +1832,8 @@
         passengerEmail: booking.passengerEmail || (customer && !customer.agent && customer.email) || '',
         waitMin: 0, tolls: 0, milesOverride: null, priceOverride: booking.priceOverride != null ? booking.priceOverride : freeRide(company, booking.passengerName) ? 0 : null, adjustment: null, priceCtx: ctx,
         status: 'confirmed', driverId: null, vehicleId: null, flightInfo: null, rating: null,
-        payment: { status: 'unpaid', method: booking.accountId ? 'account' : booking.payCash ? 'cash' : cardsOn(company) ? 'card_on_file' : null, paidAt: null },
+        // Free contract rides (SkyWest) are settled outside LimoRelay: shown as paid (Dawit 2026-11-08).
+        payment: freeRide(company, booking.passengerName) && booking.priceOverride == null ? { status: 'paid', method: 'invoice', paidAt: now().toISOString() } : { status: 'unpaid', method: booking.accountId ? 'account' : booking.payCash ? 'cash' : cardsOn(company) ? 'card_on_file' : null, paidAt: null },
         source, createdAt: now().toISOString(), history: [],
       };
       if (t.payment.method === 'card_on_file') { t.cardToken = randomId(6); if (customer && customer.card) t.card = clone(customer.card); }
