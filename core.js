@@ -3524,21 +3524,24 @@
       if (t.farmout && !t.farmout.outside && Object.keys(p).some((k) => !priceOnly.includes(k))) fail(`This trip is with ${t.farmout.toName}. Take it back from them before changing the details.`);
       const affKey = () => JSON.stringify([t.pickupAt, t.pickup, t.dropoff, t.stopList, t.stopWaits, t.vehicleType, t.passengers, t.bags, t.flight, t.passengerName, t.passengerPhone, t.notes, t.hours, t.service, t.childSeats, t.boosterSeats, t.meetGreet, t.signName]);
       const affBefore = t.farmout && t.farmout.outside && !t.farmout.done ? affKey() : null;
-      if (['completed', 'cancelled'].includes(t.status) && Object.keys(p).some((k) => !priceOnly.includes(k))) fail('This trip is closed. Only notes and price can change.');
+      // The office can change any ride, past ones included (Dawit 2026-11-08).
+      const closed = ['completed', 'cancelled'].includes(t.status);
       const before = t.pickupAt;
-      if (t.invoiceId && Object.keys(p).some((k) => !['notes'].includes(k))) fail('This trip is on an invoice. Void the invoice first to change it.');
+      if (t.invoiceId && ['priceOverride', 'adjustment', 'waitMin', 'tolls', 'milesOverride', 'accountId'].some((k) => k in p)) fail('This trip is on an invoice. Void the invoice first to change the price or account. Other details can change.');
       const beforeAcct = t.accountId || null;
       // Force save: the office changes a ride at the last minute and skips the
       // address, flight, seat and suitcase checks. The driver is texted below.
-      const force = !!a.force;
+      // The office's own edits skip the address, flight, seat and capacity checks.
+      const force = true;
       const drvKey = () => JSON.stringify([t.pickupAt, t.pickup, t.dropoff, t.stopList, t.flight, t.passengers, t.vehicleType, t.passengerName, t.passengerPhone, t.hours, t.service]);
       const drvBefore = drvKey();
       const merged = { ...t, ...p };
-      if (!['completed', 'cancelled'].includes(t.status)) {
+      {
+        const keepPrice = t.invoiceId ? { priceOverride: t.priceOverride } : null;
         const b = cleanBooking(ctx.company, merged, { allowPast: true, force });
-        Object.assign(t, b);
+        Object.assign(t, b, keepPrice || {});
         if (t.pickupAt !== before) t.scheduledPickupAt = t.pickupAt;
-      } else if ('notes' in p) t.notes = str(p.notes, 500);
+      }
       if ('milesOverride' in p) t.milesOverride = p.milesOverride === '' || p.milesOverride == null ? null : Math.max(0, num(p.milesOverride, 0));
       if ('priceOverride' in p) t.priceOverride = p.priceOverride === '' || p.priceOverride == null ? null : Math.max(0, round2(num(p.priceOverride, 0)));
       if ('waitMin' in p) t.waitMin = Math.max(0, Math.round(num(p.waitMin, 0)));
@@ -3556,9 +3559,9 @@
       }
       reprice(t);
       if (t.flight) checkFlight(t, false);
-      log(t, 'edited', ctx.user.name, force ? 'Force saved' : '');
+      log(t, 'edited', ctx.user.name, closed ? 'Edited after the ride closed' : '');
       // A driver already on this ride hears about changes to the time, places or passenger.
-      const drv = t.driverId && ['assigned', 'accepted', 'en_route', 'arrived', 'on_board'].includes(t.status) && findUser(t.driverId);
+      const drv = !closed && new Date(t.pickupAt).getTime() > now().getTime() - 3600e3 && t.driverId && ['assigned', 'accepted', 'en_route', 'arrived', 'on_board'].includes(t.status) && findUser(t.driverId);
       if (drv && drvKey() !== drvBefore && (drv.phone || drv.email)) {
         const c = ctx.company;
         db.messages.unshift({ id: id('msg'), companyId: c.id, tripId: t.id, ref: t.ref, at: now().toISOString(), recipient: drv.phone || drv.email, channel: drv.phone ? 'sms' : 'email', kind: 'driver_changed',
@@ -3571,7 +3574,18 @@
     def('dispatch.assign', STAFF, true, (ctx, a) => {
       const t = ownTrip(ctx, a.id);
       { notWithPartner(t); notPendingAff(t); }
-      if (['on_board', 'completed', 'cancelled'].includes(t.status)) fail(`This trip is ${STATUS_LABELS[t.status].toLowerCase()} and can't be reassigned.`);
+      // A closed ride: the office corrects who drove it. No offer, no texts.
+      if (['completed', 'cancelled'].includes(t.status)) {
+        const d0 = a.driverId ? db.users.find((u) => u.id === a.driverId && u.companyId === ctx.company.id && u.role === 'driver') : null;
+        if (a.driverId && !d0) fail('Driver not found.', 404);
+        if (a.vehicleId) ownVehicle(ctx, a.vehicleId);
+        const own0 = d0 && findVehicle(d0.vehicleId);
+        t.driverId = d0 ? d0.id : null;
+        t.vehicleId = a.vehicleId || (own0 && own0.type === t.vehicleType ? own0.id : (db.vehicles.find((v) => v.companyId === ctx.company.id && v.type === t.vehicleType && v.status === 'active') || {}).id || null);
+        log(t, 'reassigned', ctx.user.name, d0 ? `Driver changed to ${d0.name} after the ride closed` : 'Driver removed after the ride closed');
+        return { ...tripView(t), warnings: [] };
+      }
+      if (t.status === 'on_board') fail('This trip is on board and can\'t be reassigned.');
       if (!a.driverId) {
         t.driverId = null; t.vehicleId = null; t.status = 'confirmed'; t.offer = null; t.needsDriver = { at: now().toISOString(), why: 'Unassigned by the office' }; log(t, 'unassigned', ctx.user.name);
         return { ...tripView(t), warnings: [] };
