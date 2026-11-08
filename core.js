@@ -800,6 +800,10 @@
       for (const c of d.companies || []) if (!c.styleSeeded && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
         c.styleSeeded = true; c.color = '#c8302c'; c.pageStyle = 'dark';
       }
+      // Carina Ride: SkyWest crew rides are always $0 (Dawit 2026-11-08).
+      for (const c of d.companies || []) if (!c.freeSeeded && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
+        c.freeSeeded = true; c.freeNames = [...new Set([...(c.freeNames || []), 'skywest'])];
+      }
       // Car seats (infant to 5) $20 each, booster seats (6 to 8) free (Dawit 2026-11-06).
       for (const c of d.companies) if (c.pricing && c.pricing.addons && !c.pricing.seats20 && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
         c.pricing.seats20 = true; c.pricing.addons.childSeat = 20; c.pricing.addons.boosterSeat = 0;
@@ -1748,6 +1752,11 @@
         }
       }
     }
+    // Passengers the company never charges (a contract client paid another way).
+    function freeRide(company, name) {
+      const n = String(name || '').trim().toLowerCase();
+      return !!n && (company.freeNames || []).includes(n);
+    }
     function newTrip(company, booking, customer, source, by, promoCode, quiet) {
       const ctx = priceCtx(company, booking, customer, promoCode);
       if (ctx.promoError) fail(ctx.promoError);
@@ -1761,7 +1770,7 @@
         passengerName: booking.passengerName || (customer && !customer.agent && customer.name) || '',
         passengerPhone: booking.passengerPhone || (customer && !customer.agent && customer.phone) || '',
         passengerEmail: booking.passengerEmail || (customer && !customer.agent && customer.email) || '',
-        waitMin: 0, tolls: 0, milesOverride: null, priceOverride: booking.priceOverride != null ? booking.priceOverride : null, adjustment: null, priceCtx: ctx,
+        waitMin: 0, tolls: 0, milesOverride: null, priceOverride: booking.priceOverride != null ? booking.priceOverride : freeRide(company, booking.passengerName) ? 0 : null, adjustment: null, priceCtx: ctx,
         status: 'confirmed', driverId: null, vehicleId: null, flightInfo: null, rating: null,
         payment: { status: 'unpaid', method: booking.accountId ? 'account' : booking.payCash ? 'cash' : cardsOn(company) ? 'card_on_file' : null, paidAt: null },
         source, createdAt: now().toISOString(), history: [],
@@ -3667,11 +3676,19 @@
           let accountId = '';
           if (r.account) { const acc = db.accounts.find((x) => x.companyId === c.id && x.name.toLowerCase() === str(r.account, 120).toLowerCase()); if (!acc) fail(`No company account named ${str(r.account, 60)}.`); accountId = acc.id; }
           const raw = { service, pickupAt: at, pickup: r.pickup, dropoff: r.dropoff, vehicleType: type, passengers: r.passengers || 1, hours: r.hours, flight: r.flight, passengerName: r.passengerName, passengerPhone: r.passengerPhone, passengerEmail: r.passengerEmail, notes: r.notes, accountId, poNumber: r.poNumber };
-          const b = cleanBooking(c, raw, { allowPast: false });
+          const b = cleanBooking(c, raw, { allowPast: !!a.completed });
+          // Past rides added as already done: each row names its driver.
+          if (a.completed) {
+            if (new Date(b.pickupAt).getTime() > now().getTime()) fail('This ride is not in the past. Import it as an upcoming trip.');
+            const dn = str(r.driver, 80).trim().toLowerCase();
+            const drv = dn && db.users.find((u) => u.companyId === c.id && u.role === 'driver' && u.name.trim().toLowerCase() === dn);
+            if (!drv) fail(dn ? `No driver named ${str(r.driver, 60)}.` : 'Driver is missing. Past rides need the driver who did them.');
+            b._driverId = drv.id;
+          }
           if (!b.passengerName) fail('Passenger name is missing.');
           if (r.price != null && String(r.price).trim() !== '') { const pv = num(String(r.price).replace(/[$,\s]/g, ''), NaN); if (!(pv >= 0)) fail(`Couldn't read the price "${str(r.price, 20)}".`); b.priceOverride = round2(pv); }
           if (b.passengerEmail && !emailOk(b.passengerEmail)) fail('Passenger email is not valid.');
-          const price = b.priceOverride != null ? { total: b.priceOverride } : quote(c, b, priceCtx(c, b, null, ''));
+          const price = b.priceOverride != null ? { total: b.priceOverride } : freeRide(c, b.passengerName) ? { total: 0 } : quote(c, b, priceCtx(c, b, null, ''));
           plans.push({ row: i + 1, b });
           out.push({ row: i + 1, ok: true, pickupAt: b.pickupAt, passengerName: b.passengerName, pickup: b.pickup, dropoff: b.dropoff, vehicleType: b.vehicleType, total: price.total });
         } catch (e) {
@@ -3687,7 +3704,16 @@
           customer = db.users.find((u) => u.companyId === c.id && u.email === b.passengerEmail && u.role === 'customer');
           if (!customer) { customer = { id: id('usr'), role: 'customer', companyId: c.id, email: b.passengerEmail, name: b.passengerName, phone: b.passengerPhone, active: true, createdAt: now().toISOString() }; db.users.push(customer); }
         }
-        const t = newTrip(c, b, customer, 'import', ctx.user.name, '', !a.confirm);
+        const driverId = b._driverId; delete b._driverId;
+        const t = newTrip(c, b, customer, 'import', ctx.user.name, '', a.completed ? true : !a.confirm);
+        if (driverId) {
+          // No texts or emails: the ride already happened.
+          const d = findUser(driverId);
+          const own = d.vehicleId && findVehicle(d.vehicleId);
+          const v = own && own.type === t.vehicleType ? own : db.vehicles.find((x) => x.companyId === c.id && x.type === t.vehicleType && x.status === 'active') || own || null;
+          t.driverId = d.id; t.vehicleId = v ? v.id : null; t.needsDriver = null; t.offer = null; t.status = 'completed';
+          log(t, 'completed', ctx.user.name, 'Imported as a past ride');
+        }
         out.find((x) => x.row === row).ref = t.ref;
       }
       return { saved: plans.length, bad: 0, rows: out };
