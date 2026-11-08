@@ -6076,6 +6076,7 @@
             <p class="small muted">Payment always goes through ${esc(s.company.name)}, never to the chauffeur. Turn on one or both; with both on, the customer picks when booking.</p>
             <label class="switch"><input type="checkbox" name="payCard" id="rs-paycard" ${s.company.cardChoice !== false ? 'checked' : ''} ${ro}><span>Card (charged through your card service, set up below)</span></label>
             <label class="switch"><input type="checkbox" name="payCash" id="rs-paycash" ${s.company.cash ? 'checked' : ''} ${ro}><span>Cash, paid to the office (mark the ride paid in Trips)</span></label>
+            <label class="switch"><input type="checkbox" name="payDeadline" ${s.company.payDeadline ? 'checked' : ''} ${ro}><span>Cancel unpaid rides: email a final notice 28 hours before pickup, cancel at 24 hours</span></label>
 </div>
           <div class="panel stack" id="rs-cards"><h2>Card payments</h2><p class="small faint">Loading…</p></div>
           ${isAdmin ? '<div class="panel stack" id="rs-hl"><h2>HighLevel</h2><p class="small faint">Loading…</p></div>' : ''}
@@ -6226,7 +6227,7 @@
         const policy = { editHours: f.pol_editHours, cancelHours: f.pol_cancelHours, cancelFeePct: f.pol_cancelFeePct, waitAirport: f.pol_waitAirport, waitOther: f.pol_waitOther, noShowFeePct: f.pol_noShowFeePct, chargeWhen: f.pol_chargeWhen, chargeHours: f.pol_chargeHours };
         await busy($('button[type=submit]', e.target), async () => {
           try {
-            const res = await api('dispatch.saveSettings', { name: f.name, color: f.color, pageStyle: f.pageStyle, tagline: f.tagline, domain: f.domain, adsTag: f.adsTag, phone: f.phone, email: f.email, rates, policy, terms: f.terms, payOptions: { card: !!f.payCard, cash: !!f.payCash } });
+            const res = await api('dispatch.saveSettings', { name: f.name, color: f.color, pageStyle: f.pageStyle, tagline: f.tagline, domain: f.domain, adsTag: f.adsTag, phone: f.phone, email: f.email, rates, policy, terms: f.terms, payOptions: { card: !!f.payCard, cash: !!f.payCash }, payDeadline: !!f.payDeadline });
             setSession({ ...session, company: { ...session.company, ...res.company } });
             toast('Saved.'); draw();
           } catch (err) { showErr($('#rs-err', v), err); }
