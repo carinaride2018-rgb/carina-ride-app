@@ -3961,11 +3961,11 @@
       let t, drivers, vehicles, accounts;
       try { [t, drivers, vehicles, accounts] = await Promise.all([api('dispatch.trip', { id }), api('dispatch.drivers'), api('dispatch.vehicles'), api('dispatch.accounts')]); } catch (e) { return toast(e.message, true); }
       const closed = ['completed', 'cancelled'].includes(t.status);
-      const lock = closed ? 'disabled' : '';
-      const billLock = closed || t.invoiceId || t.farmIn ? 'disabled' : '';
-      const noAssign = ['on_board', 'completed', 'cancelled'].includes(t.status);
+      const lock = '';
+      const billLock = t.invoiceId || t.farmIn ? 'disabled' : '';
+      const noAssign = t.status === 'on_board';
       const f = t.flightInfo;
-      const canApply = f && f.suggestedPickup && f.suggestedPickup !== t.pickupAt && !noAssign;
+      const canApply = f && f.suggestedPickup && f.suggestedPickup !== t.pickupAt && !noAssign && !closed;
       const fo = t.farmout && !t.farmout.done ? t.farmout : null;
       const canFarm = !t.farmout && !t.farmIn && !t.affIn && ['confirmed', 'assigned'].includes(t.status) && !(t.netPost && ['open', 'closed'].includes(t.netPost.status));
       const priceLock = t.farmIn ? 'disabled' : '';
@@ -4131,7 +4131,6 @@
         if (f2.pickupAt) f2.pickupAt = atLocal(f2.pickupAt).toISOString();
         // Older trips only have a stop count; keep it until stops are typed in.
         if (!String(f2.stopList || '').trim() && t.stops && !(t.stopList || []).length) { delete f2.stopList; delete f2.stopWaits; }
-        if (closed) { for (const k of Object.keys(f2)) if (!['notes', 'priceOverride', 'adjustment'].includes(k)) delete f2[k]; }
         if (t.invoiceId) { for (const k of Object.keys(f2)) if (k !== 'notes') delete f2[k]; }
         await busy($('button[type=submit]', e.target), async () => {
           try { const r = await api('dispatch.updateTrip', { id, patch: f2, force: useForce }); toast(`${useForce ? 'Force saved' : 'Trip saved'}. Total ${money(r.price.total)}.`); reopen(); } catch (err) { showErr($('#te-err', m), err); }
