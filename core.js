@@ -808,6 +808,10 @@
       for (const c of d.companies || []) if (!c.payDeadlineSeeded && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
         c.payDeadlineSeeded = true; c.payDeadline = true; c.payDeadlineSince = new Date().toISOString();
       }
+      // Carina Ride: a text to SkyWest's contact 1 hour before every SkyWest pickup (Dawit 2026-11-08).
+      for (const c of d.companies || []) if (!c.watchSeeded && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
+        c.watchSeeded = true; c.watchReminders = [{ name: 'skywest', phone: '2064030078', minutes: 60 }];
+      }
       // Car seats (infant to 5) $20 each, booster seats (6 to 8) free (Dawit 2026-11-06).
       for (const c of d.companies) if (c.pricing && c.pricing.addons && !c.pricing.seats20 && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
         c.pricing.seats20 = true; c.pricing.addons.childSeat = 20; c.pricing.addons.boosterSeat = 0;
@@ -942,7 +946,7 @@
     const coPayMode = (c) => (payMode === 'demo' ? 'demo' : c && gwKind(c) !== 'stripe' && gwReady(c) ? 'stripe' : payMode);
     const cardsOn = (c) => payOpts(c).card !== false && (payMode === 'demo' || gwReady(c));
     const cashOn = (c) => !!payOpts(c).cash;
-    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, payDeadline: !!c.payDeadline, name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), cash: cashOn(c), cardChoice: payOpts(c).card !== false, payMode: coPayMode(c), payVia: payMode === 'demo' ? '' : GATEWAYS[gwKind(c)], logo: c.logo || '', banner: c.banner || '', aiPhone: c.phoneAgent && c.phoneAgent.on && c.phoneAgent.number && c.phoneAgent.onPage !== false ? c.phoneAgent.number : '', domain: c.domain || '', adsTag: c.adsTag || '', pageStyle: c.pageStyle === 'dark' ? 'dark' : 'light', ...(c.house ? { house: true } : {}) });
+    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, payDeadline: !!c.payDeadline, watchReminders: (c.watchReminders || []).map((w) => ({ name: w.name, phone: w.phone, minutes: w.minutes })), name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), cash: cashOn(c), cardChoice: payOpts(c).card !== false, payMode: coPayMode(c), payVia: payMode === 'demo' ? '' : GATEWAYS[gwKind(c)], logo: c.logo || '', banner: c.banner || '', aiPhone: c.phoneAgent && c.phoneAgent.on && c.phoneAgent.number && c.phoneAgent.onPage !== false ? c.phoneAgent.number : '', domain: c.domain || '', adsTag: c.adsTag || '', pageStyle: c.pageStyle === 'dark' ? 'dark' : 'light', ...(c.house ? { house: true } : {}) });
 
     async function hashPw(pw, salt) { return hash(String(pw), salt); }
     async function setPassword(u, pw) { u.salt = randomId(8); u.passHash = await hashPw(pw, u.salt); }
@@ -2189,6 +2193,22 @@
       const nowMs = n.getTime();
       let changed = false;
       const cm = cmsg(company);
+      // Extra reminder for a named passenger (a contract client): one text to
+      // the client's own contact before each pickup.
+      for (const w of company.watchReminders || []) {
+        if (!w.name || !w.phone) continue;
+        for (const t of db.trips) {
+          if (t.companyId !== company.id || !busyStatus(t.status) || t.watchReminded) continue;
+          if (String(t.passengerName || '').trim().toLowerCase() !== w.name) continue;
+          const left = new Date(t.pickupAt).getTime() - nowMs;
+          if (left > (w.minutes || 60) * 60e3 || left <= 0) continue;
+          const d = t.driverId && findUser(t.driverId), v = t.vehicleId && findVehicle(t.vehicleId);
+          const short = (x) => String(x || '').split(',')[0];
+          sendTo(t, w.phone, `${company.name} reminder: ${t.passengerName} pickup ${t.ref} at ${fmtLocal(t.pickupAt, company)}. ${short(t.pickup)} to ${short(t.dropoff)}${t.flight ? `, flight ${t.flight}` : ''}. ${d ? `Driver ${d.name}${d.phone ? ' ' + d.phone : ''}` : 'Driver being assigned'}${v ? `, ${[v.color, v.name].filter(Boolean).join(' ') || t.vehicleType}${v.plate ? ' plate ' + v.plate : ''}` : ''}.`);
+          t.watchReminded = now().toISOString(); log(t, 'reminder', 'System', `1-hour reminder texted to ${w.phone}`);
+          changed = true;
+        }
+      }
       for (const t of db.trips) {
         if (t.companyId !== company.id || t.farmIn) continue;
         if (payStep(t)) changed = true;
@@ -6331,6 +6351,9 @@
       const color = /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color : c.color;
       Object.assign(c, { name, tagline: str(a.tagline, 120), color, phone: str(a.phone, 30), email: str(a.email, 120) });
       if ('pageStyle' in a) c.pageStyle = a.pageStyle === 'dark' ? 'dark' : 'light';
+      if (Array.isArray(a.watchReminders)) {
+        c.watchReminders = a.watchReminders.slice(0, 10).map((w) => ({ name: str(w.name, 80).trim().toLowerCase(), phone: str(w.phone, 30).replace(/[^\d+]/g, ''), minutes: Math.min(240, Math.max(10, Math.round(num(w.minutes, 60)))) })).filter((w) => w.name && w.phone);
+      }
       if ('payDeadline' in a) { if (a.payDeadline && !c.payDeadline) c.payDeadlineSince = now().toISOString(); c.payDeadline = !!a.payDeadline; }
       if ('terms' in a) c.terms = str(a.terms, 6000);
       if (a.payOptions) {
