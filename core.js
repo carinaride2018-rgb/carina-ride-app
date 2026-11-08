@@ -804,6 +804,10 @@
       for (const c of d.companies || []) if (!c.freeSeeded && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
         c.freeSeeded = true; c.freeNames = [...new Set([...(c.freeNames || []), 'skywest'])];
       }
+      // Carina Ride: unpaid rides get a final email 28 h before pickup and are cancelled at 24 h (Dawit 2026-11-08).
+      for (const c of d.companies || []) if (!c.payDeadlineSeeded && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
+        c.payDeadlineSeeded = true; c.payDeadline = true; c.payDeadlineSince = new Date().toISOString();
+      }
       // Car seats (infant to 5) $20 each, booster seats (6 to 8) free (Dawit 2026-11-06).
       for (const c of d.companies) if (c.pricing && c.pricing.addons && !c.pricing.seats20 && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
         c.pricing.seats20 = true; c.pricing.addons.childSeat = 20; c.pricing.addons.boosterSeat = 0;
@@ -938,7 +942,7 @@
     const coPayMode = (c) => (payMode === 'demo' ? 'demo' : c && gwKind(c) !== 'stripe' && gwReady(c) ? 'stripe' : payMode);
     const cardsOn = (c) => payOpts(c).card !== false && (payMode === 'demo' || gwReady(c));
     const cashOn = (c) => !!payOpts(c).cash;
-    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), cash: cashOn(c), cardChoice: payOpts(c).card !== false, payMode: coPayMode(c), payVia: payMode === 'demo' ? '' : GATEWAYS[gwKind(c)], logo: c.logo || '', banner: c.banner || '', aiPhone: c.phoneAgent && c.phoneAgent.on && c.phoneAgent.number && c.phoneAgent.onPage !== false ? c.phoneAgent.number : '', domain: c.domain || '', adsTag: c.adsTag || '', pageStyle: c.pageStyle === 'dark' ? 'dark' : 'light', ...(c.house ? { house: true } : {}) });
+    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, payDeadline: !!c.payDeadline, name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), cash: cashOn(c), cardChoice: payOpts(c).card !== false, payMode: coPayMode(c), payVia: payMode === 'demo' ? '' : GATEWAYS[gwKind(c)], logo: c.logo || '', banner: c.banner || '', aiPhone: c.phoneAgent && c.phoneAgent.on && c.phoneAgent.number && c.phoneAgent.onPage !== false ? c.phoneAgent.number : '', domain: c.domain || '', adsTag: c.adsTag || '', pageStyle: c.pageStyle === 'dark' ? 'dark' : 'light', ...(c.house ? { house: true } : {}) });
 
     async function hashPw(pw, salt) { return hash(String(pw), salt); }
     async function setPassword(u, pw) { u.salt = randomId(8); u.passHash = await hashPw(pw, u.salt); }
@@ -1054,6 +1058,57 @@
     // Shown in a red box over the payment link in emails (Dawit 2026-11-06).
     const PAY_WARNING = 'Your booking is not valid until payment is submitted.';
     // Bottom of the booking confirmation email: how to pay, then the terms.
+    const PAY_DEADLINE_NOTE = 'Please note, your reservation is not confirmed until payment is received. If payment is not received at least 24 hours before your pickup time, your reservation will be cancelled automatically.';
+    // A ride that still needs paying before it goes ahead: no card saved, not
+    // billed to a company account, not cash, not free, not from a partner.
+    function payDue(t) {
+      return ['confirmed', 'assigned', 'accepted'].includes(t.status) && t.payment.status !== 'paid' && !t.accountId
+        && !['account', 'cash'].includes(t.payment.method) && !t.card && !t.farmIn && !t.affIn && t.price && t.price.total > 0;
+    }
+    // Where the passenger pays: the open invoice, or the card page.
+    function payLink(c, t) {
+      if (!cardsOn(c)) return '';
+      if (t.invoiceId) { const inv = db.clientInvoices.find((x) => x.id === t.invoiceId); return inv && inv.status === 'open' ? invPayUrl(c, inv) : ''; }
+      if (!onFile(t)) return '';
+      if (!t.cardToken) t.cardToken = randomId(6);
+      return cardUrl(t);
+    }
+    // Final notice 28 h before pickup, cancel at 24 h. Email only. Rides booked
+    // less than 24 h ahead are left to the office.
+    function payDeadlineTick() {
+      let changed = false;
+      const n = now().getTime();
+      for (const c of db.companies) {
+        if (c.status !== 'active' || !c.payDeadline) continue;
+        for (const t of db.trips) {
+          if (t.companyId !== c.id || !payDue(t) || !t.passengerEmail) continue;
+          const pick = new Date(t.pickupAt).getTime(), made = new Date(t.createdAt || t.pickupAt).getTime();
+          // Only rides booked after the rule was switched on: their confirmation carried the notice.
+          if (!(pick > n) || pick - made < 24 * 3600e3 || (c.payDeadlineSince && (t.createdAt || '') < c.payDeadlineSince)) continue;
+          const when = fmtLocal(t.pickupAt, c, true), cutoff = fmtLocal(new Date(pick - 24 * 3600e3).toISOString(), c, true);
+          const put = (to, channel, body, kind) => db.messages.unshift({ id: id('msg'), companyId: c.id, tripId: t.id, ref: t.ref, at: now().toISOString(), recipient: to, channel, body, ...(kind ? { kind } : {}) });
+          if (n >= pick - 24 * 3600e3 && t.payWarnedAt) {
+            t.status = 'cancelled'; t.offer = null; t.needsDriver = null; t.payCancelledAt = now().toISOString();
+            log(t, 'cancelled', 'System', 'Payment not received 24 hours before pickup');
+            const site = (c.domain ? linkBase(c) : (opts.publicUrl || 'https://limorelay.com/')).replace(/#.*$/, '');
+            put(t.passengerEmail, 'email', `${c.name}: Reservation ${t.ref} on ${when} has been cancelled because payment was not received 24 hours before pickup. To rebook, call ${c.phone || 'our office'} or visit ${site.replace(/^https?:\/\//, '').replace(/\/$/, '')}.`, 'pay_cancel');
+            const d = t.driverId && findUser(t.driverId);
+            if (d && (d.phone || d.email)) put(d.phone || d.email, d.phone ? 'sms' : 'email', `${c.name}: trip ${t.ref} on ${when} is cancelled (payment not received). You don't need to go.`);
+            const office = officeEmail(c);
+            if (office) put(office, 'email', `${c.name}: ${t.ref} for ${t.passengerName || 'a passenger'} on ${when} was cancelled automatically. Payment was not received 24 hours before pickup.`, 'office_pay_cancel');
+            payStep(t);
+            changed = true;
+          } else if (n >= pick - 28 * 3600e3 && n < pick - 24 * 3600e3 && !t.payWarnedAt) {
+            t.payWarnedAt = now().toISOString();
+            const u = payLink(c, t);
+            put(t.passengerEmail, 'email', `${c.name}: Final notice for reservation ${t.ref} on ${when}. We have not yet received payment.${u ? ` Please pay here: ${u}` : ` Please contact us at ${c.phone || officeEmail(c) || 'our office'} to pay.`} If payment is not received by ${cutoff}, your reservation will be cancelled automatically.`, 'pay_warning');
+            log(t, 'pay_warning', 'System', `Final payment notice emailed to ${t.passengerEmail}`);
+            changed = true;
+          }
+        }
+      }
+      return changed;
+    }
     function confirmFooter(t) {
       const c = findCompany(t.companyId), lines = [];
       // Pickup when they land: in the email body, or here when the company's own wording leaves it out.
@@ -1062,6 +1117,7 @@
       if (t.payment.status === 'paid') lines.push('Payment: paid. Thank you.');
       else if (t.payment.method === 'account') lines.push('Payment: billed to your company account.');
       else if (t.payment.method === 'cash') lines.push(`Payment: cash, paid to ${c.name} before your ride.`);
+      else if (c.payDeadline && payDue(t)) { const u = payLink(c, t); lines.push(PAY_DEADLINE_NOTE, ...(u ? [`Payment link: ${u}`] : [])); }
       else if (onFile(t) && t.cardToken) lines.push(PAY_WARNING, `Payment link: ${cardUrl(t)}`); // shown as a red box in the HTML email (Dawit 2026-11-06)
       lines.push(`Terms and Conditions: ${(c.domain ? linkBase(c) : (opts.publicUrl || 'https://limorelay.com/')).replace(/#.*$/, '')}#terms.${c.slug}`);
       return '\n\n' + lines.join('\n');
@@ -6275,6 +6331,7 @@
       const color = /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color : c.color;
       Object.assign(c, { name, tagline: str(a.tagline, 120), color, phone: str(a.phone, 30), email: str(a.email, 120) });
       if ('pageStyle' in a) c.pageStyle = a.pageStyle === 'dark' ? 'dark' : 'light';
+      if ('payDeadline' in a) { if (a.payDeadline && !c.payDeadline) c.payDeadlineSince = now().toISOString(); c.payDeadline = !!a.payDeadline; }
       if ('terms' in a) c.terms = str(a.terms, 6000);
       if (a.payOptions) {
         const po = { card: a.payOptions.card !== false, cash: !!a.payOptions.cash };
@@ -8146,6 +8203,8 @@
       async tick() {
         await ensure();
         let changed = false;
+        // Unpaid rides first, so a ride cancelled now gets no reminder.
+        if (payDeadlineTick()) changed = true;
         for (const c of db.companies) if (c.status === 'active' && sweepDispatch(c, true)) changed = true;
         if (billingTick()) changed = true;
         if (purgeDeleted()) changed = true;
