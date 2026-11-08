@@ -353,7 +353,7 @@
         <div class="navrow"><nav class="tabs" aria-label="Sections">${(tabs || []).map((t) => `<button type="button" data-tab="${t.key}" aria-current="${t.key === active}">${esc(t.label)}</button>`).join('')}</nav>
           ${tabs && tabs.length > 4 ? `<button type="button" class="tabmore" aria-haspopup="true" aria-expanded="false" hidden>More<span aria-hidden="true"> ▾</span></button>
           <div class="tabmenu" role="menu" hidden>${tabs.map((t) => `<button type="button" role="menuitem" data-go="${t.key}" aria-current="${t.key === active}">${esc(t.label)}</button>`).join('')}</div>` : ''}</div>
-        ${u ? `<div class="who">${search ? `<button type="button" class="qsbox" id="qsbox" aria-label="Search trips, people and pages" title="Search (/)"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M13 13l4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span class="qs-ph">Search</span><kbd>/</kbd></button>` : ''}<span class="whoname" title="${esc(roleName)}">${esc(u.name)}${u.name.toLowerCase().includes(roleName.toLowerCase()) ? '' : `<small>${esc(roleName)}</small>`}</span><button class="btn sm" type="button" id="appbtn">${pwa.standalone ? 'Notifications' : 'Get the app'}</button><button class="btn sm" type="button" id="signout">Sign out</button></div>` : ''}
+        ${u ? `<div class="who">${search ? `<button type="button" class="qsbox" id="qsbox" aria-label="Search trips, people and pages" title="Search (/)"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M13 13l4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span class="qs-ph">Search</span><kbd>/</kbd></button>` : ''}<span class="whoname" title="${esc(roleName)}">${esc(u.name)}${u.name.toLowerCase().includes(roleName.toLowerCase()) ? '' : `<small>${esc(roleName)}</small>`}</span><button class="btn sm" type="button" id="refreshbtn" title="Get the latest trips and settings">&#x21bb; Refresh</button><button class="btn sm" type="button" id="appbtn">${pwa.standalone ? 'Notifications' : 'Get the app'}</button><button class="btn sm" type="button" id="signout">Sign out</button></div>` : ''}
       </header>
       ${DEMO ? `<div class="demobar"><span class="label">Demo</span>Switch login:
         ${DEMO_LOGINS.map((d) => `<button type="button" data-demo="${d.key}" aria-pressed="${d.key === demoKey}">${esc(d.label)}</button>`).join('')}
@@ -366,6 +366,9 @@
     const hdr = $('.topbar', app); if (hdr && tabs && tabs.length && tabs.length <= 4) hdr.classList.add('fewtabs');
     if (hdr && tabs && tabs.length > 6) hdr.classList.add('manytabs');
     fitTabs();
+    // Fresh data without signing out: update the session, then reload the page.
+    const rb = $('#refreshbtn', app);
+    if (rb) rb.onclick = async () => { rb.disabled = true; try { const me = await api('auth.me'); setSession({ ...session, user: me.user, company: me.company }); } catch (e) { /* reload anyway */ } location.reload(); };
     const so = $('#signout', app);
     if (so) so.onclick = async () => { try { await api('auth.logout', { pushEndpoint: await pushEndpoint() }); } catch (e) { /* already gone */ } setSession(null); go('signin'); };
     if (DEMO) {
