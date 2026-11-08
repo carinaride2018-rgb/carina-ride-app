@@ -3667,7 +3667,15 @@
           let accountId = '';
           if (r.account) { const acc = db.accounts.find((x) => x.companyId === c.id && x.name.toLowerCase() === str(r.account, 120).toLowerCase()); if (!acc) fail(`No company account named ${str(r.account, 60)}.`); accountId = acc.id; }
           const raw = { service, pickupAt: at, pickup: r.pickup, dropoff: r.dropoff, vehicleType: type, passengers: r.passengers || 1, hours: r.hours, flight: r.flight, passengerName: r.passengerName, passengerPhone: r.passengerPhone, passengerEmail: r.passengerEmail, notes: r.notes, accountId, poNumber: r.poNumber };
-          const b = cleanBooking(c, raw, { allowPast: false });
+          const b = cleanBooking(c, raw, { allowPast: !!a.completed });
+          // Past rides added as already done: each row names its driver.
+          if (a.completed) {
+            if (new Date(b.pickupAt).getTime() > now().getTime()) fail('This ride is not in the past. Import it as an upcoming trip.');
+            const dn = str(r.driver, 80).trim().toLowerCase();
+            const drv = dn && db.users.find((u) => u.companyId === c.id && u.role === 'driver' && u.name.trim().toLowerCase() === dn);
+            if (!drv) fail(dn ? `No driver named ${str(r.driver, 60)}.` : 'Driver is missing. Past rides need the driver who did them.');
+            b._driverId = drv.id;
+          }
           if (!b.passengerName) fail('Passenger name is missing.');
           if (r.price != null && String(r.price).trim() !== '') { const pv = num(String(r.price).replace(/[$,\s]/g, ''), NaN); if (!(pv >= 0)) fail(`Couldn't read the price "${str(r.price, 20)}".`); b.priceOverride = round2(pv); }
           if (b.passengerEmail && !emailOk(b.passengerEmail)) fail('Passenger email is not valid.');
@@ -3687,7 +3695,16 @@
           customer = db.users.find((u) => u.companyId === c.id && u.email === b.passengerEmail && u.role === 'customer');
           if (!customer) { customer = { id: id('usr'), role: 'customer', companyId: c.id, email: b.passengerEmail, name: b.passengerName, phone: b.passengerPhone, active: true, createdAt: now().toISOString() }; db.users.push(customer); }
         }
-        const t = newTrip(c, b, customer, 'import', ctx.user.name, '', !a.confirm);
+        const driverId = b._driverId; delete b._driverId;
+        const t = newTrip(c, b, customer, 'import', ctx.user.name, '', a.completed ? true : !a.confirm);
+        if (driverId) {
+          // No texts or emails: the ride already happened.
+          const d = findUser(driverId);
+          const own = d.vehicleId && findVehicle(d.vehicleId);
+          const v = own && own.type === t.vehicleType ? own : db.vehicles.find((x) => x.companyId === c.id && x.type === t.vehicleType && x.status === 'active') || own || null;
+          t.driverId = d.id; t.vehicleId = v ? v.id : null; t.needsDriver = null; t.offer = null; t.status = 'completed';
+          log(t, 'completed', ctx.user.name, 'Imported as a past ride');
+        }
         out.find((x) => x.row === row).ref = t.ref;
       }
       return { saved: plans.length, bad: 0, rows: out };
