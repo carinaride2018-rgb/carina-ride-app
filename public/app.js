@@ -336,6 +336,14 @@
     document.documentElement.style.setProperty('--brand', brand || '#3d4f7c');
     setAppIdentity(co, session && session.user);
     const u = session && session.user;
+    // A company's own pages (booking, quotes, customer account) can match its website's dark look.
+    const darkCo = !!(co && co.pageStyle === 'dark' && (!u || u.role === 'customer'));
+    document.body.classList.toggle('co-dark', darkCo);
+    if (darkCo && !document.getElementById('co-dark-fonts')) {
+      const l = document.createElement('link'); l.id = 'co-dark-fonts'; l.rel = 'stylesheet';
+      l.href = 'https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Inter:wght@400;500;600;700&display=swap';
+      document.head.appendChild(l);
+    }
     const roleName = u ? ({ customer: 'Customer', driver: 'Driver', admin: 'Company admin', dispatcher: 'Dispatcher', owner: 'Platform owner' }[u.role]) : '';
     const demoKey = u ? (u.role === 'admin' || u.role === 'dispatcher' ? 'dispatch' : (DEMO_LOGINS.find((d) => d.email === u.email) || {}).key || u.role) : '';
     app.innerHTML = `
@@ -6012,6 +6020,8 @@
           <div class="panel stack"><h2>Brand</h2>
             <div class="grid2"><label class="field"><span>Company name</span><input id="rs-name" name="name" value="${esc(s.company.name)}" ${ro}></label>
               <label class="field"><span>Brand color</span><input id="rs-color" name="color" type="color" value="${esc(s.company.color)}" ${ro} style="padding:4px;height:40px"></label></div>
+            <label class="field"><span>Booking page style</span><select name="pageStyle" ${ro}><option value="light" ${s.company.pageStyle !== 'dark' ? 'selected' : ''}>Light</option><option value="dark" ${s.company.pageStyle === 'dark' ? 'selected' : ''}>Dark, like a black-car website</option></select>
+              <span class="hint">How your booking page, quotes and customer account look. Your dispatch screens stay the same.</span></label>
             <div class="field"><span>Logo</span><div class="row" id="rs-logo">${s.company.logo ? coLogo(s.company, 'logo-prev') : '<span class="small muted">No logo yet. Your initials are shown instead.</span>'}
               ${isAdmin ? `<label class="btn sm"><input type="file" id="rs-logo-file" accept="image/png,image/jpeg,image/webp" hidden>${s.company.logo ? 'Change logo' : 'Upload logo'}</label>${s.company.logo ? '<button class="btn sm" type="button" id="rs-logo-rm">Remove</button>' : ''}` : ''}</div>
               <span class="hint">Shown at the top of your dashboard, booking page and travel agent page. A PNG with a transparent background looks best.</span></div>
@@ -6213,7 +6223,7 @@
         const policy = { editHours: f.pol_editHours, cancelHours: f.pol_cancelHours, cancelFeePct: f.pol_cancelFeePct, waitAirport: f.pol_waitAirport, waitOther: f.pol_waitOther, noShowFeePct: f.pol_noShowFeePct, chargeWhen: f.pol_chargeWhen, chargeHours: f.pol_chargeHours };
         await busy($('button[type=submit]', e.target), async () => {
           try {
-            const res = await api('dispatch.saveSettings', { name: f.name, color: f.color, tagline: f.tagline, domain: f.domain, adsTag: f.adsTag, phone: f.phone, email: f.email, rates, policy, terms: f.terms, payOptions: { card: !!f.payCard, cash: !!f.payCash } });
+            const res = await api('dispatch.saveSettings', { name: f.name, color: f.color, pageStyle: f.pageStyle, tagline: f.tagline, domain: f.domain, adsTag: f.adsTag, phone: f.phone, email: f.email, rates, policy, terms: f.terms, payOptions: { card: !!f.payCard, cash: !!f.payCash } });
             setSession({ ...session, company: { ...session.company, ...res.company } });
             toast('Saved.'); draw();
           } catch (err) { showErr($('#rs-err', v), err); }
