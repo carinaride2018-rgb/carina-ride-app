@@ -972,7 +972,7 @@ html.native-app .appfoot { padding-bottom: calc(28px + env(safe-area-inset-botto
    Matches a black-car website: charcoal page, light text, the brand red on
    buttons and links, serif headings. Dispatch screens never use it. */
 body.co-dark {
-  --bg: #141518; --surface: #1b1d21; --surface-2: #232529; --muted-bg: #232529; --line: #3a3d44;
+  --bg: #2b2d31; --surface: #34363b; --surface-2: #3d3f45; --muted-bg: #3d3f45; --line: #52555d;
   --ink: #ece9e3; --ink-2: #ece9e3; --ink-3: #b3b7bf;
   --link: color-mix(in srgb, var(--brand) 70%, #fff);
   --ok: #5fd39a; --ok-bg: #16352a; --warn: #f2b45a; --warn-bg: #3a2c14; --info: #8fb4ff; --info-bg: #18263f;
@@ -980,26 +980,26 @@ body.co-dark {
   --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
   --font-ui: "Inter", "Helvetica Neue", Arial, sans-serif;
   color-scheme: dark;
-  background: radial-gradient(1200px 500px at 85% -10%, color-mix(in srgb, var(--brand) 18%, transparent), transparent 60%), #141518;
+  background: radial-gradient(1200px 500px at 85% -10%, color-mix(in srgb, var(--brand) 18%, transparent), transparent 60%), #2b2d31;
 }
 body.co-dark h1, body.co-dark h2, body.co-dark .bk-title { font-family: "Cormorant Garamond", Georgia, serif; font-weight: 700; letter-spacing: .2px; }
-body.co-dark .topbar { background: #111214; border-bottom-color: #2a2c31; }
+body.co-dark .topbar { background: #26282c; border-bottom-color: #3d3f45; }
 body.co-dark .panel, body.co-dark .card { background: var(--surface); border-color: var(--line); }
-body.co-dark input, body.co-dark select, body.co-dark textarea, body.co-dark .input { background: #111214; color: var(--ink); border-color: var(--line); }
-body.co-dark input::placeholder, body.co-dark textarea::placeholder { color: #80848c; }
-body.co-dark .btn { background: transparent; color: var(--ink); border-color: #4a4d55; border-radius: 999px; }
+body.co-dark input, body.co-dark select, body.co-dark textarea, body.co-dark .input { background: #2b2d31; color: var(--ink); border-color: var(--line); }
+body.co-dark input::placeholder, body.co-dark textarea::placeholder { color: #9a9ea6; }
+body.co-dark .btn { background: transparent; color: var(--ink); border-color: #5c6068; border-radius: 999px; }
 body.co-dark .btn:hover { border-color: var(--ink-3); }
 body.co-dark .btn.primary, body.co-dark button.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
 body.co-dark .btn.primary:hover { background: color-mix(in srgb, var(--brand) 85%, #fff); opacity: 1; }
 body.co-dark a { color: var(--link); }
 body.co-dark .seg button[aria-pressed="true"], body.co-dark .seg .on, body.co-dark [role="radio"][aria-checked="true"] { background: var(--brand); color: #fff; border-color: var(--brand); }
 body.co-dark .muted, body.co-dark .faint, body.co-dark .hint { color: var(--ink-3); }
-body.co-dark .appfoot { border-top-color: #2a2c31; }
+body.co-dark .appfoot { border-top-color: #3d3f45; }
 body.co-dark img.cologo { background: transparent; }
 body.co-dark .btn.brand { background: var(--brand); border-color: var(--brand); color: #fff; }
 body.co-dark .btn.brand:hover { background: color-mix(in srgb, var(--brand) 85%, #fff); }
 body.co-dark .brandhead { background: var(--surface); color: var(--ink); border-color: var(--line); }
 body.co-dark .brandhead h1 { color: var(--ink); }
 body.co-dark .brandhead .bh-logo { background: transparent; }
-body.co-dark .switch input:not(:checked) { background: #3a3d44; }
+body.co-dark .switch input:not(:checked) { background: #52555d; }
 body.co-dark .bh-phone a { color: var(--ink); }
