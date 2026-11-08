@@ -800,6 +800,10 @@
       for (const c of d.companies || []) if (!c.styleSeeded && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
         c.styleSeeded = true; c.color = '#c8302c'; c.pageStyle = 'dark';
       }
+      // Carina Ride: SkyWest crew rides are always $0 (Dawit 2026-11-08).
+      for (const c of d.companies || []) if (!c.freeSeeded && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
+        c.freeSeeded = true; c.freeNames = [...new Set([...(c.freeNames || []), 'skywest'])];
+      }
       // Car seats (infant to 5) $20 each, booster seats (6 to 8) free (Dawit 2026-11-06).
       for (const c of d.companies) if (c.pricing && c.pricing.addons && !c.pricing.seats20 && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
         c.pricing.seats20 = true; c.pricing.addons.childSeat = 20; c.pricing.addons.boosterSeat = 0;
@@ -1748,6 +1752,11 @@
         }
       }
     }
+    // Passengers the company never charges (a contract client paid another way).
+    function freeRide(company, name) {
+      const n = String(name || '').trim().toLowerCase();
+      return !!n && (company.freeNames || []).includes(n);
+    }
     function newTrip(company, booking, customer, source, by, promoCode, quiet) {
       const ctx = priceCtx(company, booking, customer, promoCode);
       if (ctx.promoError) fail(ctx.promoError);
@@ -1761,7 +1770,7 @@
         passengerName: booking.passengerName || (customer && !customer.agent && customer.name) || '',
         passengerPhone: booking.passengerPhone || (customer && !customer.agent && customer.phone) || '',
         passengerEmail: booking.passengerEmail || (customer && !customer.agent && customer.email) || '',
-        waitMin: 0, tolls: 0, milesOverride: null, priceOverride: booking.priceOverride != null ? booking.priceOverride : null, adjustment: null, priceCtx: ctx,
+        waitMin: 0, tolls: 0, milesOverride: null, priceOverride: booking.priceOverride != null ? booking.priceOverride : freeRide(company, booking.passengerName) ? 0 : null, adjustment: null, priceCtx: ctx,
         status: 'confirmed', driverId: null, vehicleId: null, flightInfo: null, rating: null,
         payment: { status: 'unpaid', method: booking.accountId ? 'account' : booking.payCash ? 'cash' : cardsOn(company) ? 'card_on_file' : null, paidAt: null },
         source, createdAt: now().toISOString(), history: [],
@@ -3679,7 +3688,7 @@
           if (!b.passengerName) fail('Passenger name is missing.');
           if (r.price != null && String(r.price).trim() !== '') { const pv = num(String(r.price).replace(/[$,\s]/g, ''), NaN); if (!(pv >= 0)) fail(`Couldn't read the price "${str(r.price, 20)}".`); b.priceOverride = round2(pv); }
           if (b.passengerEmail && !emailOk(b.passengerEmail)) fail('Passenger email is not valid.');
-          const price = b.priceOverride != null ? { total: b.priceOverride } : quote(c, b, priceCtx(c, b, null, ''));
+          const price = b.priceOverride != null ? { total: b.priceOverride } : freeRide(c, b.passengerName) ? { total: 0 } : quote(c, b, priceCtx(c, b, null, ''));
           plans.push({ row: i + 1, b });
           out.push({ row: i + 1, ok: true, pickupAt: b.pickupAt, passengerName: b.passengerName, pickup: b.pickup, dropoff: b.dropoff, vehicleType: b.vehicleType, total: price.total });
         } catch (e) {
