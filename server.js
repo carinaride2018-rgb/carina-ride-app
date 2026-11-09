@@ -137,7 +137,7 @@ async function serveManifest(req, res) {
   const color = co ? (co.company || co).color || '#15171c' : '#15171c';
   send(res, 200, {
     name, short_name: name.length > 14 ? name.split(' ')[0] : name, description: co ? `Book and track rides with ${name}` : 'Limousine booking and dispatch',
-    id: co ? `/?c=${slug}${staff ? '&r=staff' : ''}` : '/', start_url: co && !staff ? `/?source=app#book.${slug}` : '/?source=app', scope: '/', display: 'standalone', orientation: 'portrait',
+    id: co ? `/?c=${slug}${staff ? '&r=staff' : ''}` : '/', start_url: co ? (staff ? `/?source=app#team.${slug}` : `/?source=app#book.${slug}`) : '/?source=app', scope: '/', display: 'standalone', orientation: 'portrait',
     background_color: '#f4f5f7', theme_color: color,
     icons: co && !coIconDir(slug) && /^data:image\/\w+;base64,/.test((co.company || co).logo || '') ? [
       { src: `/co-icon/${encodeURIComponent(slug)}.svg`, sizes: 'any', type: 'image/svg+xml' },
