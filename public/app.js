@@ -3228,26 +3228,45 @@
   const NEXT_LABEL = { accepted: 'Start trip: drive to pickup', en_route: "I've arrived at pickup", arrived: 'Passenger on board', on_board: 'Complete trip' };
   const stars = (n) => '★★★★★'.slice(0, Math.round(n)) + '☆☆☆☆☆'.slice(0, 5 - Math.round(n));
   // The driver's phone shares GPS from "on the way" until drop-off. The passenger only sees it while the car is on the way; dispatch sees it on the live map.
-  const gps = { watch: null, tripId: null, last: 0, state: 'idle' };
-  function shareLocation(tripId) {
-    if (gps.tripId === tripId) return;
+  const gps = { watch: null, tripId: null, last: 0, state: 'idle', latest: null, beat: null, lock: null };
+  // Send the newest fix at most every 10 s, and again every 30 s while parked,
+  // so dispatch never sees a stale car just because the phone stopped moving.
+  function gpsSend() {
+    const c = gps.latest; if (!c || !gps.tripId) return;
+    gps.last = Date.now();
+    api('driver.location', { id: gps.tripId, lat: c.latitude, lng: c.longitude, accuracy: c.accuracy }).catch(() => {});
+  }
+  function gpsWake() { try { if (gps.tripId && navigator.wakeLock && !gps.lock) navigator.wakeLock.request('screen').then((l) => { gps.lock = l; if (l.addEventListener) l.addEventListener('release', () => { gps.lock = null; }); }).catch(() => {}); } catch (e) { /* not supported */ } }
+  function gpsStart() {
     if (gps.watch != null && navigator.geolocation) navigator.geolocation.clearWatch(gps.watch);
-    gps.watch = null; gps.tripId = tripId; gps.last = 0;
-    if (!tripId) { gps.state = 'idle'; return; }
-    if (!navigator.geolocation) { gps.state = 'unsupported'; return; }
-    gps.state = 'asking';
+    gps.watch = null;
+    if (!gps.tripId || !navigator.geolocation) return;
     try {
       gps.watch = navigator.geolocation.watchPosition((p) => {
+        gps.latest = p.coords;
         if (gps.state !== 'sharing') { gps.state = 'sharing'; const el = $('#drv-gps'); if (el) el.textContent = GPS_TEXT.sharing; }
-        if (Date.now() - gps.last < 10000) return;
-        gps.last = Date.now();
-        api('driver.location', { id: tripId, lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy }).catch(() => {});
-      }, () => { gps.state = 'denied'; const el = $('#drv-gps'); if (el) el.textContent = GPS_TEXT.denied; }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
+        if (Date.now() - gps.last >= 10000) gpsSend();
+      }, (e) => { if (e && e.code === 1) { gps.state = 'denied'; const el = $('#drv-gps'); if (el) el.textContent = GPS_TEXT.denied; } }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
     } catch (e) { gps.state = 'denied'; }
   }
+  function shareLocation(tripId) {
+    if (gps.tripId === tripId) return;
+    gps.tripId = tripId; gps.last = 0; gps.latest = null;
+    clearInterval(gps.beat); gps.beat = null;
+    if (gps.lock) { gps.lock.release().catch(() => {}); gps.lock = null; }
+    if (!tripId) { if (gps.watch != null && navigator.geolocation) navigator.geolocation.clearWatch(gps.watch); gps.watch = null; gps.state = 'idle'; return; }
+    if (!navigator.geolocation) { gps.state = 'unsupported'; return; }
+    gps.state = 'asking';
+    gpsStart();
+    // Heartbeat: resend the last fix while parked. The screen stays on so the browser keeps sending.
+    gps.beat = setInterval(() => { if (Date.now() - gps.last > 30000) gpsSend(); }, 10000);
+    gpsWake();
+  }
+  // When the driver comes back to the app (screen unlocked or switched back), restart GPS at once.
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && gps.tripId) { gps.last = 0; gpsStart(); gpsWake(); } });
   const GPS_TEXT = {
     asking: 'Allow location so the passenger can follow you live.',
-    sharing: 'Sharing your location with the passenger and dispatch.',
+    sharing: 'Sharing your location with the passenger and dispatch. Keep this app open on screen during the trip.',
     denied: 'Location is off on this phone. The passenger sees an estimated position.',
     unsupported: 'This phone can’t share location. The passenger sees an estimated position.',
   };
@@ -3659,6 +3678,7 @@
         }
       }; });
     }
+    let mapTimer = null;
     function drawBoard(v0) {
       v0.innerHTML = '<div id="bd-setup"></div><div id="bd-map"></div><div id="bd-main"><p class="faint">Loading…</p></div>';
       drawSetup($('#bd-setup', v0), () => { last = ''; refresh(); });
@@ -3753,6 +3773,9 @@
       }
       current = { poll: true, refresh };
       refresh();
+      // The live map has its own 10 s timer, so it keeps moving while someone types or has a trip open.
+      clearInterval(mapTimer);
+      mapTimer = setInterval(() => { if (document.hidden) return; if (!document.body.contains(v0)) { clearInterval(mapTimer); return; } fmap.update(); }, 10000);
     }
 
     // Live map ---------------------------------------------------------------
@@ -3825,7 +3848,7 @@
         if (!host.querySelector('.fleetmap')) host.innerHTML = '<section class="panel fleetmap"></section>';
         const box = host.querySelector('.fleetmap');
         const keepGoogle = open && gm && box.querySelector('.fm-google');
-        const head = `<div class="fm-head"><h2>Live map</h2><span class="small muted fm-legend">${counts.map(([k, n]) => `<span><i class="fm-dot ${k}"></i>${n} ${MAP_STATE[k].toLowerCase()}</span>`).join('')}${d.pickups.length ? `<span>${d.pickups.length} pickup${d.pickups.length === 1 ? '' : 's'} in the next 6 hours${unassigned ? `, <b>${unassigned} need${unassigned === 1 ? 's' : ''} a driver</b>` : ''}</span>` : ''}</span><button class="btn sm" type="button" id="fm-toggle">${open ? 'Hide map' : 'Show map'}</button></div>`;
+        const head = `<div class="fm-head"><h2>Live map</h2><span class="small muted fm-legend">${counts.map(([k, n]) => `<span><i class="fm-dot ${k}"></i>${n} ${MAP_STATE[k].toLowerCase()}</span>`).join('')}${d.pickups.length ? `<span>${d.pickups.length} pickup${d.pickups.length === 1 ? '' : 's'} in the next 6 hours${unassigned ? `, <b>${unassigned} need${unassigned === 1 ? 's' : ''} a driver</b>` : ''}</span>` : ''}</span><span class="small faint fm-upd">Updated ${esc(fmtTime(new Date(lastAt || Date.now()).toISOString()))}</span><button class="btn sm" type="button" id="fm-toggle">${open ? 'Hide map' : 'Show map'}</button></div>`;
         const order = Object.keys(MAP_STATE);
         const list = `<ul class="fm-list">${d.cars.slice().sort((a, b) => order.indexOf(a.state) - order.indexOf(b.state)).map((c) => `<li ${c.trip ? `data-trip="${c.trip.id}" class="click"` : ''}><i class="fm-dot ${c.state}"></i><div><b>${esc(c.name)}</b>${c.vehicle ? ` <span class="small faint">${esc(c.vehicle.name)}</span>` : ''}<br><span class="small muted">${esc(line(c))}</span>${c.next ? `<br><span class="small faint">Next: ${esc(fmtTime(c.next.pickupAt))} ${esc(c.next.ref)}</span>` : ''}</div></li>`).join('')}</ul>`;
         if (!open) { box.innerHTML = head; gm = null; }
@@ -3848,6 +3871,7 @@
           const changed = !data || JSON.stringify([d.cars, d.pickups]) !== JSON.stringify([data.cars, data.pickups]);
           data = d;
           if (changed || !host.querySelector('.fleetmap')) draw();
+          else { const u = host.querySelector('.fm-upd'); if (u) u.textContent = 'Updated ' + fmtTime(new Date(lastAt).toISOString()); }
         } catch (e) { /* the board still works without the map */ }
         busyMap = false;
       }
