@@ -1954,6 +1954,9 @@
     if (init.service === 'airport') init.service = 'transfer';
     const pr = init.prefs || {};
     const state = { bags: 0, signName: '', repOn: false, repUntil: '', retOn: false, landOn: false, landDest: '', landDrop: '', retDate: init.date, retTime: '', retFlight: '', prefTemp: pr.temp || '', prefMusic: pr.music || '', prefQuiet: !!pr.quiet, ...init };
+    // The customer's saved places: addresses from their past rides, most used first (Dawit 2026-11-08).
+    const places = (opts.places || []).slice(0, 6);
+    const placeChips = (forId) => places.length ? `<div class="row placechips small" data-for="${forId}"><span class="faint">Your places:</span>${places.map((p, i) => `<button class="chip" type="button" data-place="${i}" title="${esc(p)}">${esc(p.split(',')[0].slice(0, 32))}</button>`).join('')}</div>` : '';
     let stopList = Array.isArray(init.stopList) ? init.stopList.slice() : [];
     // "Add another ride": more transfers booked together, each its own trip.
     let moreList = Array.isArray(init.moreList) ? init.moreList.map((x) => ({ ...x })) : [];
@@ -1994,10 +1997,10 @@
             <label class="field"><span>Pickup time${TZ ? ` <small class="faint">(${esc(tzLabel())})</small>` : ''}</span><input id="bk-time" name="time" type="time" step="300" value="${esc(state.time)}" required>${opts.mode !== 'dispatch' && opts.info.minNoticeHours ? `<span class="hint">Book at least ${opts.info.minNoticeHours} hours ahead</span>` : ''}</label>
             <label class="field" data-show="hourly"><span>Hours</span><input id="bk-hours" name="hours" type="number" min="1" max="24" value="${esc(state.hours)}"><span class="hint">Minimum ${opts.info.rates.minHours} hours</span></label>
           </div>
-          <label class="field"><span>Pickup address</span><input id="bk-pickup" name="pickup" autocomplete="off" placeholder="Hotel, airport or street address" value="${esc(state.pickup)}" required></label>
+          <label class="field"><span>Pickup address</span><input id="bk-pickup" name="pickup" autocomplete="off" placeholder="Hotel, airport or street address" value="${esc(state.pickup)}" required></label>${placeChips('bk-pickup')}
           <div class="stack stops" data-hide="hourly" style="gap:8px"><div id="bk-stops"></div>
             <div><button class="linkbtn" type="button" id="bk-addstop">+ Add a stop on the way</button></div></div>
-          <label class="field"><span id="bk-drop-label">Drop-off address</span><input id="bk-dropoff" name="dropoff" autocomplete="off" placeholder="Where are you going?" value="${esc(state.dropoff)}"></label>
+          <label class="field"><span id="bk-drop-label">Drop-off address</span><input id="bk-dropoff" name="dropoff" autocomplete="off" placeholder="Where are you going?" value="${esc(state.dropoff)}"></label>${placeChips('bk-dropoff')}
           <fieldset class="fs flightbox" id="bk-flightf"><legend><span aria-hidden="true">&#9992;</span> Flight information</legend>
             <div class="grid2" id="bk-flightmain">
               <label class="field"><span id="bk-flight-label">Flight number <span class="faint">(required)</span></span><input id="bk-flight" name="flight" class="mono" placeholder="AS 330 or Alaska 330" value="${esc(state.flight)}" autocomplete="off"></label>
@@ -2372,6 +2375,7 @@
       }, 250);
     }
     const acSlug = (opts.info.company && opts.info.company.slug) || (session && session.company && session.company.slug);
+    $$('.placechips [data-place]', host).forEach((b) => { b.onclick = () => { const inp = $('#' + b.closest('.placechips').dataset.for, host); if (!inp) return; inp.value = places[+b.dataset.place]; inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('change', { bubbles: true })); }; });
     addressAutocomplete($('#bk-pickup', host), acSlug);
     addressAutocomplete($('#bk-dropoff', host), acSlug);
     addressAutocomplete($('#bk-land-drop', host), acSlug, () => state.landDest);
@@ -2872,12 +2876,22 @@
       if (ui.personal) setMode('personal');
       ui.personal = false;
       try { ui.info = ui.info || await api('public.company', { slug: session.company.slug }); accounts = await loadAccounts(); if (AG) clients = await api('customer.clients'); else credit = (await api('customer.credit')).balance; } catch (e) { return showErr(v, e); }
+      let places = [];
+      try {
+        const n = {};
+        for (const t of await api('customer.trips')) for (const a of [t.pickup, t.dropoff]) if (a) { const k = a.trim(); n[k] = (n[k] || 0) + 1; }
+        places = Object.keys(n).sort((x, y) => n[y] - n[x]).slice(0, 6);
+      } catch (e) { /* booking still works without them */ }
+      // "Book again" or "Book the way back" from a past ride: same places, vehicle and requests, a new date.
+      const ag = ui.again; ui.again = null;
+      const again = ag ? { pickup: ag.back ? (ag.t.dropoff || ag.t.pickup) : ag.t.pickup, dropoff: ag.back ? ag.t.pickup : (ag.t.dropoff || ''), service: ag.t.service === 'hourly' ? 'hourly' : 'transfer', hours: ag.t.hours, vehicleType: ag.t.vehicleType, passengers: ag.t.passengers, bags: ag.t.bags || 0, childSeats: ag.t.childSeats || 0, boosterSeats: ag.t.boosterSeats || 0, meetGreet: !!ag.t.meetGreet, notes: ag.t.notes || '', stopList: ag.back ? (ag.t.stopList || []).slice().reverse() : (ag.t.stopList || []).slice(), ...(AG ? { passengerName: ag.t.passengerName || '', passengerPhone: ag.t.passengerPhone || '', passengerEmail: ag.t.passengerEmail || '' } : {}), ...(ag.t.accountId ? { accountId: ag.t.accountId } : {}) } : null;
       const personal = curMode() === 'personal';
-      v.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Book a ride</h1>${AG ? `<p class="muted">For a client of ${esc(AG.agency)}. They get the texts from the chauffeur; you get a copy of the confirmation.</p>` : ''}</div></div><div id="bk"></div>`;
+      v.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>${ag ? (ag.back ? 'Book the way back' : 'Book again') : 'Book a ride'}</h1>${ag ? `<p class="muted">Same places and vehicle as ${esc(ag.t.ref)}. Choose the new date and time.</p>` : ''}${AG ? `<p class="muted">For a client of ${esc(AG.agency)}. They get the texts from the chauffeur; you get a copy of the confirmation.</p>` : ''}</div></div><div id="bk"></div>`;
       bookingForm($('#bk', v), {
         info: ui.info, mode: AG ? 'agent' : 'customer', accounts, clients, credit,
         biz: AG ? null : { account: bizAcct(), onMode: setMode },
-        initial: AG ? { accountId: accounts[0] ? accounts[0].id : '' } : { passengerName: session.user.name, passengerPhone: session.user.phone, accountId: accounts[0] && !personal ? accounts[0].id : '', prefs: session.user.prefs || null, signName: (session.user.prefs && session.user.prefs.signName) || '' },
+        places,
+        initial: again ? Object.assign(AG ? { accountId: accounts[0] ? accounts[0].id : '' } : { passengerName: session.user.name, passengerPhone: session.user.phone, prefs: session.user.prefs || null }, again) : AG ? { accountId: accounts[0] ? accounts[0].id : '' } : { passengerName: session.user.name, passengerPhone: session.user.phone, accountId: accounts[0] && !personal ? accounts[0].id : '', prefs: session.user.prefs || null, signName: (session.user.prefs && session.user.prefs.signName) || '' },
         quoteFn: (b) => api('customer.quote', { booking: b }),
         onSubmit: async (b) => { const t = await api('customer.book', { booking: b }); await afterBook(t, b); if (AG) { toast(bookedMsg(t) + (b.payBy === 'passenger' ? ` We texted ${b.passengerName.split(' ')[0]} a link to add a card.` : '')); tab = 'trips'; draw(); return; } if (b.prefs) setSession({ ...session, user: { ...session.user, prefs: { ...b.prefs, signName: b.signName || '' } } }); toast(bookedMsg(t)); tab = 'trips'; draw(); },
       });
@@ -2923,12 +2937,13 @@
       // A finished ride as one compact row: when, where, price, rating, receipt.
       function pastRow(t) {
         const to = t.dropoff ? t.dropoff.split(',')[0] : `${t.hours} h as directed`;
+        const againBtns = `<span class="row small"><button class="linkbtn small" type="button" data-act="again" data-id="${t.id}">Book again</button>${t.dropoff && t.service !== 'hourly' ? `<button class="linkbtn small" type="button" data-act="back" data-id="${t.id}">Book the way back</button>` : ''}</span>`;
         const rate = t.status === 'completed' && t.driver && !t.rating;
         return `<div class="pastrow">
           <div class="pr-main"><div class="row"><b>${esc(fmtDT(t.pickupAt))}</b><span class="faint small">${esc(t.ref)}</span>${t.status === 'cancelled' ? pill(t) : ''}</div>
             <div class="small muted">${t.agent ? `${esc(t.passengerName || 'Client')} · ` : ''}${esc(t.pickup.split(',')[0])} → ${esc(to)}${t.commission ? ` · commission ${money(t.commission)}` : ''}</div>
             ${t.rating ? `<span class="stars sm">${stars(t.rating.stars)}</span>` : rate ? `<span class="row small"><span class="muted">Rate ${esc(t.driver.name.split(' ')[0])}:</span><span class="stars rate sm">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-act="rate" data-id="${t.id}" data-stars="${n}" aria-label="${n} star${n > 1 ? 's' : ''}">★</button>`).join('')}</span></span>` : ''}
-            ${t.pay && t.status === 'cancelled' && cardLine(t, 'customer') ? `<div class="small muted">${cardLine(t, 'customer')}</div>` : ''}${t.noShow ? `<div class="small muted">No-show${t.noShow.fee ? `, fee ${money(t.noShow.fee)}` : ''}</div>` : ''}${t.cancelFee && !t.pay ? `<div class="small muted">Late cancellation fee ${money(t.cancelFee)}</div>` : ''}</div>
+            ${t.pay && t.status === 'cancelled' && cardLine(t, 'customer') ? `<div class="small muted">${cardLine(t, 'customer')}</div>` : ''}${t.noShow ? `<div class="small muted">No-show${t.noShow.fee ? `, fee ${money(t.noShow.fee)}` : ''}</div>` : ''}${t.cancelFee && !t.pay ? `<div class="small muted">Late cancellation fee ${money(t.cancelFee)}</div>` : ''}${againBtns}</div>
           <div class="pr-side"><b class="num">${money(t.price.total)}</b>${t.status === 'completed' || t.payment.status === 'paid' ? `<button class="linkbtn small" type="button" data-act="receipt" data-id="${t.id}">Receipt</button>` : ''}<button class="linkbtn small danger" type="button" data-act="hide" data-id="${t.id}">Delete</button></div></div>`;
       }
       function tripCard(t) {
@@ -3029,6 +3044,7 @@
         });
       }
       async function act(kind, t, btn) {
+        if ((kind === 'again' || kind === 'back') && t) { ui.again = { t, back: kind === 'back' }; tab = 'book'; draw(); window.scrollTo(0, 0); return; }
         if (kind === 'cancel') {
           const fee = t.cancelTerms && t.cancelTerms.fee;
           if (!btn.dataset.armed) { btn.dataset.armed = '1'; btn.textContent = fee ? `Tap again to cancel (${money(fee)} fee)` : 'Tap again to cancel'; setTimeout(() => { if (btn.isConnected) { delete btn.dataset.armed; btn.textContent = 'Cancel ride'; } }, 5000); return; }

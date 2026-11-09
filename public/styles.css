@@ -1003,3 +1003,8 @@ body.co-dark .brandhead h1 { color: var(--ink); }
 body.co-dark .brandhead .bh-logo { background: transparent; }
 body.co-dark .switch input:not(:checked) { background: #3a3d44; }
 body.co-dark .bh-phone a { color: var(--ink); }
+
+/* Saved places on the booking form (2026-11-08) */
+.placechips{gap:6px;flex-wrap:wrap;margin:-4px 0 6px}
+.placechips .chip{border:1px solid var(--line,#d8dbe0);background:var(--card,#fff);border-radius:999px;padding:4px 10px;font:inherit;font-size:13px;cursor:pointer;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.placechips .chip:hover{border-color:currentColor}
