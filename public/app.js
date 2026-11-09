@@ -3271,6 +3271,29 @@
     unsupported: 'This phone can’t share location. The passenger sees an estimated position.',
   };
 
+  // Full details of one of the driver's rides, opened by tapping it (Dawit 2026-11-08).
+  function driverTripModal(t) {
+    if (!t) return;
+    const fl = t.flightInfo ? `${esc(t.flight)} ${t.flightInfo.kind === 'arrival' ? 'lands' : 'departs'} ${esc(fmtTime(t.flightInfo.estimated))}${t.flightInfo.terminal ? ` · Terminal ${esc(t.flightInfo.terminal)}` : ''}${t.flightInfo.claim ? ` · claim ${t.flightInfo.claim}` : ''}` : (t.flight ? esc(t.flight) : '');
+    const fare = t.farmIn ? `Billed to ${esc(t.farmIn.fromName)}. Don't collect payment.` : t.pay ? `<span class="num">${money(t.price.total)}</span> · paid by card. Don't take payment.` : `<span class="num">${money(t.price.total)}</span> · the office handles payment. Don't take payment.`;
+    const m = openModal({ title: `${t.ref} · ${fmtDT(t.pickupAt)}`, body: `<div class="stack" style="gap:12px">
+      <div class="spread"><b style="font-size:18px">${esc(fmtTime(t.pickupAt))} <span class="muted" style="font-weight:500;font-size:14px">${esc(fmtDate(t.pickupAt))}</span></b>${pill(t)}</div>
+      ${t.pickupAt !== t.scheduledPickupAt ? `<div class="note small">Pickup moved from ${esc(fmtTime(t.scheduledPickupAt))} to match the flight.</div>` : ''}
+      ${routeHtml(t)}
+      <dl class="kv"><dt>Passenger</dt><dd>${esc(t.passengerName || '')} · ${t.passengers} pax</dd>
+        ${t.passengerPhone ? `<dt>Phone</dt><dd class="mono"><a href="tel:${esc(t.passengerPhone)}">${esc(t.passengerPhone)}</a></dd>` : ''}
+        ${fl ? `<dt>Flight</dt><dd>${fl}</dd>` : ''}
+        <dt>Vehicle</dt><dd>${esc(t.vehicle ? `${t.vehicle.name}${t.vehicle.plate ? ' · ' + t.vehicle.plate : ''}` : t.vehicleType)}</dd>
+        <dt>Service</dt><dd>${esc(t.serviceLabel)}${t.service === 'hourly' ? `, ${t.hours} h` : ''}</dd>
+        ${extrasList(t).length ? `<dt>Requests</dt><dd>${esc(extrasList(t).join(' · '))}</dd>` : ''}
+        ${t.notes ? `<dt>Notes</dt><dd>${esc(t.notes)}</dd>` : ''}
+        ${t.status === 'completed' ? '' : `<dt>Fare</dt><dd>${fare}</dd>`}</dl>
+      <div class="grid2"><a class="btn" href="${esc(mapsLink(t.pickup))}" target="_blank" rel="noopener">Map to pickup</a>${t.dropoff ? `<a class="btn" href="${esc(mapsLink(t.dropoff))}" target="_blank" rel="noopener">Map to drop-off</a>` : ''}</div>
+      ${['accepted', 'assigned'].includes(t.status) ? '<button class="btn" type="button" id="dtm-sign">Show name sign</button>' : ''}
+    </div>` });
+    const sg = $('#dtm-sign', m); if (sg) sg.onclick = () => nameSign(t);
+  }
+
   // The driver's own rides on a month or week calendar, in a full-width sheet.
   function driverCalendar() {
     const m = openModal({ title: 'My calendar', wide: true, body: '<div id="dcal"></div><div id="dcal-detail"></div>' });
@@ -3341,7 +3364,7 @@
               ${['accepted', 'en_route', 'arrived'].includes(live.status) ? `<button class="linkbtn small drv-inc" type="button" data-act="incident" data-id="${live.id}">Report an incident</button>` : ''}
             </div></div>` : (waiting.length ? '' : '<div class="panel muted">No trips right now. New assignments show up here.</div>')}
           <div class="row"><button class="btn" type="button" data-act="calendar">My calendar</button>${me.photo ? `<button class="btn" type="button" data-act="photo">My photo</button>` : ''}</div>
-          ${upcoming.length ? `<div class="stack"><span class="label">Coming up</span>${upcoming.map((t) => `<div class="trip"><div class="spread"><b>${esc(fmtDT(t.pickupAt))}</b><span class="mono small faint">${esc(t.ref)}</span></div>${routeHtml(t)}${flightLine(t)}</div>`).join('')}</div>` : ''}
+          ${upcoming.length ? `<div class="stack"><span class="label">Coming up</span>${upcoming.map((t) => `<div class="trip click" role="button" tabindex="0" data-open="${t.id}" title="Tap for details"><div class="spread"><b>${esc(fmtDT(t.pickupAt))}</b><span class="mono small faint">${esc(t.ref)} ›</span></div>${routeHtml(t)}${flightLine(t)}<p class="small muted" style="margin:4px 0 0">${esc(t.passengerName || '')} · ${t.passengers} pax · ${esc(t.vehicle ? t.vehicle.name : t.vehicleType)} · <span class="linkbtn">Details</span></p></div>`).join('')}</div>` : ''}
           <div class="stack"><span class="label">This week</span>
             <div class="tiles three">
               <div class="tile"><span class="label">Pay so far</span><b>${money(week.total)}</b><span class="small faint">${week.trips} trips · ${money(week.tips)} tips</span></div>
@@ -3356,6 +3379,7 @@
       shareLocation(live && ['en_route', 'arrived', 'on_board'].includes(live.status) ? live.id : null);
       $('#drv-avail', v).onchange = async (e) => { try { await api('driver.availability', { available: e.target.checked }); last = ''; refresh(); } catch (err) { toast(err.message, true); } };
       wirePhoto(v, 'drv-photo', savePhoto);
+      $$('[data-open]', v).forEach((el) => { const go = () => driverTripModal(trips.find((x) => x.id === el.dataset.open)); el.onclick = go; el.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } }; });
       waitTimer($('.waittimer', v));
       $$('[data-act]', v).forEach((b) => { b.onclick = () => b.dataset.act === 'calendar' ? driverCalendar() : b.dataset.act === 'photo' ? myPhoto(me) : b.dataset.act === 'sign' ? nameSign(trips.find((x) => x.id === b.dataset.id)) : b.dataset.act === 'incident' ? incidentModal({ trip: (() => { const t = trips.find((x) => x.id === b.dataset.id); return t ? { id: t.id, ref: t.ref, pickupAt: t.pickupAt, passengerName: t.passengerName } : null; })() }, { done: () => {} }) : b.dataset.act === 'noshow' ? noShowModal(trips.find((x) => x.id === b.dataset.id), 'driver.noShow', () => { last = ''; refresh(); }) : busy(b, async () => {
         const id = b.dataset.id;
