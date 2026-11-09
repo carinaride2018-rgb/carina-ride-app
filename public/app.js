@@ -4128,7 +4128,7 @@
               <label class="field"><span>Vehicle</span><select id="te-vehicle" ${noAssign ? 'disabled' : ''}><option value="">Best free vehicle</option>${vehicles.filter((x) => x.status !== 'retired').map((x) => `<option value="${x.id}" ${t.vehicleId === x.id ? 'selected' : ''}>${esc(x.name)} · ${esc(x.type)} · ${x.capacity} seats${x.status === 'maintenance' ? ' (in the shop)' : ''}</option>`).join('')}</select></label>
               ${noAssign ? '' : '<button class="btn primary" type="button" id="te-assign">Save assignment</button>'}
               <label class="field"><span>Change status by hand</span><select id="te-status">${Object.entries(C.STATUS_LABELS).map(([k, l]) => `<option value="${k}" ${t.status === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
-              <button class="btn sm" type="button" id="te-setstatus">Update status</button>
+              <button class="btn primary" type="button" id="te-setstatus" style="font-weight:800;width:100%">Update status</button>
               ${['accepted', 'en_route', 'arrived'].includes(t.status) && !t.farmout ? '<button class="btn sm danger" type="button" id="te-noshow">Passenger no-show</button>' : ''}
               <button class="btn sm" type="button" id="te-sheet">Print trip sheet</button>
               ${t.status !== 'cancelled' && (t.passengerEmail || t.passengerPhone) ? '<button class="btn sm" type="button" id="te-confirm">Resend confirmation</button>' : ''}
