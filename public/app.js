@@ -200,6 +200,8 @@
   let seenInit = false, feedBusy = false, pushSynced = '';
   const setSession = (s) => {
     session = s; seenInit = false; pushSynced = '';
+    // Remember whose screen this was, so signing out lands on that company's own sign-in page.
+    if (s && s.user && s.company && s.company.slug && s.user.role !== 'owner') store.set('livery-last', JSON.stringify({ slug: s.company.slug, kind: s.user.role === 'customer' ? 'login' : 'team' }));
     const keep = !s || s.remember !== false;
     store.set('livery-session', s && keep ? JSON.stringify(s) : null);
     tabStore.set('livery-session', s && !keep ? JSON.stringify(s) : null);
@@ -219,7 +221,7 @@
       return body.data;
     } catch (e) {
       if (e.status === 401 && !method.startsWith('auth.')) {
-        setSession(null); go('signin'); toast('Your session ended. Please sign in again.', true);
+        setSession(null); go(signedOutRoute()); toast('Your session ended. Please sign in again.', true);
       }
       throw e;
     }
@@ -370,7 +372,7 @@
     const rb = $('#refreshbtn', app);
     if (rb) rb.onclick = async () => { rb.disabled = true; try { const me = await api('auth.me'); setSession({ ...session, user: me.user, company: me.company }); } catch (e) { /* reload anyway */ } location.reload(); };
     const so = $('#signout', app);
-    if (so) so.onclick = async () => { try { await api('auth.logout', { pushEndpoint: await pushEndpoint() }); } catch (e) { /* already gone */ } setSession(null); go('signin'); };
+    if (so) so.onclick = async () => { try { await api('auth.logout', { pushEndpoint: await pushEndpoint() }); } catch (e) { /* already gone */ } setSession(null); go(signedOutRoute()); };
     if (DEMO) {
       $$('[data-demo]', app).forEach((b) => { b.onclick = () => demoLogin(b.dataset.demo); });
       const r = $('#demo-reset', app);
@@ -712,7 +714,7 @@
         const ep = await pushEndpoint();
         await api('auth.deleteAccount', { password: pass });
         if (NATIVE && ep) { /* the server already dropped this phone's notifications */ }
-        closeModal(); setSession(null); go('signin'); toast('Your account is deleted.');
+        closeModal(); setSession(null); go(signedOutRoute()); toast('Your account is deleted.');
       } catch (err) { showErr($('#del-err', m), err); }
     });
   }
@@ -764,6 +766,7 @@
     if (route.startsWith('request.')) return viewRequest(route.slice(8));
     if (route.startsWith('quote.')) return viewQuote(route.slice(6));
     if (route.startsWith('agent.')) return viewAgentSignup(route.slice(6));
+    if (route.startsWith('team.')) return viewTeamAuth(route.slice(5));
     if (route.startsWith('login.')) return viewCustomerAuth(route.slice(6), 'signin');
     if (route.startsWith('signup.')) return viewCustomerAuth(route.slice(7), 'signup');
     if (route.startsWith('setpw.')) return viewSetPassword(route.slice(6));
@@ -1444,6 +1447,12 @@
     ['How does the farm-out commission work?', `When your client books a ride in another city through your booking page, a LimoRelay company there drives it. Your client pays you, the partner is paid their share and you keep the rest: ${KEEP_PCT}% by default, and you can change it in Network settings.`],
     ['Can I bring my existing rides?', 'Yes. Upcoming rides can be imported from a spreadsheet, so you can switch without losing bookings.'],
   ];
+  // Where a signed-out person goes: their company's branded sign-in page if we know it.
+  function signedOutRoute() {
+    let last = null; try { last = JSON.parse(store.get('livery-last') || 'null'); } catch (e) { last = null; }
+    return last && last.slug && /^(team|login)$/.test(last.kind) ? `${last.kind}.${last.slug}` : 'signin';
+  }
+
   async function viewSignin() {
     let myTz = 'America/Los_Angeles'; try { myTz = Intl.DateTimeFormat().resolvedOptions().timeZone || myTz; } catch (e) { /* default */ }
     current = null;
@@ -2738,8 +2747,9 @@
             <div id="ca-err"></div>
             <div class="row"><button class="btn brand" type="submit" id="ca-go">${up ? 'Create account' : 'Log in'}</button>
               <a class="linkbtn" href="#${up ? 'login' : 'signup'}.${esc(slug)}">${up ? 'I already have an account' : 'Create an account'}</a>
-              ${up ? '' : '<a class="linkbtn" href="#signin">Forgot password?</a>'}</div>
+              ${up ? '' : '<button class="linkbtn" type="button" id="ca-forgot">Forgot password?</button>'}</div>
           </form></div>`;
+      const cf = $('#ca-forgot', v); if (cf) cf.onclick = () => forgotModal($('#ca-email', v).value);
       $('#ca-form', v).onsubmit = async (e) => {
         e.preventDefault();
         const f = formData(e.target);
@@ -2750,6 +2760,51 @@
       };
     };
     draw();
+  }
+
+  // A company's own sign-in page for its office staff and chauffeurs (#team.<slug>):
+  // its logo, colour and name instead of the LimoRelay home page.
+  async function viewTeamAuth(slug) {
+    current = null;
+    let info;
+    try { info = await api('public.company', { slug }); }
+    catch (e) { const v = shell({}); v.innerHTML = `<div class="panel stack"><h2>Page unavailable</h2><p class="muted">${esc(e.message)}</p><a class="btn" href="#signin">Back</a></div>`; return; }
+    const co = info.company;
+    const here = session && session.user && session.user.companyId === co.id && session.user.role !== 'customer' ? session.user : null;
+    const keep = session;
+    session = { company: co, user: null };
+    const v = shell({});
+    session = keep;
+    brandTitle(co, 'Team sign in');
+    document.documentElement.style.setProperty('--brand', co.color);
+    v.innerHTML = `<div class="brandhead">${co.logo ? `<div class="bh-logowrap">${coLogo(co, 'bh-logo')}</div>` : ''}<div class="stack" style="gap:6px"><h1>${esc(co.name)}</h1><p>Sign in for dispatch and chauffeurs.</p></div></div>
+      ${here ? `<div class="note ok" style="max-width:520px">You're signed in as ${esc(here.name)}. <a href="#${HOME[here.role]}">Go to your screen</a></div>` : ''}
+      <div class="panel stack" style="max-width:520px">
+        <form id="ta-form" class="stack" novalidate>
+          <label class="field"><span>Email</span><input id="ta-email" name="email" type="email" autocomplete="username" required></label>
+          <label class="field"><span>Password</span><input id="ta-pass" name="password" type="password" autocomplete="current-password" required></label>
+          <label class="check"><input type="checkbox" id="ta-remember" checked> <span>Keep me signed in on this device</span></label>
+          <p class="small faint" style="margin-top:-6px">Untick on a shared or office computer: you're signed out when the browser closes.</p>
+          <div id="ta-err"></div>
+          <div class="row"><button class="btn brand" type="submit" id="ta-go">Sign in</button>
+            <button class="linkbtn" type="button" id="ta-forgot">Forgot password?</button></div>
+        </form>
+        <p class="small faint">Passengers: <a href="#login.${esc(slug)}">log in here</a> or <a href="#book.${esc(slug)}">book a ride</a>.${co.phone ? ` Questions? Call ${esc(co.phone)}.` : ''}</p>
+      </div>`;
+    $('#ta-forgot', v).onclick = () => forgotModal($('#ta-email', v).value);
+    $('#ta-form', v).onsubmit = async (e) => {
+      e.preventDefault();
+      const f = formData(e.target);
+      await busy($('#ta-go', v), async () => {
+        try {
+          const remember = $('#ta-remember', v).checked;
+          const res = await api('auth.login', { email: f.email, password: f.password, slug, remember });
+          setSession({ ...res, remember });
+          toast(`Welcome, ${res.user.name.split(' ')[0]}.`);
+          go(HOME[res.user.role]);
+        } catch (err) { showErr($('#ta-err', v), err); }
+      });
+    };
   }
 
   // ---- Customer -------------------------------------------------------------
@@ -6099,6 +6154,11 @@
               <label class="field"><span>Email</span><input id="rs-email" name="email" value="${esc(s.company.email)}" ${ro}></label></div>
             <div class="field"><span>Your booking page</span><div class="row"><input class="input mono grow" id="rs-link" readonly value="${esc(link)}"><button class="btn" type="button" id="rs-copy">Copy</button><a class="btn" href="#book.${esc(s.company.slug)}">Open</a></div>
               <span class="hint">Link to this from your website, or embed it as a booking widget.</span></div>
+            <div class="field"><span>Sign-in pages with your logo</span>
+              <div class="row"><input class="input mono grow" readonly value="${esc(location.origin)}/#team.${esc(s.company.slug)}"><button class="btn" type="button" data-copyurl="${esc(location.origin)}/#team.${esc(s.company.slug)}">Copy</button><a class="btn" href="#team.${esc(s.company.slug)}" target="_blank" rel="noopener">Open</a></div>
+              <span class="hint">For your dispatchers and chauffeurs.</span>
+              <div class="row" style="margin-top:8px"><input class="input mono grow" readonly value="${esc(location.origin)}/#login.${esc(s.company.slug)}"><button class="btn" type="button" data-copyurl="${esc(location.origin)}/#login.${esc(s.company.slug)}">Copy</button><a class="btn" href="#login.${esc(s.company.slug)}" target="_blank" rel="noopener">Open</a></div>
+              <span class="hint">For your customers. Signing out also brings each person back to your page.</span></div>
             <label class="field"><span>Your own booking address <span class="faint">(optional)</span></span><input id="rs-domain" name="domain" class="mono" placeholder="book.yourcompany.com" value="${esc(s.company.domain || '')}" ${ro}>
               <span class="hint">Customers see your name in the address bar. After you save, add a CNAME record for this name where you bought the domain, pointing to <span class="mono">livery-9xtm.onrender.com</span>, and ask LimoRelay to turn it on.</span></label>
             <label class="field"><span>Google Ads conversion tag <span class="faint">(optional)</span></span><input id="rs-adstag" name="adsTag" class="mono" placeholder="AW-123456789/AbCdEfGh" value="${esc(s.company.adsTag || '')}" ${ro}>
@@ -6227,6 +6287,7 @@
         });
       };
       if (isAdmin) drawHl();
+      $$('[data-copyurl]', v).forEach((b) => { b.onclick = async () => { try { await navigator.clipboard.writeText(b.dataset.copyurl); toast('Link copied.'); } catch (e) { toast(b.dataset.copyurl, false, 9000); } }; });
       $('#rs-copy', v).onclick = async () => {
         const inp = $('#rs-link', v);
         try { await navigator.clipboard.writeText(inp.value); toast('Link copied.'); } catch (e) { inp.select(); toast('Press Ctrl+C or ⌘C to copy.'); }
