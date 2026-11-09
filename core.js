@@ -617,14 +617,18 @@
     if (!overridden && via.length && b.dropoff) miles = round2(fareMiles + detours.reduce((x, y) => x + y, 0));
     const lines = [];
     let fare;
+    const lock = ctx.lock && ctx.lock.service === (service === 'hourly' ? 'hourly' : 'ride') ? ctx.lock : null;
     if (service === 'hourly') {
       const hours = Math.max(num(b.hours, r.minHours), r.minHours);
-      const perHr = hourlyRate(r, type);
+      const perHr = lock ? lock.perHr : hourlyRate(r, type);
       fare = hours * perHr;
-      lines.push({ label: `${hours} hours × $${money(perHr)}/hr (${type})`, amount: round2(fare), kind: 'fare' });
+      lines.push({ label: `${hours} hours × $${money(perHr)}/hr (${type})${lock ? `, your locked rate since ${lock.ref}` : ''}`, amount: round2(fare), kind: 'fare' });
     } else {
       const flat = flatFor(company, b, type);
-      if (flat) {
+      if (lock) {
+        fare = lock.fare;
+        lines.push({ label: `Your locked price for this ride (since ${lock.ref}) (${type})`, amount: round2(fare), kind: 'fare', flat: !!lock.flat, locked: true });
+      } else if (flat) {
         fare = flat.price;
         lines.push({ label: `${flat.name} flat rate, all inclusive (${type})`, amount: round2(fare), kind: 'fare', flat: true });
       } else {
@@ -639,7 +643,7 @@
 
     // Automatic surcharges on the fare
     let surcharges = 0;
-    const add = (label, pct) => { if (!pct || isFlat) return; /* a flat rate stays flat */ const a = round2(fare * pct / 100); surcharges += a; lines.push({ label, amount: a, kind: 'surcharge' }); };
+    const add = (label, pct) => { if (!pct || isFlat || lock) return; /* a flat or locked price stays the same */ const a = round2(fare * pct / 100); surcharges += a; lines.push({ label, amount: a, kind: 'surcharge' }); };
     if (b.pickupAt && !isNaN(new Date(b.pickupAt))) {
       const lp = localParts(b.pickupAt, company.timezone);
       const night = p.nightStart > p.nightEnd ? (lp.hour >= p.nightStart || lp.hour < p.nightEnd) : (lp.hour >= p.nightStart && lp.hour < p.nightEnd);
@@ -714,7 +718,7 @@
     // Credit saved from business rides, spent on a personal ride.
     let credit = 0;
     if (ctx.creditMax > 0 && total > 0) { credit = round2(Math.min(total, ctx.creditMax)); total = round2(total - credit); lines.push({ label: 'Your business ride credit', amount: -credit, kind: 'credit' }); }
-    return { service, vehicleType: type, miles, minutes: route.minutes, lines, fare, surcharges: round2(surcharges), addons: round2(addons), discounts: round2(discounts), subtotal, gratuity, tax, extras, adjustment: adj, credit, total, promoError: ctx.promoError || null };
+    return { service, vehicleType: type, miles, minutes: route.minutes, lines, locked: lock ? lock.ref : null, fare, surcharges: round2(surcharges), addons: round2(addons), discounts: round2(discounts), subtotal, gratuity, tax, extras, adjustment: adj, credit, total, promoError: ctx.promoError || null };
   }
 
   // ---- Factory --------------------------------------------------------------
@@ -1751,9 +1755,53 @@
       return { promo: p };
     }
 
+    // ---- Price lock per client (Dawit 2026-11-08) ------------------------------
+    // Once a client books a ride, the same ride (same two places, either
+    // direction, same vehicle type) always costs that client the same: no new
+    // rate changes, night, weekend, holiday or busy-time surcharges. Hourly
+    // rides keep the client's first hourly rate for that vehicle type.
+    // Add-ons (car seats, stops), discounts and promo codes still apply.
+    const placeKey = (a) => { const code = isAirport(a) ? airportCode(a) : ''; return code ? 'AP:' + code : fold(a); };
+    function clientKey(customer, b) {
+      if (customer && !customer.agent) return 'u:' + customer.id;
+      const e = str(b.passengerEmail || (customer && !customer.agent && customer.email)).toLowerCase();
+      if (e) return 'e:' + e;
+      const ph = str(b.passengerPhone).replace(/\D/g, '').slice(-10);
+      return ph.length >= 10 ? 'p:' + ph : '';
+    }
+    function rideKey(b) {
+      const type = VEHICLE_TYPES.includes(b.vehicleType) ? b.vehicleType : 'Sedan';
+      if (b.service === 'hourly') return `hourly|${type}`;
+      if (!b.pickup || !b.dropoff) return '';
+      return `ride|${type}|` + [placeKey(b.pickup), placeKey(b.dropoff)].sort().join('|');
+    }
+    function lockFor(company, customer, b) {
+      const keys = [clientKey(customer, b), customer && !customer.agent ? clientKey(null, b) : ''].filter(Boolean), k = rideKey(b);
+      if (!k || !company.priceLocks) return null;
+      for (const ck of keys) { const l = company.priceLocks[ck] && company.priceLocks[ck][k]; if (l) return l; }
+      return null;
+    }
+    function saveLock(company, customer, t) {
+      if (!t.price || t.price.locked || (t.priceOverride != null && t.priceOverride !== '') || t.returnOf || t.farmIn || t.affIn) return;
+      if (freeRide(company, t.passengerName)) return;
+      const ck = clientKey(customer, t), k = rideKey(t);
+      if (!ck || !k) return;
+      company.priceLocks = company.priceLocks || {};
+      const mine = company.priceLocks[ck] = company.priceLocks[ck] || {};
+      if (mine[k]) return;
+      const p = t.price, base = round2(num(p.fare, 0) + num(p.surcharges, 0));
+      if (!(base > 0)) return;
+      const flat = (p.lines || []).some((l) => l.kind === 'fare' && l.flat);
+      mine[k] = t.service === 'hourly'
+        ? { service: 'hourly', perHr: round2(base / Math.max(1, num(t.hours, 1))), ref: t.ref, at: now().toISOString() }
+        : { service: 'ride', fare: base, flat, ref: t.ref, at: now().toISOString() };
+    }
+
     function priceCtx(company, b, customer, promoCode, excludeId) {
       const biz = !!(b.business || (b.guestBiz && str(b.guestBiz.company)));
       const ctx = { busy: isBusy(company, b, excludeId), discountPct: discountFor(company, customer, b.accountId, biz) };
+      const lk = lockFor(company, customer, b);
+      if (lk) ctx.lock = lk;
       if (ctx.discountPct && ctx.discountPct === bizPctOf(company) && (biz || findAccount(company, b.accountId))) ctx.discountLabel = 'Business discount';
       const bal = creditOf(customer);
       if (bal > 0 && !b.accountId && b.useCredit && b.useCredit !== 'false' && !customer.agent) ctx.creditMax = bal;
@@ -1845,6 +1893,7 @@
         addCredit(customer, -t.price.credit, { kind: 'spent', tripId: t.id, ref: t.ref, note: `Used on ride ${t.ref}` });
       } else delete ctx.creditMax;
       if (ctx.promo) { const p = company.pricing.promos.find((x) => x.code === ctx.promo.code); if (p) p.uses = (p.uses || 0) + 1; }
+      saveLock(company, customer, t);
       log(t, 'confirmed', by);
       db.trips.push(t);
       checkFlight(t, false);
@@ -1872,7 +1921,15 @@
         total: round2(Math.max(0, base + num(priced.extras, 0) + num(priced.adjustment, 0))), sameAs: t.ref,
       };
     }
-    function priceFor(company, t, ctx) { return sameAsFirst(t, quote(company, t, ctx)); }
+    function priceFor(company, t, ctx) {
+      // Look the client's price lock up again on every reprice, so an edited
+      // route or vehicle uses the lock for the new ride, or none.
+      if (ctx && company) {
+        const lk = lockFor(company, t.customerId ? findUser(t.customerId) : null, t);
+        if (lk && lk.ref !== t.ref) ctx.lock = lk; else delete ctx.lock;
+      }
+      return sameAsFirst(t, quote(company, t, ctx));
+    }
     function reprice(t) {
       t.price = priceFor(findCompany(t.companyId), t, t.priceCtx);
       if (t.payment && onFile(t) && (t.payment.charges || []).length) settle(t);
