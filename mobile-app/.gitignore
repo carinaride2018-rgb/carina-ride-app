@@ -1,0 +1,10 @@
+node_modules/
+android/app/google-services.json
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+ios/App/build/
+ios/DerivedData/
+*.keystore
+*.jks

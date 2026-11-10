@@ -1,0 +1,16 @@
+{
+  "appId": "com.limorelay.app",
+  "appName": "LimoRelay",
+  "webDir": "www",
+  "server": {
+    "url": "https://limorelay.com/?source=app",
+    "allowNavigation": ["limorelay.com", "*.limorelay.com", "reserve.carinaride.com"],
+    "errorPath": "offline.html"
+  },
+  "android": { "allowMixedContent": false },
+  "ios": { "contentInset": "always", "limitsNavigationsToAppBoundDomains": false },
+  "plugins": {
+    "SplashScreen": { "launchShowDuration": 1500, "launchAutoHide": true, "backgroundColor": "#15171c", "showSpinner": false },
+    "PushNotifications": { "presentationOptions": ["badge", "sound", "alert"] }
+  }
+}
