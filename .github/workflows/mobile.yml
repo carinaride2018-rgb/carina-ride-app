@@ -87,12 +87,13 @@ jobs:
         if: env.ASC_KEY_ID != ''
         working-directory: mobile-app/ios/App
         run: |
+          set -eo pipefail
           mkdir -p ~/.appstoreconnect/private_keys
           echo "$ASC_KEY_P8" > ~/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8
           AUTH="-allowProvisioningUpdates -authenticationKeyPath $HOME/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8 -authenticationKeyID $ASC_KEY_ID -authenticationKeyIssuerID $ASC_ISSUER_ID"
           xcodebuild -project App.xcodeproj -scheme App -configuration Release -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/App.xcarchive" DEVELOPMENT_TEAM=$APPLE_TEAM_ID \
-            MARKETING_VERSION=$APP_VERSION CURRENT_PROJECT_VERSION=$APP_BUILD $AUTH archive | tail -20
+            MARKETING_VERSION=$APP_VERSION CURRENT_PROJECT_VERSION=$APP_BUILD CODE_SIGNING_ALLOWED=NO archive | tail -20
           DEST=export; [ "${{ inputs.upload }}" = "true" ] && DEST=upload
           cat > "$RUNNER_TEMP/export.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
