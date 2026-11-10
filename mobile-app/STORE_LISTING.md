@@ -65,7 +65,7 @@ These match the data the app collects. Check each against privacy.html before yo
 - Shared with third parties: no sale of data. Service providers only (hosting, text messages, push notifications).
 - Encrypted in transit: yes.
 - Users can ask for deletion: yes, by emailing info@limorelay.com.
-- Account deletion: tell reviewers the email above. If a review asks for an in-app delete button, we will add one.
+- Account deletion: in the app, open your profile and choose "Delete my account". Email info@limorelay.com also works. (Both match privacy.html.)
 
 ## Content rating
 - No violence, no sexual content, no gambling, no user-to-user chat with strangers.
