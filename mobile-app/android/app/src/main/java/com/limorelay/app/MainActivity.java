@@ -15,9 +15,13 @@ public class MainActivity extends BridgeActivity {
     View root = findViewById(android.R.id.content);
     ViewCompat.setOnApplyWindowInsetsListener(root, (v, windowInsets) -> {
       Insets bars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
-      Insets ime = windowInsets.getInsets(WindowInsetsCompat.Type.ime());
-      v.setPadding(bars.left, bars.top, bars.right, Math.max(bars.bottom, ime.bottom));
-      return WindowInsetsCompat.CONSUMED;
+      boolean keyboard = windowInsets.isVisible(WindowInsetsCompat.Type.ime());
+      // With the keyboard open, Capacitor already shrinks the page for it; do not pad twice.
+      v.setPadding(bars.left, bars.top, bars.right, keyboard ? 0 : bars.bottom);
+      return new WindowInsetsCompat.Builder(windowInsets)
+          .setInsets(WindowInsetsCompat.Type.systemBars(), Insets.NONE)
+          .setInsets(WindowInsetsCompat.Type.displayCutout(), Insets.NONE)
+          .build();
     });
   }
 }
