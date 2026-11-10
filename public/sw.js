@@ -2,7 +2,7 @@
 // with the last screens it loaded), and handles taps on notifications.
 'use strict';
 const CACHE = 'livery-v2';
-const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'core.js', 'native.js', 'icons/icon-192.png', 'icons/icon-512.png'];
+const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'core.js', 'native.js', 'pw-eye.js', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
