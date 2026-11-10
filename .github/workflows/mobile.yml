@@ -1,0 +1,111 @@
+name: Phone apps
+
+# Builds the LimoRelay App Store and Google Play apps from mobile-app/.
+# Runs by hand (Actions > Phone apps > Run workflow) or when mobile-app/ changes.
+# Without store secrets it only checks that both apps build.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version shown in the stores, e.g. 1.0.0'
+        default: '1.0.0'
+      upload:
+        description: 'Upload to TestFlight and Google Play internal testing'
+        type: boolean
+        default: false
+  push:
+    paths: ['mobile-app/**', '.github/workflows/mobile.yml']
+
+env:
+  APP_VERSION: ${{ inputs.version || '1.0.0' }}
+  APP_BUILD: ${{ github.run_number }}
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: mobile-app } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - run: npm ci
+      - name: Firebase file for push notifications
+        env: { GOOGLE_SERVICES_JSON: '${{ secrets.GOOGLE_SERVICES_JSON }}' }
+        if: env.GOOGLE_SERVICES_JSON != ''
+        run: echo "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
+      - run: npx cap sync android
+      - name: Upload key
+        env: { KS: '${{ secrets.ANDROID_KEYSTORE_BASE64 }}' }
+        if: env.KS != ''
+        run: |
+          echo "$KS" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/upload.jks" >> "$GITHUB_ENV"
+      - name: Build
+        working-directory: mobile-app/android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: chmod +x gradlew && ./gradlew bundleRelease assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: |
+            mobile-app/android/app/build/outputs/bundle/release/*.aab
+            mobile-app/android/app/build/outputs/apk/debug/*.apk
+      - name: Upload to Google Play (internal testing)
+        if: inputs.upload && env.ANDROID_KEYSTORE_FILE != ''
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.limorelay.app
+          releaseFiles: mobile-app/android/app/build/outputs/bundle/release/app-release.aab
+          track: internal
+          status: draft
+
+  ios:
+    runs-on: macos-latest
+    defaults: { run: { working-directory: mobile-app } }
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npx cap sync ios
+      - name: Check build (no Apple account yet)
+        if: env.ASC_KEY_ID == ''
+        working-directory: mobile-app/ios/App
+        run: xcodebuild -project App.xcodeproj -scheme App -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build | tail -20
+      - name: Build, sign and upload to TestFlight
+        if: env.ASC_KEY_ID != ''
+        working-directory: mobile-app/ios/App
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+          echo "$ASC_KEY_P8" > ~/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8
+          AUTH="-allowProvisioningUpdates -authenticationKeyPath $HOME/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8 -authenticationKeyID $ASC_KEY_ID -authenticationKeyIssuerID $ASC_ISSUER_ID"
+          xcodebuild -project App.xcodeproj -scheme App -configuration Release -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" DEVELOPMENT_TEAM=$APPLE_TEAM_ID \
+            MARKETING_VERSION=$APP_VERSION CURRENT_PROJECT_VERSION=$APP_BUILD $AUTH archive | tail -20
+          DEST=export; [ "${{ inputs.upload }}" = "true" ] && DEST=upload
+          cat > "$RUNNER_TEMP/export.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>$DEST</string>
+            <key>teamID</key><string>$APPLE_TEAM_ID</string>
+            <key>signingStyle</key><string>automatic</string>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/App.xcarchive" -exportPath "$RUNNER_TEMP/out" \
+            -exportOptionsPlist "$RUNNER_TEMP/export.plist" $AUTH | tail -20
+      - uses: actions/upload-artifact@v4
+        if: env.ASC_KEY_ID != ''
+        with: { name: ios, path: '${{ runner.temp }}/out' }
