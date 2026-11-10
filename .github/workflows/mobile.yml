@@ -35,6 +35,11 @@ jobs:
         env: { GOOGLE_SERVICES_JSON: '${{ secrets.GOOGLE_SERVICES_JSON }}' }
         if: env.GOOGLE_SERVICES_JSON != ''
         run: echo "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
+      - name: No Firebase yet, so turn push off in the Android app
+        env: { GOOGLE_SERVICES_JSON: '${{ secrets.GOOGLE_SERVICES_JSON }}' }
+        if: env.GOOGLE_SERVICES_JSON == ''
+        run: |
+          node -e "const f='capacitor.config.json',c=require('./'+f);c.android=Object.assign(c.android||{},{appendUserAgent:'LRNoPush'});require('fs').writeFileSync(f,JSON.stringify(c,null,2))"
       - run: npx cap sync android
       - name: Upload key
         env: { KS: '${{ secrets.ANDROID_KEYSTORE_BASE64 }}' }
