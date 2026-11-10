@@ -6,8 +6,10 @@ window.LiveryNative = (function () {
   const C = window.Capacitor;
   if (!C || !C.isNativePlatform || !C.isNativePlatform()) return null;
   const P = C.Plugins || {};
-  const Push = P.PushNotifications, App = P.App, Splash = P.SplashScreen;
   const platform = C.getPlatform(); // 'ios' or 'android'
+  // An Android build without Firebase set up crashes if it asks for push; the build adds "LRNoPush" to the user agent then.
+  const Push = (platform === 'android' && /LRNoPush/.test(navigator.userAgent)) ? null : P.PushNotifications;
+  const App = P.App, Splash = P.SplashScreen;
   document.documentElement.classList.add('native-app', 'native-' + platform);
   if (Splash) Splash.hide().catch(() => {});
 
