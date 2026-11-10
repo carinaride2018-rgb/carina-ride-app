@@ -53,6 +53,11 @@ window.LiveryNative = (function () {
     },
   };
 
+  // Keep the box being typed in visible above the keyboard (e.g. the password box).
+  document.addEventListener('focusin', (e) => {
+    const t = e.target;
+    if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) setTimeout(() => { try { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (_) {} }, 350);
+  });
   // Android back button: go back a screen, or leave the app from the first one.
   if (App) App.addListener('backButton', (e) => { if (e.canGoBack) history.back(); else App.exitApp(); });
   // Coming back to the app refreshes what's on screen.
