@@ -4306,7 +4306,8 @@
         if (f2.pickupAt) f2.pickupAt = atLocal(f2.pickupAt).toISOString();
         // Older trips only have a stop count; keep it until stops are typed in.
         if (!String(f2.stopList || '').trim() && t.stops && !(t.stopList || []).length) { delete f2.stopList; delete f2.stopWaits; }
-        if (t.invoiceId) { for (const k of Object.keys(f2)) if (k !== 'notes') delete f2[k]; }
+        // An invoiced trip keeps its price and account; time, places and passenger can still change.
+        if (t.invoiceId) { for (const k of ['priceOverride', 'adjustment', 'waitMin', 'tolls', 'milesOverride', 'accountId']) delete f2[k]; }
         await busy($('button[type=submit]', e.target), async () => {
           try { const r = await api('dispatch.updateTrip', { id, patch: f2, force: useForce }); toast(`${useForce ? 'Force saved' : 'Trip saved'}. Total ${money(r.price.total)}.`); reopen(); } catch (err) { showErr($('#te-err', m), err); }
         });
