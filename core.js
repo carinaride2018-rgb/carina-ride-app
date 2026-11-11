@@ -3501,7 +3501,11 @@
       out.trips = db.trips.filter((t) => t.companyId === cid && !t.officeDeleted && hit([t.ref, t.passengerName, t.passengerEmail, t.pickup, t.dropoff, t.flight, t.signName, nameOf(t.driverId)], [t.passengerPhone]))
         .sort((x, y) => { const ux = x.pickupAt >= nowIso, uy = y.pickupAt >= nowIso; return ux !== uy ? (ux ? -1 : 1) : ux ? x.pickupAt.localeCompare(y.pickupAt) : y.pickupAt.localeCompare(x.pickupAt); })
         .slice(0, 8).map((t) => ({ id: t.id, ref: t.ref, passengerName: t.passengerName, pickupAt: t.pickupAt, pickup: t.pickup, dropoff: t.dropoff, status: t.status, statusLabel: t.noShow ? 'No-show' : STATUS_LABELS[t.status] }));
-      out.customers = users.filter((u) => u.role === 'customer' && hit([u.name, u.email, u.agent && u.agent.agency], [u.phone])).slice(0, 6).map((u) => ({ id: u.id, name: u.name, email: u.email || '', phone: u.phone || '', agent: !!u.agent }));
+      out.customers = users.filter((u) => u.role === 'customer' && hit([u.name, u.email, u.agent && u.agent.agency], [u.phone])).slice(0, 6).map((u) => {
+        // Their latest ride, so the office can book the next one with less typing.
+        const lt = db.trips.filter((t) => t.customerId === u.id && !t.officeDeleted && t.status !== 'cancelled').sort((x, y) => y.pickupAt.localeCompare(x.pickupAt))[0];
+        return { id: u.id, name: u.name, email: u.email || '', phone: u.phone || '', agent: !!u.agent, accountId: u.accountId || '', last: lt ? { pickup: lt.pickup || '', dropoff: lt.dropoff || '', passengers: lt.passengers || 1, vehicleType: lt.vehicleType || '' } : null };
+      });
       out.drivers = users.filter((u) => u.role === 'driver' && hit([u.name, u.email], [u.phone])).slice(0, 6).map((u) => ({ id: u.id, name: u.name, phone: u.phone || '' }));
       out.vehicles = db.vehicles.filter((v) => v.companyId === cid && hit([v.name, v.plate, v.type])).slice(0, 6).map((v) => ({ id: v.id, name: v.name, plate: v.plate || '', type: v.type }));
       out.accounts = db.accounts.filter((x) => x.companyId === cid && hit([x.name, x.contact, x.billingEmail], [x.phone])).slice(0, 6).map((x) => ({ id: x.id, name: x.name }));

@@ -3636,8 +3636,9 @@
       if (isAdmin) sec('team', 'Master login', 'payment pin');
       return out;
     }
-    function openSearch() {
-      const m = openModal({ title: 'Search', body: `<div class="qs"><input class="input" id="qs-in" type="search" autocomplete="off" placeholder="Trip number, name, phone, address, car or page" aria-label="Search">
+    function openSearch(mode) {
+      const bookMode = mode === 'book';
+      const m = openModal({ title: bookMode ? 'Book a ride for a customer' : 'Search', body: `<div class="qs"><input class="input" id="qs-in" type="search" autocomplete="off" placeholder="${bookMode ? 'Customer name, phone or email' : 'Trip number, name, phone, address, car or page'}" aria-label="Search">
         <div class="qs-res" id="qs-res" role="listbox"><p class="small faint">Type a trip number, passenger, phone number, driver, car or page name.</p></div></div>` });
       m.classList.add('qs-overlay');
       const inp = $('#qs-in', m), res = $('#qs-res', m);
@@ -3646,17 +3647,19 @@
       const group = (title, rows) => rows.length ? `<div class="qs-g"><div class="qs-gt">${title}</div>${rows.join('')}</div>` : '';
       const row = (i, main, sub2, tag) => `<button type="button" class="qs-item" role="option" data-i="${i}"><span class="qs-main">${main}</span>${tag || ''}${sub2 ? `<span class="qs-sub">${sub2}</span>` : ''}</button>`;
       function show(q, d) {
+        if (bookMode && d) d = { trips: [], customers: d.customers, drivers: [], vehicles: [], accounts: [] };
         items = []; const add = (fn) => { items.push(fn); return items.length - 1; };
         const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-        const pg = words.length ? pages.filter((p) => { const h = `${p.label} ${p.where} ${p.kw}`.toLowerCase(); return words.every((w) => h.includes(w)); }).slice(0, 6) : [];
-        const html = [
+        const pg = words.length && !bookMode ? pages.filter((p) => { const h = `${p.label} ${p.where} ${p.kw}`.toLowerCase(); return words.every((w) => h.includes(w)); }).slice(0, 6) : [];
+        const G = [
           group('Trips', (d ? d.trips : []).map((t) => row(add(() => { closeModal(); tripModal(t.id, () => current && current.refresh && current.refresh(true)); }), `<b>${esc(t.ref)}</b> · ${esc(t.passengerName || '')}`, `${esc(fmtDT(t.pickupAt))} · ${esc(t.pickup)}${t.dropoff ? ' → ' + esc(t.dropoff) : ''}`, `<span class="pill s-${esc(t.status)}">${esc(t.statusLabel)}</span>`))),
-          group('Customers', (d ? d.customers : []).map((c) => row(add(() => { pendingCust = c.id; custSub = 'people'; jumpTo('customers'); }), esc(c.name), [c.agent ? 'Travel agent' : '', c.phone, c.email].filter(Boolean).map(esc).join(' · ')))),
+          group('Customers', (d ? d.customers : []).map((c) => row(add(() => { if (P.bookings) { closeModal(); newBookingModal(() => { current && current.refresh && current.refresh(true); }, c); } else { pendingCust = c.id; custSub = 'people'; jumpTo('customers'); } }), esc(c.name), [c.agent ? 'Travel agent' : '', c.phone, c.email].filter(Boolean).map(esc).join(' · '), P.bookings ? '<span class="pill paid">Book a ride</span>' : ''))),
           group('Drivers', (d ? d.drivers : []).map((x) => row(add(async () => { closeModal(); let veh = []; try { veh = await api('dispatch.vehicles'); } catch (e) { /* the modal still opens */ } driverModal(x.id, veh, () => tab === 'drivers' && draw()); }), esc(x.name), esc(x.phone)))),
           group('Cars', (d ? d.vehicles : []).map((x) => row(add(() => { closeModal(); vehicleModal(x.id, () => tab === 'fleet' && draw()); }), esc(x.name), [x.type, x.plate].filter(Boolean).map(esc).join(' · ')))),
           group('Company accounts', (d ? d.accounts : []).map((x) => row(add(() => { closeModal(); accountModal(x.id, () => tab === 'customers' && draw()); }), esc(x.name), ''))),
           group('Pages and settings', pg.map((p) => row(add(p.go), esc(p.label), p.where === 'Page' ? '' : esc(p.where)))),
-        ].join('');
+        ];
+        const html = G.join('');
         res.innerHTML = html || (q ? `<p class="small faint">${d ? `Nothing matches “${esc(q)}”.` : 'Searching…'}</p>` : res.innerHTML);
         act = 0; mark();
         $$('.qs-item', res).forEach((b) => { b.onclick = () => items[+b.dataset.i](); b.onmousemove = () => { if (act !== +b.dataset.i) { act = +b.dataset.i; mark(); } }; });
@@ -3838,7 +3841,7 @@
               ${b.unassignedLater ? `<span class="pill">${b.unassignedLater} unassigned on later days</span>` : ''}
               <button class="btn sm" type="button" id="d-print">Print trip sheets</button>
             </div>
-            ${P.bookings ? '<button class="btn primary" type="button" id="d-new">New booking</button>' : ''}
+            ${P.bookings ? '<div class="row" style="gap:8px"><button class="btn" type="button" id="d-find">&#128269; Book for a customer</button><button class="btn primary" type="button" id="d-new">New booking</button></div>' : ''}
           </div>
           ${serious.length ? `<details class="alerts" id="d-alerts" ${alertsOpen ? 'open' : ''}><summary><b>${serious.length} thing${serious.length === 1 ? '' : 's'} need${serious.length === 1 ? 's' : ''} attention</b> <span class="small faint">dispatch, flights, fleet, drivers and partners</span></summary>
             <ul>${serious.map((a) => `<li class="al-${a.level}"><span class="pill ${a.level === 'bad' ? 's-cancelled' : 's-assigned'}">${a.area === 'flights' ? 'Flight' : a.area === 'fleet' ? 'Fleet' : a.area === 'network' ? 'Network' : a.area === 'dispatch' ? 'Dispatch' : a.area === 'billing' ? 'Billing' : a.area === 'quotes' ? 'Quotes' : a.area === 'inbox' ? 'Texts' : 'Driver'}</span>
@@ -3867,6 +3870,7 @@
         const tb = $('#d-today', v); if (tb) tb.onclick = () => { day = new Date(); day.setHours(0, 0, 0, 0); last = ''; refresh(); };
         $('#d-day', v).onchange = (e) => { if (!e.target.value) return; const [y, mo, dd] = e.target.value.split('-').map(Number); day = new Date(y, mo - 1, dd); last = ''; refresh(); };
         if ($('#d-new', v)) $('#d-new', v).onclick = () => newBookingModal(() => { last = ''; refresh(); });
+        if ($('#d-find', v)) $('#d-find', v).onclick = () => openSearch('book');
         const al = $('#d-alerts', v); if (al) al.ontoggle = () => store.set('livery-alerts-open', al.open ? '1' : '0');
         $$('[data-trip]', v).forEach((b2) => { b2.onclick = () => tripModal(b2.dataset.trip, () => { last = ''; refresh(); }); });
         $$('[data-goto]', v).forEach((b2) => { b2.onclick = () => { if (b2.dataset.goto === 'billing') { custSub = 'accounts'; go2('customers'); } else go2(b2.dataset.goto); }; });
@@ -4025,12 +4029,13 @@
       const caps = {}; vehicles.filter((x) => x.status === 'active').forEach((x) => { caps[x.type] = Math.max(caps[x.type] || 0, x.capacity); });
       return { rates: s.rates, addons: s.addons, vehicleTypes: C.typesBySize(vehicles).filter((t) => caps[t]).map((t) => ({ type: t, capacity: caps[t], photo: ((s.carTypes || []).find((x) => x.type === t) || {}).photo || '' })), accounts: accounts.filter((a) => a.active) };
     }
-    async function newBookingModal(done) {
+    async function newBookingModal(done, cust) {
       let info;
       try { info = await bookingInfo(); } catch (e) { return toast(e.message, true); }
       const m = openModal({ title: 'New booking', wide: true, body: '<div id="nb"></div>' });
       bookingForm($('#nb', m), {
         info, mode: 'dispatch', submitLabel: 'Create booking', accounts: info.accounts,
+        initial: cust ? { passengerName: cust.name || '', passengerPhone: cust.phone || '', passengerEmail: cust.email || '', accountId: cust.accountId || '', pickup: (cust.last && cust.last.pickup) || '', dropoff: (cust.last && cust.last.dropoff) || '', passengers: (cust.last && cust.last.passengers) || 1, vehicleType: (cust.last && info.vehicleTypes.some((x) => x.type === cust.last.vehicleType)) ? cust.last.vehicleType : undefined } : undefined,
         quoteFn: (b) => api('dispatch.quote', { booking: b }),
         onSubmit: async (b) => { const t = await api('dispatch.createTrip', { booking: b }); closeModal(); toast((t.driver ? `${t.ref} created and sent to ${t.driver.name}. Waiting for them to accept.` : `${t.ref} created. Assign a driver next.`) + (t.returnTrip ? ` Return trip ${t.returnTrip.ref} created too.` : '') + ((t.moreTrips || []).length ? ` Also created: ${t.moreTrips.map((x) => x.ref).join(', ')}.` : '') + (t.landingTrip ? ` Landing pickup ${t.landingTrip.ref} ${t.landingTrip.farmout ? `sent to ${t.landingTrip.farmout.toName}` : 'needs a local company'}.` : '')); done && done(); },
       });
