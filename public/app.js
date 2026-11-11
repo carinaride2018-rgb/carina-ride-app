@@ -2552,11 +2552,13 @@
         <div class="bh-phone">${info.company.phone ? `<a href="tel:${esc(info.company.phone)}">${esc(fmtPhone(info.company.phone))}</a>` : ''}${signedHere ? ` · Signed in as ${esc(session.user.name)} · <a href="#customer">My trips</a>` : ''}</div>
         ${signedHere ? '' : `<div class="bh-auth"><a class="btn sm" href="#login.${esc(slug)}">Log in</a><a class="btn sm brand" href="#signup.${esc(slug)}">Sign up</a></div>`}</div>
       ${info.company.aiPhone ? `<a class="aibox" href="tel:${esc(info.company.aiPhone)}"><span class="aibox-tag">AI agent</span><span class="aibox-text">Book, cancel or edit your bookings</span><b class="aibox-num">${esc(fmtPhone(info.company.aiPhone))}</b></a>` : ''}
-      ${info.company.house ? `<section class="hero-house"><h1>Chauffeured cars in cities across the US</h1><p>Book a private car with a local, vetted chauffeur company. See the price first. Enter the pickup time in the pickup city's local time.</p></section>` : ''}
+      ${info.company.house ? `<section class="hero-house"><h1>Unparalleled chauffeur-driven service, nationwide</h1><p>Late-model cars and professional chauffeurs in cities across the US. See the price first. Enter the pickup time in the pickup city's local time.</p></section>` : ''}
       <div class="morelinks"><a class="eventlink" href="#request.${esc(slug)}"><b>Book your event</b><span class="small">Weddings, proms, corporate events and groups</span></a>
       <a class="eventlink" href="#agent.${esc(slug)}" id="agent-link"><b>Agent sign-up or login</b><span class="small">Travel agents earn commission on every ride</span></a></div>
       <div id="book-host"></div><div id="auth-host"></div>
       ${info.company.house ? `<section class="house-info">
+        <h2>Why book with LimoRelay</h2>
+        <ul class="house-why"><li><b>Latest-model cars.</b> Clean, well-kept sedans, SUVs and vans from local fleets.</li><li><b>Professional chauffeurs.</b> Trained, licensed local drivers who know their city.</li><li><b>One booking, any city.</b> The same standard of service wherever you land.</li><li><b>Clear pricing.</b> You see the full price before you book.</li></ul>
         <h2>How it works</h2>
         <ol class="house-steps"><li><b>Get a quote.</b> Enter your pickup, drop-off and time. You see the price before you add any details.</li><li><b>We match a local company.</b> A chauffeur company in the pickup city accepts your ride. If one cannot, the next one takes it.</li><li><b>Your chauffeur arrives.</b> You get the driver and car details by text and email, and a live map link on the day.</li></ol>
         <h2>Good to know</h2>

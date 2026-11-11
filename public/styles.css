@@ -1026,3 +1026,5 @@ body.co-dark .bh-phone a { color: var(--ink); }
 .house-faq dt { font-weight: 700; margin-top: 12px; }
 .house-faq dd { margin: 4px 0 0; }
 .house-join { margin-top: 28px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+
+.house-why { padding-left: 20px; display: grid; gap: 8px; }
