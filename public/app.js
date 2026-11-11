@@ -2009,6 +2009,7 @@
           <label class="field"><span>Pickup address</span><input id="bk-pickup" name="pickup" autocomplete="off" placeholder="Hotel, airport or street address" value="${esc(state.pickup)}" required></label>${placeChips('bk-pickup')}
           <div class="stack stops" data-hide="hourly" style="gap:8px"><div id="bk-stops"></div>
             <div><button class="linkbtn" type="button" id="bk-addstop">+ Add a stop on the way</button></div></div>
+          <div class="row" style="justify-content:flex-end;margin:-4px 0"><button class="btn sm" type="button" id="bk-swap" title="Swap pickup and drop-off" aria-label="Swap pickup and drop-off addresses">&#8645; Swap pickup and drop-off</button></div>
           <label class="field"><span id="bk-drop-label">Drop-off address</span><input id="bk-dropoff" name="dropoff" autocomplete="off" placeholder="Where are you going?" value="${esc(state.dropoff)}"></label>${placeChips('bk-dropoff')}
           <fieldset class="fs flightbox" id="bk-flightf"><legend><span aria-hidden="true">&#9992;</span> Flight information</legend>
             <div class="grid2" id="bk-flightmain">
@@ -2398,6 +2399,12 @@
       const ins = $$('[data-k="time"]', form); if (ins.length) ins[ins.length - 1].focus();
     };
     drawMore();
+    $('#bk-swap', form).onclick = () => {
+      const a = $('#bk-pickup', form), b = $('#bk-dropoff', form), t = a.value;
+      a.value = b.value; b.value = t;
+      [a, b].forEach((i) => i.dispatchEvent(new Event('input', { bubbles: true })));
+      [a, b].forEach((i) => i.dispatchEvent(new Event('change', { bubbles: true })));
+    };
     $('#bk-addstop', form).onclick = () => { sync(); stopList.push(''); stopWaits.push(defWait); drawStops(); sync(); const ins = $$('[data-stop]', form); if (ins.length) ins[ins.length - 1].focus(); };
     drawStops();
     getLive().then((i) => { const n = $('#bk-mapnote', host); if (n && i.live && i.live.maps) n.remove(); });
