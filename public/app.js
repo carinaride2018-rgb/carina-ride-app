@@ -4145,7 +4145,7 @@
             <div class="grid3">
               <label class="field"><span>Vehicle type</span><select id="te-vtype" name="vehicleType" ${lock}>${C.typesBySize(vehicles).map((x) => `<option ${t.vehicleType === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
               <label class="field"><span>Passengers</span><input id="te-pax" name="passengers" type="number" min="1" value="${t.passengers}" ${lock}></label>
-              <label class="field"><span>Hours (by the hour)</span><input id="te-hours" name="hours" type="number" min="1" value="${t.hours}" ${lock}></label>
+              <label class="field" id="te-hours-box" ${t.service === 'hourly' ? '' : 'hidden'}><span>Hours (by the hour)</span><input id="te-hours" name="hours" type="number" min="1" value="${t.hours}" ${lock}></label>
             </div>
             <div class="grid3">
               <label class="field"><span>Passenger</span><input id="te-name" name="passengerName" value="${esc(t.passengerName)}" ${lock}></label>
@@ -4284,6 +4284,7 @@
         if (!confirm('Force save this ride now?\n\nThis skips the address, flight and seat checks. The driver gets a text with the change.')) return;
         force = true; $('#te-form', m).requestSubmit();
       };
+      $('#te-service', m).addEventListener('change', (e) => { $('#te-hours-box', m).hidden = e.target.value !== 'hourly'; });
       $('#te-form', m).onsubmit = async (e) => {
         e.preventDefault();
         const useForce = force; force = false;
