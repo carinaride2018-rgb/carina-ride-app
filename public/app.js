@@ -2539,6 +2539,7 @@
     session = keep;
     document.documentElement.style.setProperty('--brand', info.company.color);
     v.innerHTML = `
+      <div class="row" style="padding:4px 0"><button class="btn sm" type="button" id="bk-back">&#8592; Back</button></div>
       ${info.company.banner ? `<img class="bh-banner" src="${esc(info.company.banner)}" alt="${esc(info.company.name)}">` : ''}
       <div class="brandhead slim${info.company.banner ? ' withbanner' : ''}">${info.company.banner ? '' : info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : '<div></div>'}
         <div class="bh-phone">${info.company.phone ? `<a href="tel:${esc(info.company.phone)}">${esc(fmtPhone(info.company.phone))}</a>` : ''}${signedHere ? ` · Signed in as ${esc(session.user.name)} · <a href="#customer">My trips</a>` : ''}</div>
@@ -2548,6 +2549,8 @@
       <div class="morelinks"><a class="eventlink" href="#request.${esc(slug)}"><b>Book your event</b><span class="small">Weddings, proms, corporate events and groups</span></a>
       <a class="eventlink" href="#agent.${esc(slug)}" id="agent-link"><b>Agent sign-up or login</b><span class="small">Travel agents earn commission on every ride</span></a></div>
       <div id="book-host"></div><div id="auth-host"></div>`;
+    // The phone app and an installed app have no browser back button: go back a screen, or to the company's staff page.
+    $('#bk-back', v).onclick = () => { const staff = session && session.user && session.user.role !== 'customer'; if (history.length > 1) history.back(); else go(staff ? `team.${slug}` : signedHere ? 'customer' : 'signin'); };
     const pending = { booking: null };
     // A new company with no cars yet can't take online bookings.
     if (!info.vehicleTypes.length) {
