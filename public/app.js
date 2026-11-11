@@ -3261,11 +3261,11 @@
     for (const t of live) { const k = t.driver ? t.driver.name : 'Unassigned'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(t); }
     const sheet = ([name, list]) => `<section class="sheet"><div class="spread"><div><h2>${esc(name)}</h2><p class="small muted">${esc(session.company.name)} · trip sheet · ${esc(title)}</p></div><b>${list.length} trip${list.length === 1 ? '' : 's'}</b></div>
       <table class="sheettable"><thead><tr><th>Time</th><th>Trip</th><th>Passenger</th><th>Route</th><th>Details</th><th class="r">Fare</th></tr></thead><tbody>
-      ${list.map((t) => `<tr><td class="mono">${esc(fmtTime(t.pickupAt))}</td><td class="mono">${esc(t.ref)}<br><span class="small">${esc(t.vehicle ? t.vehicle.name + (t.vehicle.plate ? ' · ' + t.vehicle.plate : '') : t.vehicleType)}</span></td>
-        <td><b>${esc(t.passengerName)}</b><br><span class="mono small">${esc(t.passengerPhone || '')}</span>${t.passengers > 1 ? `<br><span class="small">${t.passengers} passengers</span>` : ''}</td>
-        <td>${esc(t.pickup)}${(t.stopList || []).map((x) => `<br><span class="small">via ${esc(x)}</span>`).join('')}${t.dropoff ? `<br>→ ${esc(t.dropoff)}` : `<br><span class="small">${t.hours} h by the hour</span>`}</td>
-        <td class="small">${[t.flight ? `Flight ${t.flight}` : '', ...extrasList(t), t.notes || ''].filter(Boolean).map(esc).join('<br>')}</td>
-        <td class="r num">${t.farmIn ? 'Partner' : t.accountId ? 'Account' : money(t.price.total)}<br><span class="small">${t.payment.status === 'paid' ? 'Paid' : t.farmIn || t.accountId ? '' : t.pay ? 'On card' : 'Unpaid'}</span></td></tr>`).join('')}
+      ${list.map((t) => `<tr><td class="mono" data-l="Time">${esc(fmtTime(t.pickupAt))}</td><td class="mono" data-l="Trip">${esc(t.ref)}<br><span class="small">${esc(t.vehicle ? t.vehicle.name + (t.vehicle.plate ? ' · ' + t.vehicle.plate : '') : t.vehicleType)}</span></td>
+        <td data-l="Passenger"><b>${esc(t.passengerName)}</b><br><span class="mono small">${esc(t.passengerPhone || '')}</span>${t.passengers > 1 ? `<br><span class="small">${t.passengers} passengers</span>` : ''}</td>
+        <td data-l="Route">${esc(t.pickup)}${(t.stopList || []).map((x) => `<br><span class="small">via ${esc(x)}</span>`).join('')}${t.dropoff ? `<br>→ ${esc(t.dropoff)}` : `<br><span class="small">${t.hours} h by the hour</span>`}</td>
+        <td class="small" data-l="Details">${[t.flight ? `Flight ${t.flight}` : '', ...extrasList(t), t.notes || ''].filter(Boolean).map(esc).join('<br>')}</td>
+        <td class="r num" data-l="Fare">${t.farmIn ? 'Partner' : t.accountId ? 'Account' : money(t.price.total)}<br><span class="small">${t.payment.status === 'paid' ? 'Paid' : t.farmIn || t.accountId ? '' : t.pay ? 'On card' : 'Unpaid'}</span></td></tr>`).join('')}
       </tbody></table>
       <div class="sheetsign"><span>Start mileage ________</span><span>End mileage ________</span><span>Signature ______________________</span></div></section>`;
     const m = openModal({ title: `Trip sheets · ${title}`, wide: true, body: `<div id="sheet-print">${[...groups].map(sheet).join('')}</div>`, footer: '<button class="btn" type="button" data-close>Close</button><button class="btn primary" type="button" id="sheet-go">Print</button>' });

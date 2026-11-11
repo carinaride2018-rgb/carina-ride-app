@@ -576,6 +576,14 @@ a.quotecard:hover { border-color: var(--brand); }
 .sheettable { width: 100%; border-collapse: collapse; font-size: 13px; }
 .sheettable th, .sheettable td { text-align: left; vertical-align: top; padding: 6px 6px; border-bottom: 1px solid var(--line); }
 .sheettable th.r, .sheettable td.r { text-align: right; }
+@media screen and (max-width: 700px) {
+  .modal.wide { max-width: 100%; }
+  .sheettable, .sheettable tbody, .sheettable tr, .sheettable td { display: block; width: 100%; box-sizing: border-box; }
+  .sheettable thead { display: none; }
+  .sheettable tr { border-bottom: 2px solid var(--line); padding: 8px 0; }
+  .sheettable td { border: 0; padding: 3px 0; text-align: left !important; overflow-wrap: anywhere; }
+  .sheettable td[data-l]::before { content: attr(data-l); display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-3, #888); }
+}
 .sheetsign { display: flex; flex-wrap: wrap; gap: 18px; font-size: 13px; color: var(--ink-2); padding-top: 6px; }
 @media print {
   body.printing-sheet * { visibility: hidden; }
