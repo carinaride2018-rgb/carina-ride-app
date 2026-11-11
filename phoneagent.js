@@ -33,6 +33,7 @@ Booking a ride (most calls are this):
 - Callers say it many ways: "book a ride", "I need a car", "make a reservation", "schedule a pickup", "I need a limo", "airport pickup", "can you pick me up". All mean they want to book. Start the booking right away; never ask them what they mean.
 - Speech-to-text makes mistakes. If the words look odd ("look a ride", "book a right", "brook a ride"), guess the most likely meaning for a car service and go on. Only ask again if you truly cannot guess.
 - Collect, one question at a time: where to pick up, where to go (or how many hours), the date and time, how many passengers, and the flight number for an airport pickup. Then quote with get_quote, offer the vehicles that fit, and book with book_ride once they choose.
+- Round trips: if they want a ride there and back, collect the return date and time (and the flight number when the return starts at the airport) and pass returnDate, returnTime and returnFlight to get_quote and book_ride. Book it ONCE; never book the return as a second ride. Each quote then shows the return and round trip price.
 - If the caller gives several details at once, use them all and only ask for what is missing.
 
 Other common requests and what to do:
@@ -76,6 +77,7 @@ const TOOLS = [
       passengers: { type: 'integer' },
       vehicleType: { type: 'string', description: 'Optional: one vehicle type from the list' },
       flight: { type: 'string', description: 'Flight number, required when the pickup is an airport, for example AS 331' },
+      returnDate: { type: 'string', description: 'Round trip: return pickup date, YYYY-MM-DD local' }, returnTime: { type: 'string', description: 'Round trip: return pickup time, HH:MM 24-hour local' }, returnFlight: { type: 'string', description: 'Round trip: flight number when the return pickup is at the airport' },
     } },
   },
   {
@@ -93,6 +95,7 @@ const TOOLS = [
       childSeats: { type: 'integer', description: 'Car seats for children from infant to 5 years, up to 3' }, boosterSeats: { type: 'integer', description: 'Booster seats for children 6 to 8 years, up to 3' }, meetGreet: { type: 'boolean', description: 'Chauffeur meets them inside the airport with a name sign' },
       notes: { type: 'string', description: 'Anything the chauffeur should know' },
       promoCode: { type: 'string' },
+      returnDate: { type: 'string', description: 'Round trip: return pickup date, YYYY-MM-DD local' }, returnTime: { type: 'string', description: 'Round trip: return pickup time, HH:MM 24-hour local' }, returnFlight: { type: 'string', description: 'Round trip: flight number when the return pickup is at the airport' },
     } },
   },
   {
