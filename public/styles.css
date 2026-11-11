@@ -1016,3 +1016,13 @@ body.co-dark .bh-phone a { color: var(--ink); }
 .placechips{gap:6px;flex-wrap:wrap;margin:-4px 0 6px}
 .placechips .chip{border:1px solid var(--line,#d8dbe0);background:var(--card,#fff);border-radius:999px;padding:4px 10px;font:inherit;font-size:13px;cursor:pointer;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .placechips .chip:hover{border-color:currentColor}
+
+.hero-house { margin: 0 0 18px; }
+.hero-house h1 { margin: 0 0 8px; font-size: clamp(26px, 5vw, 38px); line-height: 1.15; }
+.hero-house p { margin: 0; font-size: 16px; color: var(--muted, #555); max-width: 640px; }
+.house-info { margin: 36px 0 24px; max-width: 760px; }
+.house-info h2 { margin: 24px 0 10px; font-size: 20px; }
+.house-steps { padding-left: 22px; display: grid; gap: 10px; }
+.house-faq dt { font-weight: 700; margin-top: 12px; }
+.house-faq dd { margin: 4px 0 0; }
+.house-join { margin-top: 28px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }

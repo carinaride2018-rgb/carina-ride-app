@@ -2552,10 +2552,20 @@
         <div class="bh-phone">${info.company.phone ? `<a href="tel:${esc(info.company.phone)}">${esc(fmtPhone(info.company.phone))}</a>` : ''}${signedHere ? ` · Signed in as ${esc(session.user.name)} · <a href="#customer">My trips</a>` : ''}</div>
         ${signedHere ? '' : `<div class="bh-auth"><a class="btn sm" href="#login.${esc(slug)}">Log in</a><a class="btn sm brand" href="#signup.${esc(slug)}">Sign up</a></div>`}</div>
       ${info.company.aiPhone ? `<a class="aibox" href="tel:${esc(info.company.aiPhone)}"><span class="aibox-tag">AI agent</span><span class="aibox-text">Book, cancel or edit your bookings</span><b class="aibox-num">${esc(fmtPhone(info.company.aiPhone))}</b></a>` : ''}
-      ${info.company.house ? `<p class="housenote">Book a chauffeured car in any US city. Enter the pickup time in that city's local time. A LimoRelay company in that city drives your ride.</p>` : ''}
+      ${info.company.house ? `<section class="hero-house"><h1>Chauffeured cars in cities across the US</h1><p>Book a private car with a local, vetted chauffeur company. See the price first. Enter the pickup time in the pickup city's local time.</p></section>` : ''}
       <div class="morelinks"><a class="eventlink" href="#request.${esc(slug)}"><b>Book your event</b><span class="small">Weddings, proms, corporate events and groups</span></a>
       <a class="eventlink" href="#agent.${esc(slug)}" id="agent-link"><b>Agent sign-up or login</b><span class="small">Travel agents earn commission on every ride</span></a></div>
-      <div id="book-host"></div><div id="auth-host"></div>`;
+      <div id="book-host"></div><div id="auth-host"></div>
+      ${info.company.house ? `<section class="house-info">
+        <h2>How it works</h2>
+        <ol class="house-steps"><li><b>Get a quote.</b> Enter your pickup, drop-off and time. You see the price before you add any details.</li><li><b>We match a local company.</b> A chauffeur company in the pickup city accepts your ride. If one cannot, the next one takes it.</li><li><b>Your chauffeur arrives.</b> You get the driver and car details by text and email, and a live map link on the day.</li></ol>
+        <h2>Good to know</h2>
+        <dl class="house-faq"><dt>Which cities do you cover?</dt><dd>Any US city where a LimoRelay member company operates. If a city is not covered yet, our dispatch places your ride by hand.</dd>
+        <dt>When is my card charged?</dt><dd>You see the full price in your quote. Your card details are saved securely, and extras like waiting time or an added stop are added after the ride.</dd>
+        <dt>Can I change or cancel?</dt><dd>Yes. Log in to change a booking online, or call us. Cancellation terms show in your quote.</dd>
+        <dt>Planning an event or group trip?</dt><dd>Use "Book your event" above and we will send you a quote.</dd></dl>
+        <div class="house-join"><b>Run a chauffeur company?</b> Join the LimoRelay network and receive rides in your city. <a class="btn sm brand" href="/">Become a member company</a></div>
+      </section>` : ''}`;
     // The phone app and an installed app have no browser back button: go back a screen, or to the company's staff page.
     $('#bk-back', v).onclick = () => { const staff = session && session.user && session.user.role !== 'customer'; if (history.length > 1) history.back(); else go(staff ? `team.${slug}` : signedHere ? 'customer' : 'signin'); };
     const pending = { booking: null };
