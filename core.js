@@ -7962,6 +7962,7 @@
         vehicleType: a.vehicleType, flight: str(a.flight, 20), childSeats: a.childSeats || 0, boosterSeats: a.boosterSeats || 0, meetGreet: !!a.meetGreet,
         passengerName: str(a.passengerName, 80), passengerPhone: str(a.passengerPhone, 30) || str(from, 30), passengerEmail: str(a.passengerEmail, 120),
         notes: str(a.notes, 400), promoCode: str(a.promoCode, 30),
+        ...(a.returnDate && a.returnTime && a.service !== 'hourly' ? { returnAt: agentPickup(c, { date: a.returnDate, time: a.returnTime }), returnFlight: str(a.returnFlight, 20) } : {}),
         ...(typeof a.textsOk === 'boolean' ? { smsOk: a.textsOk } : {}),
       };
     }
@@ -7979,7 +7980,12 @@
         cleanBooking(c, { ...b, vehicleType: pick[0].type }, {});
         const quotes = pick.map((x) => {
           const q = quoteFor(c, { ...b, vehicleType: x.type }, null);
-          return { vehicleType: x.type, models: x.models, seats: x.capacity, bags: x.bags, total: q.total, gratuityIncluded: q.gratuity, miles: q.miles || null };
+          const o = { vehicleType: x.type, models: x.models, seats: x.capacity, bags: x.bags, total: q.total, gratuityIncluded: q.gratuity, miles: q.miles || null };
+          if (b.returnAt) {
+            const rq = quoteFor(c, { ...b, vehicleType: x.type, pickup: b.dropoff, dropoff: b.pickup, pickupAt: b.returnAt, flight: b.returnFlight || '', returnAt: undefined }, null);
+            o.returnTotal = rq.total; o.roundTripTotal = round2(q.total + rq.total);
+          }
+          return o;
         });
         return { pickupTime: sayTime(b.pickupAt, c), service: SERVICES[b.service === 'hourly' ? 'hourly' : (isAirport(b.pickup) || isAirport(b.dropoff) ? 'airport' : 'transfer')], quotes, currency: c.rates.currency || 'USD', note: 'Totals include gratuity and fees. Tolls and extra waiting are added after the ride.' };
       },
@@ -8004,7 +8010,9 @@
         if (onFile(t) && !t.card && (t.passengerPhone || t.passengerEmail)) { asAgent(c, 'dispatch.sendCardLink', { id: t.id }); cardLink = true; }
         call.refs = [...new Set([...(call.refs || []), t.ref])];
         call.outcome = 'booked';
-        return { booked: true, ref: t.ref, pickupTime: sayTime(t.pickupAt, c), vehicleType: t.vehicleType, total: t.price.total, cardLinkTexted: cardLink, payNote: cardLink ? `A link to add a card was sent. ${chargeNote(c)}.` : t.accountId ? 'Billed to the company account.' : '' };
+        const rt = t.returnId && db.trips.find((x) => x.id === t.returnId);
+        if (rt) { rt.byAgent = true; log(rt, 'note', 'Phone agent', `Return booked on a call from ${call.from || 'a hidden number'}`); call.refs = [...new Set([...(call.refs || []), rt.ref])]; }
+        return { booked: true, ref: t.ref, ...(rt ? { returnRef: rt.ref, returnPickupTime: sayTime(rt.pickupAt, c), returnTotal: rt.price.total } : {}), pickupTime: sayTime(t.pickupAt, c), vehicleType: t.vehicleType, total: t.price.total, cardLinkTexted: cardLink, payNote: cardLink ? `A link to add a card was sent. ${chargeNote(c)}.` : t.accountId ? 'Billed to the company account.' : '' };
       },
       find_rides(c, call, a) {
         let list = callerTrips(c, call.key);
