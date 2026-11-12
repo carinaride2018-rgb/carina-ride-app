@@ -1962,7 +1962,8 @@
     const creditBal = opts.mode === 'customer' ? (opts.credit || 0) : 0;
     if (init.service === 'airport') init.service = 'transfer';
     const pr = init.prefs || {};
-    const state = { bags: 0, signName: '', repOn: false, repUntil: '', retOn: false, landOn: false, landDest: '', landDrop: '', retDate: init.date, retTime: '', retFlight: '', prefTemp: pr.temp || '', prefMusic: pr.music || '', prefQuiet: !!pr.quiet, ...init };
+    const numOpts = (n, from, sel) => Array.from({ length: n - from + 1 }, (_, i) => `<option value="${i + from}" ${Number(sel) === i + from ? 'selected' : ''}>${i + from}</option>`).join('');
+    const state = { bags: 0, carryOns: 0, signName: '', repOn: false, repUntil: '', retOn: false, landOn: false, landDest: '', landDrop: '', retDate: init.date, retTime: '', retFlight: '', prefTemp: pr.temp || '', prefMusic: pr.music || '', prefQuiet: !!pr.quiet, ...init };
     // The customer's saved places: addresses from their past rides, most used first (Dawit 2026-11-08).
     const places = (opts.places || []).slice(0, 6);
     const placeChips = (forId) => places.length ? `<div class="row placechips small" data-for="${forId}"><span class="faint">Your places:</span>${places.map((p, i) => `<button class="chip" type="button" data-place="${i}" title="${esc(p)}">${esc(p.split(',')[0].slice(0, 32))}</button>`).join('')}</div>` : '';
@@ -2039,12 +2040,14 @@
               <label class="field"><span id="bk-land-droplabel">Where to</span><input id="bk-land-drop" name="landDrop" autocomplete="off" placeholder="Hotel or street address" value="${esc(state.landDrop || '')}"></label>
             </div><div id="bk-land-price" class="landprice"></div></fieldset>
           <div class="field"><span>Vehicle</span>
-            <div class="vehicles">${vt.map((v) => `<button type="button" class="vcard" data-vehicle="${esc(v.type)}" aria-pressed="${state.vehicleType === v.type}">${carPic(v.type, v.photo)}<b>${esc(v.type)}</b><span>${v.capacity} passengers${v.bags != null ? ` · ${v.bags} suitcase${v.bags === 1 ? '' : 's'}` : ''}</span>${v.models ? `<span class="vmodel">${esc(v.models)}</span>` : ''}<span class="vprice" data-vprice="${esc(v.type)}"></span></button>`).join('') || '<p class="faint small">No vehicles yet. Add vehicles in the dispatch office first.</p>'}</div>
+            <div class="vehicles">${vt.map((v) => `<button type="button" class="vcard" data-vehicle="${esc(v.type)}" aria-pressed="${state.vehicleType === v.type}">${carPic(v.type, v.photo)}<b>${esc(v.type)}</b><span>${v.capacity} passengers${v.bags != null ? ` · ${v.bags} checked bag${v.bags === 1 ? '' : 's'}${v.carry ? ` · ${v.carry} carry-on${v.carry === 1 ? '' : 's'}` : ''}` : ''}</span>${v.models ? `<span class="vmodel">${esc(v.models)}</span>` : ''}<span class="vprice" data-vprice="${esc(v.type)}"></span></button>`).join('') || '<p class="faint small">No vehicles yet. Add vehicles in the dispatch office first.</p>'}</div>
           </div>
-          <div class="grid2">
-            <label class="field"><span>Passengers</span><input id="bk-pax" name="passengers" type="number" min="1" max="60" value="${esc(state.passengers)}"></label>
-            <label class="field"><span>Suitcases</span><input id="bk-bags" name="bags" type="number" min="0" max="40" value="${esc(state.bags)}"><span class="hint" id="bk-bags-hint"></span></label>
+          <div class="grid3">
+            <label class="field"><span>Passengers</span><select id="bk-pax" name="passengers">${numOpts(Math.max(Number(state.passengers) || 1, ...vt.map((x) => x.capacity || 1), 1), 1, state.passengers)}</select></label>
+            <label class="field"><span>Checked bags</span><select id="bk-bags" name="bags">${numOpts(Math.max(Number(state.bags) || 0, ...vt.map((x) => x.bags || 0), 0), 0, state.bags)}</select></label>
+            <label class="field"><span>Carry-ons</span><select id="bk-carry" name="carryOns">${numOpts(Math.max(Number(state.carryOns) || 0, ...vt.map((x) => x.carry || 0), 0), 0, state.carryOns)}</select></label>
           </div>
+          <div class="hint" id="bk-bags-hint"></div>
           ${agent ? `<div class="agentbox stack" style="gap:10px"><div class="spread"><b>Your client</b>${clients.length ? `<select class="input" id="bk-client" style="width:auto;min-height:34px" aria-label="Saved clients"><option value="">Saved clients…</option>${clients.map((c, i) => `<option value="${i}">${esc(c.name)}${c.trips ? ` (${c.trips} ride${c.trips === 1 ? '' : 's'})` : ''}</option>`).join('')}</select>` : ''}</div>` : ''}
           <div class="grid2">
             <label class="field"><span>${agent ? "Client's name" : 'Passenger name'}</span><input id="bk-name" name="passengerName" value="${esc(state.passengerName)}" ${dispatch || agent ? 'required' : ''}>${dispatch || agent ? '' : '<span class="hint">Booking for someone else? Put their name and mobile.</span>'}</label>
@@ -2142,6 +2145,7 @@
         if (state.gbiz === 'business') { const co = $('#bk-gbco', form); if (co && !co.value) co.focus(); }
       };
     });
+    let movedFrom = '';
     const sync = () => {
       Object.assign(state, formData(form));
       $$('[data-show]', form).forEach((el) => { el.hidden = el.dataset.show !== state.service; });
@@ -2181,8 +2185,16 @@
       $('#bk-landf', form).hidden = !state.landOn;
       $('#bk-rflightf', form).hidden = !C.isAirport(state.dropoff) || (twoStep && !(state.retOn && state.service !== 'hourly'));
       const rh = $('#bk-ret-hint', form); rh.hidden = !state.retOn; rh.textContent = state.dropoff ? `Picks up at ${state.dropoff.split(',')[0]} and goes back to ${(state.pickup || 'the pickup').split(',')[0]}${stopList.filter(Boolean).length ? ', with the same stops in reverse' : ''}.` : '';
-      const vt0 = vt.find((x) => x.type === state.vehicleType);
-      const bh = $('#bk-bags-hint', form); if (bh) bh.textContent = vt0 && vt0.bags != null ? `${/^(SUV|[AEIOU])/.test(vt0.type) ? "An" : "A"} ${vt0.type} takes up to ${vt0.bags}.` : '';
+      // Too many passengers or bags for the chosen vehicle: move up to the smallest one that fits.
+      const fitsV = (x) => Number(state.passengers || 1) <= (x.capacity || 0) && (x.bags == null || C.bagFits(x.type, x.bags, x.carry, state.bags, state.carryOns));
+      let vt0 = vt.find((x) => x.type === state.vehicleType);
+      if (vt0 && !fitsV(vt0)) {
+        const up = vt.find(fitsV);
+        if (up) { movedFrom = vt0.type; state.vehicleType = up.type; vt0 = up; $$('[data-vehicle]', form).forEach((x) => x.setAttribute('aria-pressed', x.dataset.vehicle === up.type)); }
+      }
+      if (movedFrom) { const was = vt.find((x) => x.type === movedFrom); if (!was || fitsV(was)) movedFrom = ''; }
+      const bh = $('#bk-bags-hint', form);
+      if (bh) bh.textContent = !vt0 || vt0.bags == null ? '' : movedFrom && movedFrom !== vt0.type ? `We moved you from ${movedFrom} to ${vt0.type}: your passengers and bags need the bigger vehicle.` : !fitsV(vt0) ? 'That is more than one vehicle takes. Book a second vehicle or call us.' : `${/^(SUV|[AEIOU])/.test(vt0.type) ? 'An' : 'A'} ${vt0.type} takes up to ${vt0.bags} checked bag${vt0.bags === 1 ? '' : 's'}${vt0.type === 'Sedan' ? `, or ${Math.max(0, vt0.bags - 1)} checked and ${vt0.carry} carry-ons` : ` and ${vt0.carry} carry-ons`}.`;
       drawPolicy(); drawCard();
     };
     // Later dates the ride repeats on (the server makes the same list).
@@ -2280,7 +2292,7 @@
       $$('[data-trip]', form).forEach((x) => x.setAttribute('aria-pressed', x === b));
       sync(); requote(); if (on && !$('#bk-rtime', form).value) $('#bk-rdate', form).focus();
     }; });
-    $$('[data-vehicle]', form).forEach((b) => { b.onclick = () => { state.vehicleType = b.dataset.vehicle; $$('[data-vehicle]', form).forEach((x) => x.setAttribute('aria-pressed', x === b)); requote(); }; });
+    $$('[data-vehicle]', form).forEach((b) => { b.onclick = () => { movedFrom = ''; state.vehicleType = b.dataset.vehicle; $$('[data-vehicle]', form).forEach((x) => x.setAttribute('aria-pressed', x === b)); requote(); }; });
     let qt = null, qn = 0;
     const booking = () => {
       const { date, time, retOn, retDate, retTime, retFlight, prefTemp, prefMusic, prefQuiet, stops, landOn, landDest, landDrop, repOn, repUntil, ...rest } = state;
@@ -3537,7 +3549,8 @@
   function extrasList(t) {
     const p = t.prefs || {};
     return [
-      t.bags ? `${t.bags} suitcase${t.bags > 1 ? 's' : ''}` : '',
+      t.bags ? `${t.bags} checked bag${t.bags > 1 ? 's' : ''}` : '',
+      t.carryOns ? `${t.carryOns} carry-on${t.carryOns > 1 ? 's' : ''}` : '',
       t.childSeats ? `${t.childSeats} car seat${t.childSeats > 1 ? 's' : ''} (infant to 5)` : '',
       t.boosterSeats ? `${t.boosterSeats} booster seat${t.boosterSeats > 1 ? 's' : ''} (6 to 8)` : '',
       t.meetGreet ? `Meet & greet, sign “${t.signName || t.passengerName || 'passenger'}”` : '',

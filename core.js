@@ -122,7 +122,18 @@
     return VEHICLE_TYPES.slice().sort((a, b) => seats(a) - seats(b) || VEHICLE_TYPES.indexOf(a) - VEHICLE_TYPES.indexOf(b));
   }
   const bySeats = (a, b) => (a.capacity || 0) - (b.capacity || 0) || VEHICLE_TYPES.indexOf(a.type) - VEHICLE_TYPES.indexOf(b.type) || String(a.name || '').localeCompare(String(b.name || ''));
-  const DEFAULT_BAGS = { 'Sedan': 2, 'SUV': 5, 'Business Van': 8, 'Sprinter Van': 12, '22 PAX Mini Bus': 4 };
+  // Checked (large) bags per vehicle type; a company can change these in Settings.
+  const DEFAULT_BAGS = { 'Sedan': 3, 'SUV': 4, 'Business Van': 10, 'Sprinter Van': 14, '22 PAX Mini Bus': 24 };
+  // Carry-ons per vehicle type, on top of the checked bags (Dawit 2026-11-12).
+  const DEFAULT_CARRY = { 'Sedan': 2, 'SUV': 3, 'Business Van': 5, 'Sprinter Van': 7, '22 PAX Mini Bus': 12 };
+  // Do these bags fit? A sedan with any carry-on takes one checked bag fewer
+  // (3 checked, or 2 checked and 2 carry-ons). A carry-on over the limit may
+  // use a free checked-bag place.
+  function bagFits(type, cap, carryCap, checked, carry) {
+    checked = Number(checked) || 0; carry = Number(carry) || 0; cap = Number(cap) || 0; carryCap = Number(carryCap) || 0;
+    const c = type === 'Sedan' && carry > 0 ? Math.max(0, cap - 1) : cap;
+    return checked <= c && Math.max(0, carry - carryCap) <= c - checked;
+  }
   // Cancellation and free waiting, shown to customers when they book.
   // Travel agents and other bookers who book rides for their clients earn a
   // commission on the ride price (before gratuity and tax).
@@ -1720,7 +1731,8 @@
       }
       out.bags = Math.max(0, Math.min(40, Math.round(num(b.bags, 0))));
       const bagCap = bagsCfg(company)[out.vehicleType];
-      if (!force && out.bags > bagCap) fail(`${anA(out.vehicleType)} ${out.vehicleType} takes up to ${bagCap} suitcase${bagCap === 1 ? '' : 's'}. Choose a larger vehicle.`);
+      out.carryOns = Math.max(0, Math.min(40, Math.round(num(b.carryOns, 0))));
+      if (!force && !bagFits(out.vehicleType, bagCap, DEFAULT_CARRY[out.vehicleType], out.bags, out.carryOns)) fail(`${anA(out.vehicleType)} ${out.vehicleType} takes up to ${bagCap} checked bag${bagCap === 1 ? '' : 's'}${out.vehicleType === 'Sedan' ? `, or ${Math.max(0, bagCap - 1)} checked and ${DEFAULT_CARRY.Sedan} carry-ons` : ` and ${DEFAULT_CARRY[out.vehicleType]} carry-ons`}. Choose a larger vehicle.`);
       out.signName = str(b.signName, 60);
       const pr = b.prefs || {};
       out.prefs = { temp: TEMPS[pr.temp] ? pr.temp : '', music: MUSIC[pr.music] ? pr.music : '', quiet: !!pr.quiet && pr.quiet !== 'false' };
@@ -2440,7 +2452,7 @@
     const HOUSE_TYPES = [['Sedan', 3, 'Cadillac, Lincoln or similar'], ['SUV', 6, 'Lincoln Navigator, Cadillac Escalade or similar'], ['Business Van', 8, 'Ford Transit or similar'], ['Sprinter Van', 14, 'Mercedes Sprinter or similar']];
     function houseTypes(c) {
       const bags = bagsCfg(c);
-      return HOUSE_TYPES.map(([type, capacity, models]) => ({ type, capacity, bags: bags[type], models, multiplier: c.rates.multipliers[type] || 1, photo: TYPE_PHOTO[type] ? samplePhoto(TYPE_PHOTO[type]) : '' }));
+      return HOUSE_TYPES.map(([type, capacity, models]) => ({ type, capacity, bags: bags[type], carry: DEFAULT_CARRY[type], models, multiplier: c.rates.multipliers[type] || 1, photo: TYPE_PHOTO[type] ? samplePhoto(TYPE_PHOTO[type]) : '' }));
     }
     function vehicleTypesFor(c) {
       if (c.house && !db.vehicles.some((v) => v.companyId === c.id && v.status === 'active')) return houseTypes(c);
@@ -2454,7 +2466,7 @@
       // The picture on the booking card: the first active car of the type with
       // a photo. Without one the page draws a picture of the type.
       const vp = db.vehiclePhotos || {}, photoOf = (t) => { const v = db.vehicles.find((x) => x.companyId === c.id && x.status === 'active' && x.type === t && vp[x.id]); return v ? vp[v.id] : TYPE_PHOTO[t] ? samplePhoto(TYPE_PHOTO[t]) : ''; };
-      return VEHICLE_TYPES.filter((t) => out[t]).map((t) => ({ type: t, capacity: out[t], bags: bags[t], models: ((m) => (/ or |similar/i.test(m) ? m : m + ' or similar'))(names[t].slice(0, 2).join(' or ')), multiplier: c.rates.multipliers[t] || 1, photo: photoOf(t) })).sort(bySeats);
+      return VEHICLE_TYPES.filter((t) => out[t]).map((t) => ({ type: t, capacity: out[t], bags: bags[t], carry: DEFAULT_CARRY[t], models: ((m) => (/ or |similar/i.test(m) ? m : m + ' or similar'))(names[t].slice(0, 2).join(' or ')), multiplier: c.rates.multipliers[t] || 1, photo: photoOf(t) })).sort(bySeats);
     }
     function quoteFor(company, raw, customer) {
       const b = { ...raw, vehicleType: VEHICLE_TYPES.includes(raw.vehicleType) ? raw.vehicleType : 'Sedan' };
@@ -8338,5 +8350,5 @@
     };
   }
 
-  return { createCore, exactAddress, typesBySize, MSG_TEMPLATES, INCIDENT_KINDS, setProviders, routeVia, TEMPS, MUSIC, MAX_STOPS, STOP_WAITS, DEFAULT_POLICY, quote, estimateRoute, suggestPlaces, isAirport, flightStatus, normFlight, ApiError, VEHICLE_TYPES, SERVICES, EVENT_TYPES, STATUS_LABELS, DRIVER_FLOW, PLANS, PLATFORM_EMAIL, DEFAULT_AUTOFARM, DEFAULT_DISPATCH, DEFAULT_RATES, DEFAULT_PRICING, VEHICLE_STATUS, MAINT_KINDS, PAY_TYPES, DAYS, AIRLINES };
+  return { createCore, bagFits, exactAddress, typesBySize, MSG_TEMPLATES, INCIDENT_KINDS, setProviders, routeVia, TEMPS, MUSIC, MAX_STOPS, STOP_WAITS, DEFAULT_POLICY, quote, estimateRoute, suggestPlaces, isAirport, flightStatus, normFlight, ApiError, VEHICLE_TYPES, SERVICES, EVENT_TYPES, STATUS_LABELS, DRIVER_FLOW, PLANS, PLATFORM_EMAIL, DEFAULT_AUTOFARM, DEFAULT_DISPATCH, DEFAULT_RATES, DEFAULT_PRICING, VEHICLE_STATUS, MAINT_KINDS, PAY_TYPES, DAYS, AIRLINES };
 });
