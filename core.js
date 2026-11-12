@@ -6159,6 +6159,16 @@
       const s = driverStats(u, 30);
       return { ...driverFull(u), completed30: s.completed30, rating: s.rating, acceptance: s.acceptance, onTime: s.onTime };
     }));
+    // Delete a driver who never drove a trip. One with trips stays, so past rides keep their driver: turn their login off instead.
+    def('dispatch.deleteDriver', STAFF, true, (ctx, a) => {
+      const u = ownDriver(ctx, a.id);
+      const n = db.trips.filter((t) => t.driverId === u.id).length;
+      if (n) fail(`${u.name} has ${n} trip${n === 1 ? '' : 's'} on record, so the driver cannot be deleted. Open the driver and turn off "Login enabled" instead. They stay in past trips and cannot sign in or get new trips.`);
+      for (const [tok, x] of Object.entries(db.sessions)) if (x.userId === u.id) delete db.sessions[tok];
+      db.pushSubs = (db.pushSubs || []).filter((x) => x.userId !== u.id);
+      db.users = db.users.filter((x) => x.id !== u.id);
+      return { deleted: true, name: u.name };
+    });
     def('dispatch.driver', STAFF, false, (ctx, a) => {
       const u = ownDriver(ctx, a.id);
       return {

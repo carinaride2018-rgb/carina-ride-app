@@ -5260,7 +5260,7 @@
               <label class="field"><span>Hire date</span><input id="dm-hire" name="hireDate" type="date" value="${esc(d.hireDate || '')}"></label></div>
             <label class="field"><span>Notes</span><textarea id="dm-notes" name="notes">${esc(d.notes || '')}</textarea></label>
             <div id="dm-err"></div>
-            <div class="row"><button class="btn primary" type="submit">${id ? 'Save driver' : 'Add driver'}</button>${id ? `<button class="btn" type="button" id="dm-login">${d.active === false ? 'Reactivate and email login' : 'Email login link'}</button>` : ''}</div>
+            <div class="row"><button class="btn primary" type="submit">${id ? 'Save driver' : 'Add driver'}</button>${id ? `<button class="btn" type="button" id="dm-login">${d.active === false ? 'Reactivate and email login' : 'Email login link'}</button><button class="btn" type="button" id="dm-del">Delete driver</button>` : ''}</div>
             ${id ? `<p class="small muted" style="margin:0">${d.active === false ? 'This login is turned off. The button turns it back on and emails a link to choose a new password.' : 'Emails a link to choose a new password, for a driver who forgot it or is setting up a new phone.'}</p>` : ''}
           </form>
           ${id ? `
@@ -5270,6 +5270,10 @@
       const reopen = () => { m._onClose = null; closeModal(); driverModal(id, vehicles, done); };
       const drawPhoto = (photo) => { const h = $('#dm-photo', m); if (!h) return; h.innerHTML = photoField(d.name, photo, 'dm-photofile'); wirePhoto(h, 'dm-photofile', async (p) => { const r = await api('dispatch.setDriverPhoto', { id, photo: p }); drawPhoto(r.photo); }); };
       if (id) drawPhoto(d.photo);
+      const db1 = $('#dm-del', m); if (db1) db1.onclick = () => {
+        if (!confirm(`Delete ${d.name}?\n\nThis removes the driver and their login. It cannot be undone. A driver with trips on record cannot be deleted: turn off "Login enabled" instead.`)) return;
+        busy(db1, async () => { try { await api('dispatch.deleteDriver', { id }); toast(`${d.name} deleted.`); closeModal(); done && done(); } catch (err) { showErr($('#dm-err', m), err); } });
+      };
       const lb = $('#dm-login', m); if (lb) lb.onclick = () => busy(lb, async () => {
         try {
           const r = await api('dispatch.sendDriverLogin', { id });
