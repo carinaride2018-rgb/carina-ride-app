@@ -1962,6 +1962,8 @@
     const creditBal = opts.mode === 'customer' ? (opts.credit || 0) : 0;
     if (init.service === 'airport') init.service = 'transfer';
     const pr = init.prefs || {};
+    // The office form has no bag limits: it lists up to 30 checked bags and 15 carry-ons.
+    const noBagInfo = opts.mode === 'dispatch' || !vt.some((x) => x.bags != null);
     const numOpts = (n, from, sel) => Array.from({ length: n - from + 1 }, (_, i) => `<option value="${i + from}" ${Number(sel) === i + from ? 'selected' : ''}>${i + from}</option>`).join('');
     const state = { bags: 0, carryOns: 0, signName: '', repOn: false, repUntil: '', retOn: false, landOn: false, landDest: '', landDrop: '', retDate: init.date, retTime: '', retFlight: '', prefTemp: pr.temp || '', prefMusic: pr.music || '', prefQuiet: !!pr.quiet, ...init };
     // The customer's saved places: addresses from their past rides, most used first (Dawit 2026-11-08).
@@ -2043,9 +2045,9 @@
             <div class="vehicles">${vt.map((v) => `<button type="button" class="vcard" data-vehicle="${esc(v.type)}" aria-pressed="${state.vehicleType === v.type}">${carPic(v.type, v.photo)}<b>${esc(v.type)}</b><span>${v.capacity} passengers${v.bags != null ? ` · ${v.bags} checked bag${v.bags === 1 ? '' : 's'}${v.carry ? ` · ${v.carry} carry-on${v.carry === 1 ? '' : 's'}` : ''}` : ''}</span>${v.models ? `<span class="vmodel">${esc(v.models)}</span>` : ''}<span class="vprice" data-vprice="${esc(v.type)}"></span></button>`).join('') || '<p class="faint small">No vehicles yet. Add vehicles in the dispatch office first.</p>'}</div>
           </div>
           <div class="grid3">
-            <label class="field"><span>Passengers</span><select id="bk-pax" name="passengers">${numOpts(Math.max(Number(state.passengers) || 1, ...vt.map((x) => x.capacity || 1), 1), 1, state.passengers)}</select></label>
-            <label class="field"><span>Checked bags</span><select id="bk-bags" name="bags">${numOpts(Math.max(Number(state.bags) || 0, ...vt.map((x) => x.bags || 0), 0), 0, state.bags)}</select></label>
-            <label class="field"><span>Carry-ons</span><select id="bk-carry" name="carryOns">${numOpts(Math.max(Number(state.carryOns) || 0, ...vt.map((x) => x.carry || 0), 0), 0, state.carryOns)}</select></label>
+            <label class="field"><span>Passengers</span><select id="bk-pax" name="passengers">${numOpts(Math.max(Number(state.passengers) || 1, ...vt.map((x) => x.capacity || 1), 1, opts.mode === 'dispatch' ? 60 : 1), 1, state.passengers)}</select></label>
+            <label class="field"><span>Checked bags</span><select id="bk-bags" name="bags">${numOpts(Math.max(Number(state.bags) || 0, ...vt.map((x) => x.bags || 0), 0, noBagInfo ? 30 : 0), 0, state.bags)}</select></label>
+            <label class="field"><span>Carry-ons</span><select id="bk-carry" name="carryOns">${numOpts(Math.max(Number(state.carryOns) || 0, ...vt.map((x) => x.carry || 0), 0, noBagInfo ? 15 : 0), 0, state.carryOns)}</select></label>
           </div>
           <div class="hint" id="bk-bags-hint"></div>
           ${agent ? `<div class="agentbox stack" style="gap:10px"><div class="spread"><b>Your client</b>${clients.length ? `<select class="input" id="bk-client" style="width:auto;min-height:34px" aria-label="Saved clients"><option value="">Saved clients…</option>${clients.map((c, i) => `<option value="${i}">${esc(c.name)}${c.trips ? ` (${c.trips} ride${c.trips === 1 ? '' : 's'})` : ''}</option>`).join('')}</select>` : ''}</div>` : ''}
@@ -2186,7 +2188,7 @@
       $('#bk-rflightf', form).hidden = !C.isAirport(state.dropoff) || (twoStep && !(state.retOn && state.service !== 'hourly'));
       const rh = $('#bk-ret-hint', form); rh.hidden = !state.retOn; rh.textContent = state.dropoff ? `Picks up at ${state.dropoff.split(',')[0]} and goes back to ${(state.pickup || 'the pickup').split(',')[0]}${stopList.filter(Boolean).length ? ', with the same stops in reverse' : ''}.` : '';
       // Too many passengers or bags for the chosen vehicle: move up to the smallest one that fits.
-      const fitsV = (x) => Number(state.passengers || 1) <= (x.capacity || 0) && (x.bags == null || C.bagFits(x.type, x.bags, x.carry, state.bags, state.carryOns));
+      const fitsV = (x) => opts.mode === 'dispatch' || Number(state.passengers || 1) <= (x.capacity || 0) && (x.bags == null || C.bagFits(x.type, x.bags, x.carry, state.bags, state.carryOns));
       let vt0 = vt.find((x) => x.type === state.vehicleType);
       if (vt0 && !fitsV(vt0)) {
         const up = vt.find(fitsV);
