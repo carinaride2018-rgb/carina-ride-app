@@ -3292,6 +3292,7 @@
       const week = db.trips.filter((t) => t.driverId === ctx.user.id && t.status === 'completed' && new Date(t.pickupAt) >= monday);
       return {
         me: { ...pubUser(ctx.user), payType: ctx.user.payType, payRate: ctx.user.payRate },
+        vehicles: db.vehicles.filter((v) => v.companyId === ctx.company.id && (v.status === 'active' || v.id === ctx.user.vehicleId)).map((v) => ({ id: v.id, name: v.name, plate: v.plate || '', type: v.type })),
         trips: db.trips.filter((t) => t.driverId === ctx.user.id && t.status !== 'cancelled').sort((x, y) => x.pickupAt.localeCompare(y.pickupAt)).map(tripView),
         week: { from: monday.toISOString(), ...driverPay(ctx.user, week) },
         stats: driverStats(ctx.user, 30),
@@ -3376,6 +3377,12 @@
     // account or partner billing, and the office records anything else.
     def('driver.collect', ['driver'], true, () => fail("Chauffeurs don't take payment. The office handles it."));
     def('driver.setPhoto', ['driver'], true, (ctx, a) => { ctx.user.photo = cleanPhoto(a.photo); return pubUser(ctx.user); });
+    // The driver picks the car they usually drive. New trips offered to them use it when the type fits.
+    def('driver.setVehicle', ['driver'], true, (ctx, a) => {
+      if (a.vehicleId) { const v = ownVehicle(ctx, a.vehicleId); if (v.status !== 'active') fail('That vehicle is not in service. Choose another.'); ctx.user.vehicleId = v.id; }
+      else ctx.user.vehicleId = null;
+      return pubUser(ctx.user);
+    });
     def('driver.availability', ['driver'], true, (ctx, a) => { ctx.user.available = !!a.available; return pubUser(ctx.user); });
     def('dispatch.board', STAFF, false, (ctx, a) => {
       if (monitorFlights(ctx.company)) ctx.dirty = true;

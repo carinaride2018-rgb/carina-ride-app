@@ -3409,6 +3409,7 @@
     const v = shell({ narrow: true });
     let last = '';
     const opened = new Set();
+    let allPast = false;
     const savePhoto = async (photo) => { const u = await api('driver.setPhoto', { photo }); last = ''; refresh(true); return u; };
     function myPhoto(me) {
       const m = openModal({ title: 'My photo', body: '<div id="mp"></div>' });
@@ -3429,15 +3430,16 @@
     async function refresh(silent) {
       let data;
       try { data = await api('driver.trips'); } catch (e) { if (!silent) showErr(v, e); return; }
-      const { me, trips, week, stats } = data;
+      const { me, trips, week, stats } = data; const vehicles = data.vehicles || [];
       const waiting = trips.filter((t) => t.status === 'assigned');
       const live = trips.find((t) => ['en_route', 'arrived', 'on_board'].includes(t.status)) || trips.find((t) => t.status === 'accepted');
       const soon = (t) => new Date(t.pickupAt).getTime() - Date.now() <= DRV_OPEN_MIN * 60000;
       const full = !!live && (live.status !== 'accepted' || soon(live) || opened.has(live.id));
       // Redraw when the trips change or when the next trip reaches 70 minutes.
-      const sig = JSON.stringify(data) + '|' + full; if (sig === last) return; last = sig;
+      const sig = JSON.stringify(data) + '|' + full + '|' + allPast; if (sig === last) return; last = sig;
       const upcoming = trips.filter((t) => t.status === 'accepted' && t !== live);
-      const done = trips.filter((t) => t.status === 'completed').slice(-5).reverse();
+      const past = trips.filter((t) => t.status === 'completed').reverse();
+      const done = allPast ? past : past.slice(0, 5);
       const flightLine = (t) => t.flightInfo ? `<div class="row small">${flightPill(t.flightInfo)}<span class="muted">${esc(t.flight)} ${t.flightInfo.kind === 'arrival' ? 'lands' : 'departs'} ${esc(fmtTime(t.flightInfo.estimated))}${t.flightInfo.terminal ? ` · Terminal ${esc(t.flightInfo.terminal)}` : ''}${t.flightInfo.claim ? ` · claim ${t.flightInfo.claim}` : ''}</span></div>` : '';
       v.innerHTML = `
         <div class="stack" style="gap:18px">
@@ -3482,6 +3484,7 @@
               ${['accepted', 'en_route', 'arrived'].includes(live.status) ? `<button class="linkbtn small drv-inc" type="button" data-act="incident" data-id="${live.id}">Report an incident</button>` : ''}
             </div></div>` : ''}
           ${live || waiting.length ? '' : '<div class="panel muted">No trips right now. New assignments show up here.</div>'}
+          ${vehicles.length ? `<label class="field"><span>My vehicle</span><select id="drv-veh"><option value="">No usual vehicle</option>${vehicles.map((x) => `<option value="${esc(x.id)}" ${me.vehicleId === x.id ? 'selected' : ''}>${esc(x.name)}${x.plate ? ' · ' + esc(x.plate) : ''} (${esc(x.type)})</option>`).join('')}</select><span class="hint">The car you usually drive. New trips use it when the type fits.</span></label>` : ''}
           <div class="row"><button class="btn" type="button" data-act="calendar">My calendar</button>${me.photo ? `<button class="btn" type="button" data-act="photo">My photo</button>` : ''}</div>
           ${upcoming.length ? `<div class="stack"><span class="label">Coming up</span>${upcoming.map((t) => `<div class="trip click" role="button" tabindex="0" data-open="${t.id}" title="Tap for details"><div class="spread"><b>${esc(fmtDT(t.pickupAt))}</b><span class="mono small faint">${esc(t.ref)} ›</span></div>${routeHtml(t)}${flightLine(t)}<p class="small muted" style="margin:4px 0 0">${esc(t.passengerName || '')} · ${t.passengers} pax · ${esc(t.vehicle ? t.vehicle.name : t.vehicleType)} · <span class="linkbtn">Details</span></p></div>`).join('')}</div>` : ''}
           <div class="stack"><span class="label">This week</span>
@@ -3492,15 +3495,17 @@
             </div>
             <p class="small faint">Pay is ${me.payType === 'hourly' ? `${money(me.payRate)} per hour` : me.payType === 'perTrip' ? `${money(me.payRate)} per trip` : `${me.payRate}% of the fare`}, plus all tips and tolls back.</p>
           </div>
-          ${done.length ? `<div class="stack"><span class="label">Recently completed</span><div class="tablewrap"><table><tbody>${done.map((t) => `<tr><td class="mono small">${esc(fmtDT(t.pickupAt))}</td><td>${esc(t.passengerName)}${t.rating ? `<br><span class="stars small" title="${t.rating.stars} stars">${stars(t.rating.stars)}</span>` : ''}</td><td class="r num">${money(t.price.total)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}
+          ${done.length ? `<div class="stack"><div class="spread"><span class="label">${allPast ? `All past trips (${past.length})` : 'Recently completed'}</span>${past.length > 5 ? `<button class="btn sm" type="button" data-act="allpast">${allPast ? 'Show fewer' : `Show all ${past.length} past trips`}</button>` : ''}</div><div class="tablewrap"><table><tbody>${done.map((t) => `<tr><td class="mono small">${esc(fmtDT(t.pickupAt))}</td><td>${esc(t.passengerName)}${t.rating ? `<br><span class="stars small" title="${t.rating.stars} stars">${stars(t.rating.stars)}</span>` : ''}</td><td class="r num">${money(t.price.total)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}
           ${live ? '' : '<div class="row"><button class="btn sm" type="button" data-act="incident" data-id="">Report an incident</button></div>'}
         </div>`;
       shareLocation(live && ['en_route', 'arrived', 'on_board'].includes(live.status) ? live.id : null);
+      const dv = $('#drv-veh', v); if (dv) dv.onchange = async (e) => { try { await api('driver.setVehicle', { vehicleId: e.target.value }); toast('Vehicle saved.'); last = ''; refresh(); } catch (err) { toast(err.message, true); last = ''; refresh(); } };
       $('#drv-avail', v).onchange = async (e) => { try { await api('driver.availability', { available: e.target.checked }); last = ''; refresh(); } catch (err) { toast(err.message, true); } };
       wirePhoto(v, 'drv-photo', savePhoto);
       $$('[data-open]', v).forEach((el) => { const go = () => driverTripModal(trips.find((x) => x.id === el.dataset.open)); el.onclick = go; el.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } }; });
       waitTimer($('.waittimer', v));
       $$('[data-act]', v).forEach((b) => { b.onclick = () => b.dataset.act === 'openfull' ? (opened.add(b.dataset.id), last = '', refresh(true))
+        : b.dataset.act === 'allpast' ? (allPast = !allPast, last = '', refresh(true))
         : b.dataset.act === 'advance' && b.dataset.st === 'accepted' && !b.dataset.sure ? confirmStart(b)
         : b.dataset.act === 'calendar' ? driverCalendar() : b.dataset.act === 'photo' ? myPhoto(me) : b.dataset.act === 'sign' ? nameSign(trips.find((x) => x.id === b.dataset.id)) : b.dataset.act === 'incident' ? incidentModal({ trip: (() => { const t = trips.find((x) => x.id === b.dataset.id); return t ? { id: t.id, ref: t.ref, pickupAt: t.pickupAt, passengerName: t.passengerName } : null; })() }, { done: () => {} }) : b.dataset.act === 'noshow' ? noShowModal(trips.find((x) => x.id === b.dataset.id), 'driver.noShow', () => { last = ''; refresh(); }) : busy(b, async () => {
         const id = b.dataset.id;
