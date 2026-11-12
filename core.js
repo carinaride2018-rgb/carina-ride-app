@@ -1138,6 +1138,11 @@
       else if (t.payment.method === 'cash') lines.push(`Payment: cash, paid to ${c.name} before your ride.`);
       else if (c.payDeadline && payDue(t)) { const u = payLink(c, t); lines.push(PAY_DEADLINE_NOTE, ...(u ? [`Payment link: ${u}`] : [])); }
       else if (onFile(t) && t.cardToken) lines.push(PAY_WARNING, `Payment link: ${cardUrl(t)}`); // shown as a red box in the HTML email (Dawit 2026-11-06)
+      // One-way ride with no return yet: a link that opens the booking page with the way back filled in.
+      if (t.service !== 'hourly' && t.dropoff && !t.returnId && !t.returnOf && !t.farmIn && !t.landingOf && !t.affIn) {
+        if (!t.returnToken) t.returnToken = randomId(6);
+        lines.push(`Return trip link: ${(linkBase(c) || 'https://limorelay.com/').replace(/#.*$/, '')}#return.${t.returnToken}`);
+      }
       lines.push(`Terms and Conditions: ${(c.domain ? linkBase(c) : (opts.publicUrl || 'https://limorelay.com/')).replace(/#.*$/, '')}#terms.${c.slug}`);
       return '\n\n' + lines.join('\n');
     }
@@ -2564,6 +2569,16 @@
     def('public.info', 'public', false, (ctx, a) => ({ domainSlug: slugForHost(a && a.host), houseSlug: (db.companies.find((c) => c.house && c.status === 'active') || {}).slug || '', sample: !!db.sample, live: clone(live), payMode, pushKey: opts.pushKey || '', nativePush: opts.nativePush || null, mapsKey: opts.mapsKey || '' }));
     def('public.companies', 'public', false, () =>
       db.companies.filter((c) => c.status === 'active').map(pubCompany));
+    // "Book your return trip" in the confirmation email: the first ride's details with pickup and drop-off swapped.
+    def('public.returnInfo', 'public', false, (ctx, a) => {
+      const tok = str(a.token, 40);
+      const t = tok && db.trips.find((x) => x.returnToken === tok);
+      if (!t) fail('This return link is no longer valid.', 404);
+      const c = findCompany(t.companyId);
+      return { slug: c.slug, from: t.ref, booked: !!(t.returnId && db.trips.some((x) => x.id === t.returnId && x.status !== 'cancelled')),
+        prefill: { service: 'transfer', pickup: t.dropoff, dropoff: t.pickup, vehicleType: t.vehicleType, passengers: t.passengers, bags: t.bags || 0, carryOns: t.carryOns || 0, childSeats: t.childSeats || 0, boosterSeats: t.boosterSeats || 0,
+          passengerName: t.passengerName || '', passengerPhone: t.passengerPhone || '', passengerEmail: t.passengerEmail || '' } };
+    });
     def('public.company', 'public', false, (ctx, a) => {
       const c = companyBySlug(a.slug);
       return { company: pubCompany(c), rates: clone(c.rates), addons: clone(c.pricing.addons), bizPct: bizPctOf(c), vehicleTypes: vehicleTypesFor(c), services: SERVICES, minNoticeHours: dcfg(c).minNoticeHours, policy: pcfg(c), terms: c.terms || '' };

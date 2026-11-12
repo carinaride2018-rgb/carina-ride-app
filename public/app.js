@@ -751,6 +751,12 @@
   function render2() {
     const route = location.hash.slice(1) || '';
     document.title = DEFAULT_TITLE;
+    if (route.startsWith('return.')) {
+      // "Book your return trip" from a confirmation email.
+      api('public.returnInfo', { token: route.slice(7) }).then((r) => { returnPrefill = { slug: r.slug, data: r.prefill, from: r.from, booked: r.booked }; viewBook(r.slug); })
+        .catch((e) => { const v = shell({}); v.innerHTML = `<div class="panel stack"><h2>Return link unavailable</h2><p class="muted">${esc(e.message)}</p></div>`; });
+      return;
+    }
     if (route.startsWith('book.')) return viewBook(route.slice(5));
     if (route.startsWith('track.')) return viewTrack(route.slice(6));
     if (route.startsWith('review.')) return viewReview(route.slice(7));
@@ -2545,8 +2551,10 @@
   }
 
   // ---- Public booking page --------------------------------------------------
+  let returnPrefill = null;
   async function viewBook(slug) {
     current = null;
+    const ret = returnPrefill && returnPrefill.slug === slug ? returnPrefill : null; returnPrefill = null;
     let info;
     try { info = await api('public.company', { slug }); }
     catch (e) { const v = shell({}); v.innerHTML = `<div class="panel stack" id="bk-missing"><h2>Booking page unavailable</h2><p class="muted">${esc(e.status === 404 ? `There's no booking page at "${slug}". Check the link with the limo company.` : e.message)}</p><a class="btn" href="#signin">Back</a></div>`; return; }
@@ -2569,6 +2577,7 @@
       ${info.company.house ? `<section class="hero-house"><h1>Unparalleled chauffeur-driven service, nationwide</h1><p>Late-model cars and professional chauffeurs in cities across the US. See the price first. Enter the pickup time in the pickup city's local time.</p></section>` : ''}
       <div class="morelinks"><a class="eventlink" href="#request.${esc(slug)}"><b>Book your event</b><span class="small">Weddings, proms, corporate events and groups</span></a>
       <a class="eventlink" href="#agent.${esc(slug)}" id="agent-link"><b>Agent sign-up or login</b><span class="small">Travel agents earn commission on every ride</span></a></div>
+      ${ret ? `<div class="note" id="bk-retnote">${ret.booked ? `A return for ${esc(ret.from)} is already booked. You can still book another ride below.` : `Return trip for ${esc(ret.from)}. Your details are filled in, with pickup and drop-off swapped. Choose the date and time.`}</div>` : ''}
       <div id="book-host"></div><div id="auth-host"></div>
       ${info.company.house ? `<section class="house-info">
         <h2>Why book with LimoRelay</h2>
@@ -2602,7 +2611,7 @@
     bookingForm($('#book-host', v), {
       info, mode: signedHere ? 'customer' : 'public', accounts, credit: 0,
       biz: signedHere ? { account: accounts[0] || null, onMode: (m) => { try { localStorage.setItem(modeKey, m); } catch (e) {} } } : null,
-      initial: signedHere ? { passengerName: session.user.name, passengerPhone: session.user.phone, accountId: business ? accounts[0].id : '' } : {},
+      initial: Object.assign(signedHere ? { passengerName: session.user.name, passengerPhone: session.user.phone, accountId: business ? accounts[0].id : '' } : {}, ret ? ret.data : {}),
       quoteFn: (b) => api('public.quote', { slug, booking: b }),
       onSubmit: async (b) => {
         if (signedHere) { const t = await api('customer.book', { booking: b }); await afterBook(t, b); toast(bookedMsg(t)); go('customer'); return; }
