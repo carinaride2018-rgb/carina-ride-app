@@ -3409,7 +3409,7 @@
     const v = shell({ narrow: true });
     let last = '';
     const opened = new Set();
-    let allPast = false;
+    let allPast = false, drvTab = 'current';
     const savePhoto = async (photo) => { const u = await api('driver.setPhoto', { photo }); last = ''; refresh(true); return u; };
     function myPhoto(me) {
       const m = openModal({ title: 'My photo', body: '<div id="mp"></div>' });
@@ -3436,7 +3436,8 @@
       const soon = (t) => new Date(t.pickupAt).getTime() - Date.now() <= DRV_OPEN_MIN * 60000;
       const full = !!live && (live.status !== 'accepted' || soon(live) || opened.has(live.id));
       // Redraw when the trips change or when the next trip reaches 70 minutes.
-      const sig = JSON.stringify(data) + '|' + full + '|' + allPast; if (sig === last) return; last = sig;
+      const sig = JSON.stringify(data) + '|' + full + '|' + allPast + '|' + drvTab;
+      const H = (k) => drvTab === k ? '' : 'hidden'; if (sig === last) return; last = sig;
       const upcoming = trips.filter((t) => t.status === 'accepted' && t !== live);
       const past = trips.filter((t) => t.status === 'completed').reverse();
       const done = allPast ? past : past.slice(0, 5);
@@ -3447,19 +3448,20 @@
             <label class="switch"><input type="checkbox" id="drv-avail" ${me.available ? 'checked' : ''}><span>${me.available ? 'Available' : 'Off duty'}</span></label></div>
           ${me.photo ? '' : `<div class="panel">${photoField(me.name, '', 'drv-photo')}</div>`}
           ${trips.filter((t) => t.wake && t.wake.calls && !t.wake.ok && ['assigned', 'accepted'].includes(t.status)).slice(0, 1).map((t) => `<div class="panel wakebox"><div class="stack" style="gap:2px"><b>Wake-up call</b><span class="small muted">Pickup ${esc(fmtTime(t.pickupAt))} from ${esc(t.pickup.split(',')[0])} (${esc(t.ref)})</span></div><button class="btn primary" type="button" data-act="wake" data-id="${t.id}">I'm awake</button></div>`).join('')}
+          <div class="row drv-tabs">${[['current', 'Current job'], ['upcoming', `Upcoming trips${upcoming.length ? ` (${upcoming.length})` : ''}`], ['completed', `Completed trips${past.length ? ` (${past.length})` : ''}`]].map(([k, l]) => `<button class="btn ${drvTab === k ? 'primary' : ''}" type="button" data-act="tab" data-tab="${k}">${l}</button>`).join('')}</div>
           ${waiting.length ? `<div class="stack"><span class="label">Needs your answer</span>${waiting.map((t) => `
             <div class="trip"><div class="spread"><b>${esc(fmtDT(t.pickupAt))}</b><span class="mono small faint">${esc(t.ref)}</span></div>
               ${routeHtml(t)}${flightLine(t)}<p class="small muted">${esc(t.serviceLabel)} · ${esc(t.vehicle ? t.vehicle.name : t.vehicleType)} · ${t.passengers} pax${extrasList(t).length ? ' · ' + esc(extrasList(t).join(' · ')) : ''}</p>
               ${t.offer ? `<p class="small offertag">Accept within ${minsLeft(t.offer.expiresAt)} min or it goes to another driver.</p>` : ''}
               <div class="grid2"><button class="btn primary" type="button" data-act="accept" data-id="${t.id}">Accept</button><button class="btn" type="button" data-act="decline" data-id="${t.id}">Decline</button></div></div>`).join('')}</div>` : ''}
-          ${live && !full ? `<div class="stack"><span class="label">Next trip</span>
+          ${live && !full ? `<div class="stack" ${H('current')}><span class="label">Next trip</span>
             <div class="trip">
               <div class="spread"><b style="font-size:18px">${esc(fmtTime(live.pickupAt))} <span class="muted" style="font-weight:500;font-size:14px">${esc(fmtDate(live.pickupAt))}</span></b>${pill(live)}</div>
               ${routeHtml(live)}${flightLine(live)}
               <p class="small muted" style="margin:4px 0 8px">Full details open by themselves ${DRV_OPEN_MIN} minutes before pickup.</p>
               <button class="btn primary" type="button" data-act="openfull" data-id="${live.id}">Open trip details</button>
             </div></div>` : ''}
-          ${live && full ? `<div class="stack"><span class="label">${live.status === 'accepted' ? 'Next trip' : 'Current trip'}</span>
+          ${live && full ? `<div class="stack" ${H('current')}><span class="label">${live.status === 'accepted' ? 'Next trip' : 'Current trip'}</span>
             <div class="trip drv-current">
               <div class="spread"><b style="font-size:18px">${esc(fmtTime(live.pickupAt))} <span class="muted" style="font-weight:500;font-size:14px">${esc(fmtDate(live.pickupAt))}</span></b>${pill(live)}</div>
               ${live.pickupAt !== live.scheduledPickupAt ? `<div class="note small">Pickup moved from ${esc(fmtTime(live.scheduledPickupAt))} to match the flight.</div>` : ''}
@@ -3483,11 +3485,12 @@
                 <button class="btn" type="submit" style="grid-column:1/-1">Save extras</button></form>` : ''}
               ${['accepted', 'en_route', 'arrived'].includes(live.status) ? `<button class="linkbtn small drv-inc" type="button" data-act="incident" data-id="${live.id}">Report an incident</button>` : ''}
             </div></div>` : ''}
-          ${live || waiting.length ? '' : '<div class="panel muted">No trips right now. New assignments show up here.</div>'}
-          ${vehicles.length ? `<label class="field"><span>My vehicle</span><select id="drv-veh"><option value="">No usual vehicle</option>${vehicles.map((x) => `<option value="${esc(x.id)}" ${me.vehicleId === x.id ? 'selected' : ''}>${esc(x.name)}${x.plate ? ' · ' + esc(x.plate) : ''} (${esc(x.type)})</option>`).join('')}</select><span class="hint">The car you usually drive. New trips use it when the type fits.</span></label>` : ''}
-          <div class="row"><button class="btn" type="button" data-act="calendar">My calendar</button>${me.photo ? `<button class="btn" type="button" data-act="photo">My photo</button>` : ''}</div>
-          ${upcoming.length ? `<div class="stack"><span class="label">Coming up</span>${upcoming.map((t) => `<div class="trip click" role="button" tabindex="0" data-open="${t.id}" title="Tap for details"><div class="spread"><b>${esc(fmtDT(t.pickupAt))}</b><span class="mono small faint">${esc(t.ref)} ›</span></div>${routeHtml(t)}${flightLine(t)}<p class="small muted" style="margin:4px 0 0">${esc(t.passengerName || '')} · ${t.passengers} pax · ${esc(t.vehicle ? t.vehicle.name : t.vehicleType)} · <span class="linkbtn">Details</span></p></div>`).join('')}</div>` : ''}
-          <div class="stack"><span class="label">This week</span>
+          ${live || waiting.length ? '' : `<div class="panel muted" ${H('current')}>No trips right now. New assignments show up here.</div>`}
+          ${vehicles.length ? `<label class="field" ${H('current')}><span>My vehicle</span><select id="drv-veh"><option value="">No usual vehicle</option>${vehicles.map((x) => `<option value="${esc(x.id)}" ${me.vehicleId === x.id ? 'selected' : ''}>${esc(x.name)}${x.plate ? ' · ' + esc(x.plate) : ''} (${esc(x.type)})</option>`).join('')}</select><span class="hint">The car you usually drive. New trips use it when the type fits.</span></label>` : ''}
+          <div class="row" ${H('current')}><button class="btn" type="button" data-act="calendar">My calendar</button>${me.photo ? `<button class="btn" type="button" data-act="photo">My photo</button>` : ''}</div>
+          ${upcoming.length ? '' : `<div class="panel muted" ${H('upcoming')}>No upcoming trips.</div>`}
+          ${upcoming.length ? `<div class="stack" ${H('upcoming')}><span class="label">Coming up</span>${upcoming.map((t) => `<div class="trip click" role="button" tabindex="0" data-open="${t.id}" title="Tap for details"><div class="spread"><b>${esc(fmtDT(t.pickupAt))}</b><span class="mono small faint">${esc(t.ref)} ›</span></div>${routeHtml(t)}${flightLine(t)}<p class="small muted" style="margin:4px 0 0">${esc(t.passengerName || '')} · ${t.passengers} pax · ${esc(t.vehicle ? t.vehicle.name : t.vehicleType)} · <span class="linkbtn">Details</span></p></div>`).join('')}</div>` : ''}
+          <div class="stack" ${H('completed')}><span class="label">This week</span>
             <div class="tiles three">
               <div class="tile"><span class="label">Pay so far</span><b>${money(week.total)}</b><span class="small faint">${week.trips} trips · ${money(week.tips)} tips</span></div>
               <div class="tile"><span class="label">Rating</span><b>${stats.rating == null ? '—' : stats.rating.toFixed(1)}</b><span class="small faint">${stats.ratings} ratings</span></div>
@@ -3495,8 +3498,9 @@
             </div>
             <p class="small faint">Pay is ${me.payType === 'hourly' ? `${money(me.payRate)} per hour` : me.payType === 'perTrip' ? `${money(me.payRate)} per trip` : `${me.payRate}% of the fare`}, plus all tips and tolls back.</p>
           </div>
-          ${done.length ? `<div class="stack"><div class="spread"><span class="label">${allPast ? `All past trips (${past.length})` : 'Recently completed'}</span>${past.length > 5 ? `<button class="btn sm" type="button" data-act="allpast">${allPast ? 'Show fewer' : `Show all ${past.length} past trips`}</button>` : ''}</div><div class="tablewrap"><table><tbody>${done.map((t) => `<tr><td class="mono small">${esc(fmtDT(t.pickupAt))}</td><td>${esc(t.passengerName)}${t.rating ? `<br><span class="stars small" title="${t.rating.stars} stars">${stars(t.rating.stars)}</span>` : ''}</td><td class="r num">${money(t.price.total)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}
-          ${live ? '' : '<div class="row"><button class="btn sm" type="button" data-act="incident" data-id="">Report an incident</button></div>'}
+          ${done.length ? '' : `<div class="panel muted" ${H('completed')}>No completed trips yet.</div>`}
+          ${done.length ? `<div class="stack" ${H('completed')}><div class="spread"><span class="label">${allPast ? `All past trips (${past.length})` : 'Recently completed'}</span>${past.length > 5 ? `<button class="btn sm" type="button" data-act="allpast">${allPast ? 'Show fewer' : `Show all ${past.length} past trips`}</button>` : ''}</div><div class="tablewrap"><table><tbody>${done.map((t) => `<tr><td class="mono small">${esc(fmtDT(t.pickupAt))}</td><td>${esc(t.passengerName)}${t.rating ? `<br><span class="stars small" title="${t.rating.stars} stars">${stars(t.rating.stars)}</span>` : ''}</td><td class="r num">${money(t.price.total)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}
+          ${live ? '' : `<div class="row" ${H('current')}><button class="btn sm" type="button" data-act="incident" data-id="">Report an incident</button></div>`}
         </div>`;
       shareLocation(live && ['en_route', 'arrived', 'on_board'].includes(live.status) ? live.id : null);
       const dv = $('#drv-veh', v); if (dv) dv.onchange = async (e) => { try { await api('driver.setVehicle', { vehicleId: e.target.value }); toast('Vehicle saved.'); last = ''; refresh(); } catch (err) { toast(err.message, true); last = ''; refresh(); } };
@@ -3505,6 +3509,7 @@
       $$('[data-open]', v).forEach((el) => { const go = () => driverTripModal(trips.find((x) => x.id === el.dataset.open)); el.onclick = go; el.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } }; });
       waitTimer($('.waittimer', v));
       $$('[data-act]', v).forEach((b) => { b.onclick = () => b.dataset.act === 'openfull' ? (opened.add(b.dataset.id), last = '', refresh(true))
+        : b.dataset.act === 'tab' ? (drvTab = b.dataset.tab, last = '', refresh(true))
         : b.dataset.act === 'allpast' ? (allPast = !allPast, last = '', refresh(true))
         : b.dataset.act === 'advance' && b.dataset.st === 'accepted' && !b.dataset.sure ? confirmStart(b)
         : b.dataset.act === 'calendar' ? driverCalendar() : b.dataset.act === 'photo' ? myPhoto(me) : b.dataset.act === 'sign' ? nameSign(trips.find((x) => x.id === b.dataset.id)) : b.dataset.act === 'incident' ? incidentModal({ trip: (() => { const t = trips.find((x) => x.id === b.dataset.id); return t ? { id: t.id, ref: t.ref, pickupAt: t.pickupAt, passengerName: t.passengerName } : null; })() }, { done: () => {} }) : b.dataset.act === 'noshow' ? noShowModal(trips.find((x) => x.id === b.dataset.id), 'driver.noShow', () => { last = ''; refresh(); }) : busy(b, async () => {
