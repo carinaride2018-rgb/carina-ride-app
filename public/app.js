@@ -3468,7 +3468,7 @@
               ${routeHtml(live)}${flightLine(live)}
               ${live.status === 'en_route' ? `<p class="note small gpsnote" id="drv-gps">${esc(GPS_TEXT[gps.tripId === live.id && gps.state !== 'idle' ? gps.state : 'asking'])}</p>` : ''}
               <dl class="kv"><dt>Passenger</dt><dd>${esc(live.passengerName)} · ${live.passengers} pax</dd>
-                ${live.passengerPhone ? `<dt>Phone</dt><dd class="mono">${esc(live.passengerPhone)}</dd>` : ''}
+                ${live.passengerPhone ? `<dt>Phone</dt><dd class="mono"><a href="tel:${esc(live.passengerPhone)}">${esc(live.passengerPhone)}</a> · <a href="sms:${esc(live.passengerPhone)}">Text</a></dd>` : ''}
                 <dt>Vehicle</dt><dd>${esc(live.vehicle ? `${live.vehicle.name} · ${live.vehicle.plate}` : live.vehicleType)}</dd>
                 <dt>Service</dt><dd>${esc(live.serviceLabel)}${live.service === 'hourly' ? `, ${live.hours} h` : ''}</dd>
                 ${extrasList(live).length ? `<dt>Requests</dt><dd>${esc(extrasList(live).join(' · '))}</dd>` : ''}
