@@ -56,11 +56,14 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .spread { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .grow { flex: 1; min-width: 0; }
 
-/* Top bar */
+/* Top bar. On an iPhone the page is drawn under the status bar (the clock and
+   the notch). The bar sticks to the very top and keeps that strip as its own
+   padding, so its background covers the strip and nothing scrolls through it.
+   --pt is the bar's normal top padding; the strip is added to it. */
 .topbar {
-  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20;
+  position: sticky; top: 0; z-index: 20;
   background: var(--surface); border-bottom: 1px solid var(--line);
-  padding: 0 16px; display: flex; align-items: center; gap: 16px; min-height: 56px; flex-wrap: wrap;
+  padding: calc(var(--pt, 0px) + env(safe-area-inset-top, 0px)) 16px 0; display: flex; align-items: center; gap: 16px; min-height: calc(56px + env(safe-area-inset-top, 0px)); flex-wrap: wrap;
 }
 .topbar::before { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--brand); }
 .wordmark { display: flex; align-items: center; gap: 10px; font-weight: 700; font-stretch: 118%; letter-spacing: .02em; white-space: nowrap; }
@@ -85,7 +88,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .tabmenu button { text-align: left; background: none; border: 0; border-radius: 8px; padding: 10px 12px; font: inherit; color: var(--ink); cursor: pointer; }
 .tabmenu button:hover { background: var(--surface-2); }
 .tabmenu button[aria-current="true"] { font-weight: 650; background: var(--surface-2); }
-.topbar.manytabs { padding-top: 8px; }
+.topbar.manytabs { --pt: 8px; }
 .topbar.manytabs .navrow { order: 3; flex-basis: 100%; margin: 0 -16px; padding: 0 16px; border-top: 1px solid var(--line); }
 .topbar.manytabs .tabs button { padding: 12px 10px 11px; }
 .topbar.manytabs .wordmark { margin-right: auto; }
@@ -96,7 +99,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .whoname { display: flex; flex-direction: column; line-height: 1.2; text-align: right; color: var(--ink); font-weight: 550; }
 .whoname small { color: var(--ink-3); font-weight: 450; font-size: 11.5px; }
 @media (max-width: 640px) {
-  .topbar { gap: 10px; padding-top: 6px; padding-bottom: 6px; }
+  .topbar { gap: 10px; --pt: 6px; padding-bottom: 6px; }
   .topbar.manytabs { padding-bottom: 0; }
   .whoname { display: none; }
   .who { gap: 6px; margin-left: auto; }
