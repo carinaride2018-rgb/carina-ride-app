@@ -1031,3 +1031,7 @@ body.co-dark .bh-phone a { color: var(--ink); }
 
 .drv-tabs { gap: 8px; flex-wrap: wrap; }
 .drv-tabs .btn { flex: 1 1 auto; }
+
+/* Trips list: a heading row for each pickup day. */
+.tablewrap tr.dayrow td { background: var(--surface-2); padding: 8px 12px; font-size: 14px; border-top: 2px solid var(--line); }
+@media (max-width: 640px) { .tablewrap tr.dayrow { padding: 8px 14px; background: var(--surface-2); } }
