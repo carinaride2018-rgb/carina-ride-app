@@ -1035,3 +1035,11 @@ body.co-dark .bh-phone a { color: var(--ink); }
 /* Trips list: a heading row for each pickup day. */
 .tablewrap tr.dayrow td { background: var(--surface-2); padding: 8px 12px; font-size: 14px; border-top: 2px solid var(--line); }
 @media (max-width: 640px) { .tablewrap tr.dayrow { padding: 8px 14px; background: var(--surface-2); } }
+
+/* iPhone and iPad: the browser zooms the whole page in when you tap a field whose
+   text is smaller than 16px, and it stays zoomed after you finish typing, so the
+   right side of every screen is cut off. Fields at 16px do not trigger it. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+@supports (-webkit-touch-callout: none) {
+  input, select, textarea { font-size: 16px !important; }
+}
