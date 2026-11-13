@@ -44,6 +44,12 @@
   const fmtTime = (iso) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: TZ });
   const minsLeft = (iso) => Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 60000));
   const fmtYMD = (ymd) => new Date(String(ymd).slice(0, 10) + 'T12:00:00').toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+  // Upcoming or past? A ride stays "upcoming" until UPCOMING_GRACE_H hours after
+  // its pickup time, or 24 hours when the driver is on the way, has arrived or has
+  // the passenger on board. After that it is a past ride, even if nobody marked
+  // it completed.
+  const UPCOMING_GRACE_H = 6;
+  const stillUpcoming = (t) => new Date(t.pickupAt).getTime() >= Date.now() - (['en_route', 'arrived', 'on_board'].includes(t.status) ? 24 : UPCOMING_GRACE_H) * 3600e3;
   const fmtDate = (iso) => new Date(iso).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', timeZone: TZ });
   const fmtDT = (iso) => `${fmtDate(iso)}, ${fmtTime(iso)}`;
   // "2026-10-19", "2026-10-21" -> "Mon, Oct 19 – Wed, Oct 21" (local calendar days)
@@ -3007,8 +3013,9 @@
         const sig = JSON.stringify([trips, quotes, cr, mode, setup && session.user.bizRequest]);
         const openQuotes = quotes.filter((q) => ['new', 'sent'].includes(q.status) || (q.status === 'accepted' && q.trips.some((t) => !['completed', 'cancelled'].includes(t.status))));
         if (sig === last) return; last = sig;
-        const upcoming = trips.filter((t) => !['completed', 'cancelled'].includes(t.status)).reverse();
-        const past = trips.filter((t) => ['completed', 'cancelled'].includes(t.status));
+        const isUp = (t) => !['completed', 'cancelled'].includes(t.status) && stillUpcoming(t);
+        const upcoming = trips.filter(isUp).reverse();
+        const past = trips.filter((t) => !isUp(t));
         v.innerHTML = `
           <div class="pagehead"><div class="stack" style="gap:4px"><h1>${AG ? 'Bookings' : 'My trips'}</h1><p class="muted">Hello ${esc(session.user.name.split(' ')[0])}. ${AG ? `Rides you booked for ${esc(AG.agency)} clients with ${esc(session.company.name)}.` : mode === 'business' ? (bizAcct() ? `Your business rides for ${esc(bizAcct().name)}.` : 'Your business rides.') : `Your personal rides with ${esc(session.company.name)}.`}</p>${modeSwitch()}</div>
             <div class="row"><a class="btn" href="#request.${esc(session.company.slug)}">Book an event</a><button class="btn brand" type="button" id="new-trip">Book a ride</button></div></div>
@@ -3040,7 +3047,7 @@
         const againBtns = `<span class="row small"><button class="linkbtn small" type="button" data-act="again" data-id="${t.id}">Book again</button>${t.dropoff && t.service !== 'hourly' ? `<button class="linkbtn small" type="button" data-act="back" data-id="${t.id}">Book the way back</button>` : ''}</span>`;
         const rate = t.status === 'completed' && t.driver && !t.rating;
         return `<div class="pastrow">
-          <div class="pr-main"><div class="row"><b>${esc(fmtDT(t.pickupAt))}</b><span class="faint small">${esc(t.ref)}</span>${t.status === 'cancelled' ? pill(t) : ''}</div>
+          <div class="pr-main"><div class="row"><b>${esc(fmtDT(t.pickupAt))}</b><span class="faint small">${esc(t.ref)}</span>${t.status !== 'completed' ? pill(t) : ''}</div>
             <div class="small muted">${t.agent ? `${esc(t.passengerName || 'Client')} · ` : ''}${esc(t.pickup.split(',')[0])} → ${esc(to)}${t.commission ? ` · commission ${money(t.commission)}` : ''}</div>
             ${t.rating ? `<span class="stars sm">${stars(t.rating.stars)}</span>` : rate ? `<span class="row small"><span class="muted">Rate ${esc(t.driver.name.split(' ')[0])}:</span><span class="stars rate sm">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-act="rate" data-id="${t.id}" data-stars="${n}" aria-label="${n} star${n > 1 ? 's' : ''}">★</button>`).join('')}</span></span>` : ''}
             ${t.pay && t.status === 'cancelled' && cardLine(t, 'customer') ? `<div class="small muted">${cardLine(t, 'customer')}</div>` : ''}${t.noShow ? `<div class="small muted">No-show${t.noShow.fee ? `, fee ${money(t.noShow.fee)}` : ''}</div>` : ''}${t.cancelFee && !t.pay ? `<div class="small muted">Late cancellation fee ${money(t.cancelFee)}</div>` : ''}${againBtns}</div>
@@ -3454,14 +3461,16 @@
       let data;
       try { data = await api('driver.trips'); } catch (e) { if (!silent) showErr(v, e); return; }
       const { me, trips, week, stats } = data; const vehicles = data.vehicles || [];
-      const waiting = trips.filter((t) => t.status === 'assigned');
-      const live = trips.find((t) => ['en_route', 'arrived', 'on_board'].includes(t.status)) || trips.find((t) => t.status === 'accepted');
+      const waiting = trips.filter((t) => t.status === 'assigned' && stillUpcoming(t));
+      const live = trips.find((t) => ['en_route', 'arrived', 'on_board'].includes(t.status)) || trips.find((t) => t.status === 'accepted' && stillUpcoming(t));
       const soon = (t) => new Date(t.pickupAt).getTime() - Date.now() <= DRV_OPEN_MIN * 60000;
       const full = !!live && (live.status !== 'accepted' || soon(live) || opened.has(live.id));
       // Redraw when the trips change or when the next trip reaches 70 minutes.
       const sig = JSON.stringify(data) + '|' + full + '|' + allPast + '|' + drvTab;
       const H = (k) => drvTab === k ? '' : 'hidden'; if (sig === last) return; last = sig;
-      const upcoming = trips.filter((t) => t.status === 'accepted' && t !== live);
+      const upcoming = trips.filter((t) => t.status === 'accepted' && t !== live && stillUpcoming(t));
+      // Accepted rides whose pickup time passed long ago and were never finished.
+      const missed = trips.filter((t) => t.status === 'accepted' && !stillUpcoming(t)).reverse();
       const past = trips.filter((t) => t.status === 'completed').reverse();
       const done = allPast ? past : past.slice(0, 5);
       const flightLine = (t) => t.flightInfo ? `<div class="row small">${flightPill(t.flightInfo)}<span class="muted">${esc(t.flight)} ${t.flightInfo.kind === 'arrival' ? 'lands' : 'departs'} ${esc(fmtTime(t.flightInfo.estimated))}${t.flightInfo.terminal ? ` · Terminal ${esc(t.flightInfo.terminal)}` : ''}${t.flightInfo.claim ? ` · claim ${t.flightInfo.claim}` : ''}</span></div>` : '';
@@ -3521,6 +3530,7 @@
             </div>
             <p class="small faint">Pay is ${me.payType === 'hourly' ? `${money(me.payRate)} per hour` : me.payType === 'perTrip' ? `${money(me.payRate)} per trip` : `${me.payRate}% of the fare`}, plus all tips and tolls back.</p>
           </div>
+          ${missed.length ? `<div class="stack" ${H('completed')}><span class="label">Earlier trips not marked completed (${missed.length})</span>${missed.map((t) => `<div class="trip click" role="button" tabindex="0" data-open="${t.id}" title="Tap for details"><div class="spread"><b>${esc(fmtDT(t.pickupAt))}</b><span class="mono small faint">${esc(t.ref)} ›</span></div>${routeHtml(t)}</div>`).join('')}<p class="small faint" style="margin:0">If you drove one of these, tell the office so they can close it.</p></div>` : ''}
           ${done.length ? '' : `<div class="panel muted" ${H('completed')}>No completed trips yet.</div>`}
           ${done.length ? `<div class="stack" ${H('completed')}><div class="spread"><span class="label">${allPast ? `All past trips (${past.length})` : 'Recently completed'}</span>${past.length > 5 ? `<button class="btn sm" type="button" data-act="allpast">${allPast ? 'Show fewer' : `Show all ${past.length} past trips`}</button>` : ''}</div><div class="tablewrap"><table><tbody>${done.map((t) => `<tr><td class="mono small">${esc(fmtDT(t.pickupAt))}</td><td>${esc(t.passengerName)}${t.rating ? `<br><span class="stars small" title="${t.rating.stars} stars">${stars(t.rating.stars)}</span>` : ''}</td><td class="r num">${money(t.price.total)}</td></tr>`).join('')}</tbody></table></div></div>` : ''}
           ${live ? '' : `<div class="row" ${H('current')}><button class="btn sm" type="button" data-act="incident" data-id="">Report an incident</button></div>`}
@@ -4935,8 +4945,10 @@
         if (w === 'range') trips.sort((x, y) => x.pickupAt.localeCompare(y.pickupAt));
         const all = trips.length;
         const cancelledCount = trips.filter((t) => t.status === 'cancelled').length;
-        if (w === 'upcoming') trips = trips.filter((t) => open(t) || new Date(t.pickupAt) >= dayStart).sort((x, y) => x.pickupAt.localeCompare(y.pickupAt));
-        else if (w === 'past') trips = trips.filter((t) => !open(t) && new Date(t.pickupAt) < dayStart).sort((x, y) => y.pickupAt.localeCompare(x.pickupAt));
+        // Rides whose pickup time has passed but that nobody completed or cancelled: they are past rides, listed under Past.
+        const stale = trips.filter((t) => open(t) && !stillUpcoming(t)).length;
+        if (w === 'upcoming') trips = trips.filter(stillUpcoming).sort((x, y) => x.pickupAt.localeCompare(y.pickupAt));
+        else if (w === 'past') trips = trips.filter((t) => !stillUpcoming(t)).sort((x, y) => y.pickupAt.localeCompare(x.pickupAt));
         const more = trips.length - shown;
         // Reservation count for what is on screen (the chosen dates, filter or search).
         const cap = !inRange && all >= 300 && w !== 'upcoming' && trips.length >= 300 ? '+' : '';
@@ -4954,6 +4966,7 @@
             <td class="small" style="min-width:220px">${esc(t.pickup)}${t.dropoff ? `<br><span class="faint">→ ${esc(t.dropoff)}</span>` : ''}${t.flight ? `<br><span class="mono faint">✈ ${esc(t.flight)}</span>` : ''}</td><td class="small">${esc(t.vehicle ? t.vehicle.name : t.vehicleType)}</td>
             <td class="small">${t.driver ? esc(t.driver.name) : '<span class="warntext">Unassigned</span>'}</td><td>${pill(t)}</td><td class="r num">${money(t.price.total)}<br>${payPill(t)}</td><td>${canReturn(t) ? `<button class="btn sm nowrap" type="button" data-ret="${t.id}" title="Book the ride back for ${esc(t.passengerName)}">↩ Return</button>` : ''}<button class="btn sm nowrap" type="button" data-del="${t.id}" title="Delete ${esc(t.ref)}">Delete</button></td></tr>`).join('')}
           </tbody></table></div>${more > 0 ? `<div class="row" style="justify-content:center;margin-top:12px"><button class="btn" type="button" id="t-more">Show ${Math.min(more, 50)} more</button></div>` : ''}` : `<div class="panel muted">${w === 'completed' ? 'No completed trips.' : w === 'range' ? `No trips ${{ today: 'today', week: 'this week', month: 'this month' }[when]}.` : all && w !== 'all' ? `No ${w} trips. <button type="button" class="linkbtn" data-when="all">See all trips</button>` : 'No trips match.'}</div>`;
+        if (w === 'upcoming' && stale) $('#t-list', v).insertAdjacentHTML('afterbegin', `<div class="note warn" id="t-stale" style="margin-bottom:12px"><b>${stale}</b> earlier ride${stale === 1 ? ' is' : 's are'} not completed or cancelled. ${stale === 1 ? 'It is' : 'They are'} under <button class="linkbtn" type="button" data-when="past">Past</button>.</div>`);
         $$('tr[data-id]', v).forEach((r) => { r.onclick = () => tripModal(r.dataset.id, () => { last = ''; refresh(); }); });
         $$('[data-sel]', v).forEach((x) => { x.onclick = (e) => e.stopPropagation(); x.onchange = () => { const t = trips.find((y) => y.id === x.dataset.sel); if (x.checked) sel.set(t.id, t); else sel.delete(t.id); selBar(); }; });
         selBar();
