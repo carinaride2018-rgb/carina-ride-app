@@ -838,6 +838,11 @@
       for (const c of d.companies || []) if (c.rates && !c.rates.longSeeded && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
         c.rates.longSeeded = true; c.rates.longMiles = 75; c.rates.longPct = 150;
       }
+      // Carina Ride: changed to 25% more (Dawit 2026-11-13). Only where the 50% above is still in place, so a
+      // number the office typed in Settings since then is left alone.
+      for (const c of d.companies || []) if (c.rates && c.rates.longSeeded && !c.rates.longSeeded25 && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
+        c.rates.longSeeded25 = true; if (c.rates.longMiles === 75 && c.rates.longPct === 150) c.rates.longPct = 125;
+      }
       // Car seats (infant to 5) $20 each, booster seats (6 to 8) free (Dawit 2026-11-06).
       for (const c of d.companies) if (c.pricing && c.pricing.addons && !c.pricing.seats20 && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
         c.pricing.seats20 = true; c.pricing.addons.childSeat = 20; c.pricing.addons.boosterSeat = 0;
