@@ -645,8 +645,14 @@
       } else {
         // Other rides (airport ones too) price by base fare + miles.
         const baseF = rateBy(r, 'base', type), perMi = rateBy(r, 'perMile', type);
-        fare = Math.max(baseF + fareMiles * perMi, rateBy(r, 'minFare', type));
-        lines.push({ label: `${fareMiles} mi at $${money(perMi)}/mi + $${money(baseF)} base (${type})`, amount: round2(fare), kind: 'fare' });
+        // Long trips (Dawit 2026-11-13): the miles after rates.longMiles cost
+        // rates.longPct percent of the per-mile price. The first miles keep the
+        // full price, so a longer ride never costs less than a shorter one.
+        const longAfter = num(r.longMiles, 0), longPct = num(r.longPct, 100);
+        const isLong = longAfter > 0 && longPct >= 0 && longPct < 100 && fareMiles > longAfter;
+        const extraMi = isLong ? round2(fareMiles - longAfter) : 0, longMi = perMi * longPct / 100;
+        fare = Math.max(baseF + (isLong ? longAfter * perMi + extraMi * longMi : fareMiles * perMi), rateBy(r, 'minFare', type));
+        lines.push({ label: isLong ? `${fareMiles} mi: first ${longAfter} mi at $${money(perMi)}/mi, next ${extraMi} mi at $${money(longMi)}/mi + $${money(baseF)} base (${type})` : `${fareMiles} mi at $${money(perMi)}/mi + $${money(baseF)} base (${type})`, amount: round2(fare), kind: 'fare' });
       }
     }
     fare = round2(fare);
@@ -826,6 +832,10 @@
       // Carina Ride: a text to SkyWest's contact 1 hour before every SkyWest pickup (Dawit 2026-11-08).
       for (const c of d.companies || []) if (!c.watchSeeded && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
         c.watchSeeded = true; c.watchReminders = [{ name: 'skywest', phone: '2064030078', minutes: 60 }];
+      }
+      // Carina Ride: miles after the first 75 cost 50% of the per-mile price (Dawit 2026-11-13).
+      for (const c of d.companies || []) if (c.rates && !c.rates.longSeeded && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
+        c.rates.longSeeded = true; c.rates.longMiles = 75; c.rates.longPct = 50;
       }
       // Car seats (infant to 5) $20 each, booster seats (6 to 8) free (Dawit 2026-11-06).
       for (const c of d.companies) if (c.pricing && c.pricing.addons && !c.pricing.seats20 && (/^carina[- ]ride/.test(String(c.slug || '')) || /^carina ride\b/i.test(String(c.name || '').trim()))) {
@@ -6486,6 +6496,9 @@
       const pos = (k, max) => { if (k in r) { const n = num(r[k], NaN); if (!(n >= 0 && n <= max)) fail(`Check the value for ${k}.`); c.rates[k] = round2(n); } };
       pos('base', 1000); pos('perMile', 100); pos('minFare', 5000); pos('hourly', 2000); pos('minHours', 24);
       pos('gratuityPct', 50); pos('taxPct', 30); pos('waitPerMin', 20);
+      // Long-trip price: blank means off (0 miles) and the full price (100%).
+      if ('longMiles' in r) { const n = String(r.longMiles == null ? '' : r.longMiles).trim() === '' ? 0 : num(r.longMiles, NaN); if (!(n >= 0 && n <= 3000)) fail('Check the miles where the long-trip price starts.'); c.rates.longMiles = round2(n); }
+      if ('longPct' in r) { const n = String(r.longPct == null ? '' : r.longPct).trim() === '' ? 100 : num(r.longPct, NaN); if (!(n >= 0 && n <= 100)) fail('The long-trip price must be between 0 and 100 percent of the per-mile price.'); c.rates.longPct = round2(n); }
       if (r.multipliers) for (const t of VEHICLE_TYPES) if (t in r.multipliers) {
         const n = num(r.multipliers[t], NaN); if (!(n > 0 && n <= 10)) fail(`Check the multiplier for ${t}.`); c.rates.multipliers[t] = round2(n);
       }

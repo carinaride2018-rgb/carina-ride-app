@@ -6289,6 +6289,9 @@
               <label class="field" style="margin:0"><span>Change</span><select id="rs-hadj-k"><option value="all">All rates</option><option value="base">Base fares</option><option value="perMile">Per mile rates</option><option value="minFare">Minimum fares</option><option value="hourly">Hourly rates</option></select></label>
               <label class="field" style="margin:0"><span>for every vehicle by</span><div class="row" style="gap:6px;flex-wrap:nowrap"><input id="rs-hadj-n" type="number" step="1" value="10" style="width:90px"><select id="rs-hadj-u"><option value="pct">%</option><option value="usd">$</option></select></div></label>
               <button class="btn" type="button" id="rs-hadj-up">Raise</button><button class="btn" type="button" id="rs-hadj-down">Lower</button><span class="small muted">Then press Save rates and brand.</span></div>` : ''}
+            <h3 style="margin-top:6px">Long trips</h3><p class="small muted">A lower price per mile for the far part of a long ride. Example: after 75 miles, each mile costs 50% of that vehicle's per-mile price. The first miles keep the full price. Set the miles to 0 to turn it off.</p>
+            <div class="grid3"><label class="field"><span>Lower price starts after (miles)</span><input id="rs-longMiles" name="longMiles" type="number" min="0" max="3000" step="1" value="${r.longMiles > 0 ? r.longMiles : 0}" ${ro}></label>
+              <label class="field"><span>Price per mile after that (% of normal)</span><input id="rs-longPct" name="longPct" type="number" min="0" max="100" step="1" value="${r.longPct >= 0 && r.longPct <= 100 ? r.longPct : 100}" ${ro}></label></div>
             <h3 style="margin-top:6px">Suitcases per vehicle</h3><p class="small muted">Customers see this when they choose a vehicle, and can't book more suitcases than fit.</p>
             <div class="grid3">${(s.typeOrder || C.VEHICLE_TYPES).map((t) => `<label class="field"><span>${t}</span><input data-bags="${t}" type="number" min="0" max="40" step="1" value="${s.company.bags[t]}" ${ro}></label>`).join('')}</div>
           </div>
@@ -6458,7 +6461,7 @@
         e.preventDefault();
         const f = formData(e.target);
         const rates = {};
-        for (const k of ['minHours', 'gratuityPct', 'taxPct', 'waitPerMin']) rates[k] = f[k];
+        for (const k of ['minHours', 'gratuityPct', 'taxPct', 'waitPerMin', 'longMiles', 'longPct']) rates[k] = f[k];
         rates.bags = {}; $$('[data-bags]', v).forEach((i) => { rates.bags[i.dataset.bags] = i.value; });
         rates.flatRates = readFlats();
         for (const k of ['base', 'perMile', 'minFare', 'hourly']) rates[k + 'By'] = {};
