@@ -517,7 +517,8 @@
   const smsConsent = (id, name, opts = {}) => `<label class="check smsok"><input type="checkbox" id="${id}" name="smsOk"${opts.checked ? ' checked' : ''}> <span>${smsConsentText(name, opts.agent)}</span></label>`;
   const termsLink = () => (DEMO ? '<span class="faint">Terms (on your live site)</span>' : '<a href="terms.html" target="_blank" rel="noopener">Terms &amp; Conditions</a>');
   const footLinks = () => `<p class="small footlinks"><a href="#account">My account</a> · ${privacyLink()}</p>`;
-  // iPhone app: Apple doesn't allow buying the software itself in the app.
+  // iPhone app: Apple doesn't allow buying the software itself in the app, so the
+  // text packs and the membership screen show no price, card form or Pay button there.
   const IOS_APP = !!(window.LiveryNative && window.LiveryNative.platform === 'ios');
 
   // ---- Payment lock: only the master login, after entering the payment PIN ---
@@ -593,14 +594,14 @@
       : i.charge && i.charge.status === 'pending' ? '<span class="pill s-assigned">Charging card</span>'
       : i.charge && i.charge.status === 'failed' ? `<span class="pill s-cancelled">Card declined</span><div class="small faint">${esc(i.charge.error)}</div>` : '<span class="pill unpaid">Due</span>';
     el.innerHTML = `<div class="spread"><h2>LimoRelay membership</h2>${lockNowBtn('mb-lock')}</div>
-      <dl class="kv"><dt>Plan</dt><dd>${esc(mb.planLabel)}, ${price}${mb.priceLockedUntil ? `<div class="small faint">Price locked until ${esc(fmtYMD(mb.priceLockedUntil))}</div>` : ''}</dd>
+      <dl class="kv"><dt>Plan</dt><dd>${esc(mb.planLabel)}${IOS_APP ? '' : `, ${price}`}${mb.priceLockedUntil && !IOS_APP ? `<div class="small faint">Price locked until ${esc(fmtYMD(mb.priceLockedUntil))}</div>` : ''}</dd>
         <dt>Status</dt><dd>${mb.inTrial ? `Free trial until ${esc(fmtYMD(mb.trialEnds))}` : open.length ? `<b>${open.length} invoice${open.length === 1 ? '' : 's'} due</b>` : 'Paid up'}</dd>
         <dt>Card</dt><dd id="mb-card">${mb.card ? `${esc(mb.card.brand)} ending ${esc(mb.card.last4)}${mb.card.exp ? ` · exp ${esc(mb.card.exp)}` : ''}` : '<span class="faint">No card yet</span>'}</dd></dl>
-      <p class="small muted">${mb.card ? 'Each invoice is charged to this card automatically.' : `Add a card and each invoice is paid automatically.${mb.inTrial ? ' Nothing is charged until your free trial ends.' : ''}`}</p>
-      ${mb.cardsOn ? `<div class="row"><button class="btn ${mb.card ? '' : 'brand'}" type="button" id="mb-addcard">${mb.card ? 'Change card' : 'Add a card'}</button></div>` : '<p class="small faint">Online card payment for memberships isn\'t switched on yet. We\'ll email your invoices.</p>'}
+      <p class="small muted" id="mb-note">${IOS_APP ? 'Membership billing is not available in the iPhone app.' : mb.card ? 'Each invoice is charged to this card automatically.' : `Add a card and each invoice is paid automatically.${mb.inTrial ? ' Nothing is charged until your free trial ends.' : ''}`}</p>
+      ${IOS_APP ? '' : mb.cardsOn ? `<div class="row"><button class="btn ${mb.card ? '' : 'brand'}" type="button" id="mb-addcard">${mb.card ? 'Change card' : 'Add a card'}</button></div>` : '<p class="small faint">Online card payment for memberships isn\'t switched on yet. We\'ll email your invoices.</p>'}
       ${mb.invoices.length ? `<div class="tablewrap"><table><thead><tr><th>Invoice</th><th>For</th><th class="r">Amount</th><th>Status</th><th></th></tr></thead><tbody>
         ${mb.invoices.map((i) => `<tr><td class="mono small">${esc(i.number)}</td><td class="small">${i.items.map((x) => esc(x.label)).join('<br>')}</td><td class="r num">${money(i.total)}</td><td>${invStatus(i)}</td>
-          <td>${i.status === 'open' && mb.cardsOn && !(i.charge && i.charge.status === 'pending') ? `<button class="btn sm brand" type="button" data-payinv="${i.id}">Pay ${money(i.total)}</button>` : ''}</td></tr>`).join('')}
+          <td>${i.status === 'open' && mb.cardsOn && !IOS_APP && !(i.charge && i.charge.status === 'pending') ? `<button class="btn sm brand" type="button" data-payinv="${i.id}">Pay ${money(i.total)}</button>` : ''}</td></tr>`).join('')}
         </tbody></table></div>` : ''}`;
     $('#mb-lock', el).onclick = async () => { try { await api('company.lockPayments'); } catch (e) { /* already locked */ } drawMembership(el); };
     const stripe = mb.payMode === 'stripe';
