@@ -3032,6 +3032,8 @@
       const email = str(a.email, 120).toLowerCase();
       const name = str(a.name, 80);
       if (!name) fail('Enter your name.');
+      if (name.split(/\s+/).length < 2) fail('Enter the passenger name, first and last.');
+      if (str(a.phone, 40).replace(/\D/g, '').length < 10) fail('Enter the passenger mobile number with the area code.');
       if (!emailOk(email)) fail('Enter your email so we can send your confirmation.');
       let u = db.users.find((x) => x.email === email && x.companyId === c.id && x.role === 'customer');
       if (u && u.active === false) fail('This email belongs to a closed account. Use another email.');

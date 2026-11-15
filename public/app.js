@@ -2065,10 +2065,10 @@
           <div class="hint" id="bk-bags-hint"></div>
           ${agent ? `<div class="agentbox stack" style="gap:10px"><div class="spread"><b>Your client</b>${clients.length ? `<select class="input" id="bk-client" style="width:auto;min-height:34px" aria-label="Saved clients"><option value="">Saved clients…</option>${clients.map((c, i) => `<option value="${i}">${esc(c.name)}${c.trips ? ` (${c.trips} ride${c.trips === 1 ? '' : 's'})` : ''}</option>`).join('')}</select>` : ''}</div>` : ''}
           <div class="grid2">
-            <label class="field"><span>${agent ? "Client's name" : 'Passenger name'}</span><input id="bk-name" name="passengerName" value="${esc(state.passengerName)}" ${dispatch || agent ? 'required' : ''}>${dispatch || agent ? '' : '<span class="hint">Booking for someone else? Put their name and mobile.</span>'}</label>
-            <label class="field"><span>${agent ? "Client's mobile" : 'Passenger mobile'}</span><input id="bk-phone" name="passengerPhone" type="tel" value="${esc(state.passengerPhone)}"><span class="hint">The chauffeur texts this number.</span></label>
+            <label class="field"><span>${agent ? "Client's first and last name" : 'Passenger first and last name'}</span><input id="bk-name" name="passengerName" autocomplete="name" value="${esc(state.passengerName)}" required>${dispatch || agent ? '' : '<span class="hint">Booking for someone else? Put their name and mobile.</span>'}</label>
+            <label class="field"><span>${agent ? "Client's mobile" : 'Passenger mobile'}</span><input id="bk-phone" name="passengerPhone" type="tel" value="${esc(state.passengerPhone)}" required><span class="hint">The chauffeur texts this number.</span></label>
           </div>
-          ${opts.guest ? `<label class="field"><span>Your email</span><input id="bk-gemail" type="email" autocomplete="email" value="${esc(state.guestEmail || '')}"><span class="hint">Your confirmation goes here. No account needed. <button class="linkbtn" type="button" id="bk-signin">Have an account? Sign in</button></span></label>` : ''}
+          ${opts.guest ? `<label class="field"><span>Your email</span><input id="bk-gemail" type="email" autocomplete="email" required value="${esc(state.guestEmail || '')}"><span class="hint">Your confirmation goes here. No account needed. <button class="linkbtn" type="button" id="bk-signin">Have an account? Sign in</button></span></label>` : ''}
           ${opts.guest && !biz ? `<div class="field" id="bk-gbizf"><span>This ride is</span><div class="modesw" role="radiogroup" aria-label="Personal or business ride"><button type="button" role="radio" data-gbiz="personal" aria-checked="${state.gbiz !== 'business'}">Personal</button><button type="button" role="radio" data-gbiz="business" aria-checked="${state.gbiz === 'business'}">Business<span class="modesw-co">Travelling for work</span></button><span class="modesw-knob" aria-hidden="true"></span></div>
             <div id="bk-gbiz" class="stack gbiz" style="gap:10px"${state.gbiz === 'business' ? '' : ' hidden'}>
               ${opts.info.bizPct ? `<p class="gbiz-offer"><b>${esc(String(opts.info.bizPct))}% off</b> every ride for business travelers.</p>` : ''}
@@ -2079,11 +2079,11 @@
               <p class="small muted" style="margin:0">Today's ride is paid by card. We'll also ask ${esc((opts.info.company && opts.info.company.name) || 'us')} to open a company account for you, so later rides can go on a monthly invoice.</p>
             </div></div>` : ''}
           <label class="check smsok"><input type="checkbox" id="bk-sms" ${state.smsOk ? 'checked' : ''}> <span>${dispatch ? 'The passenger agreed to get ride texts at this number. Untick if they did not; they then get emails only.' : smsConsentText(opts.info.company && opts.info.company.name, agent)}</span></label>
-          ${agent ? `<label class="field"><span>Client's email <span class="faint">(optional)</span></span><input id="bk-email" name="passengerEmail" type="email" value="${esc(state.passengerEmail)}"><span class="hint">Your client gets the confirmation and chauffeur details. You get a copy by email.</span></label>
+          ${agent ? `<label class="field"><span>Client's email</span><input id="bk-email" name="passengerEmail" type="email" value="${esc(state.passengerEmail)}" required><span class="hint">Your client gets the confirmation and chauffeur details. You get a copy by email.</span></label>
             <div class="field"><span>Who pays</span><div class="stack" role="radiogroup" style="gap:6px">
               <label class="check"><input type="radio" name="payBy" value="agent" id="bk-payby-agent" ${state.payBy !== 'passenger' ? 'checked' : ''}><span>My card on file</span></label>
               <label class="check"><input type="radio" name="payBy" value="passenger" id="bk-payby-passenger" ${state.payBy === 'passenger' ? 'checked' : ''}><span>My client: text them a link to add their card</span></label></div></div></div>` : ''}
-          ${dispatch ? `<label class="field"><span>Passenger email</span><input id="bk-email" name="passengerEmail" type="email" value="${esc(state.passengerEmail)}"><span class="hint">Links the trip to a customer account and applies their account discount. Leave blank for a one-off.</span></label>` : ''}
+          ${dispatch ? `<label class="field"><span>Passenger email</span><input id="bk-email" name="passengerEmail" type="email" value="${esc(state.passengerEmail)}"><span class="hint">The confirmation goes here. It also links the trip to a customer account and applies their account discount.</span></label>` : ''}
           ${biz ? `<div class="field" id="bk-bizf"><span>This ride is</span><div class="modesw" role="radiogroup" aria-label="Personal or business ride"><button type="button" role="radio" data-bkmode="personal" aria-checked="${!state.accountId}">Personal</button><button type="button" role="radio" data-bkmode="business" aria-checked="${!!state.accountId}">Business${biz.account ? `<span class="modesw-co">${esc(biz.account.name)}</span>` : ''}</button><span class="modesw-knob" aria-hidden="true"></span></div><div id="bk-biznote" class="small muted"></div></div>` : ''}
           ${accts.length ? `<div class="grid3">
             <label class="field" ${biz ? 'hidden' : ''}><span>Bill to</span><select id="bk-acct" name="accountId"><option value="">${dispatch ? 'Passenger pays' : "I'll pay myself"}</option>${accts.map((a) => `<option value="${a.id}" ${state.accountId === a.id ? 'selected' : ''}>${esc(a.name)} (monthly invoice)</option>`).join('')}</select></label>
@@ -2488,11 +2488,22 @@
       setTimeout(() => { try { els[0].focus({ preventScroll: true }); } catch (x) { /* ignore */ } }, 350);
     };
     form.addEventListener('submit', (e) => e.preventDefault());
+    // Every booking needs a first and last name, a mobile and an email (Dawit 2026-11-15).
+    // The office can leave them out only on a ride billed to a company account.
+    const contactMiss = () => {
+      if (dispatch && state.accountId) return '';
+      const nm = String(($('#bk-name', host) || {}).value || '').trim().split(/\s+/).filter((w) => /[A-Za-z\u00C0-\u024F]/.test(w));
+      if (nm.length < 2) return 'Enter the passenger name, first and last.';
+      if (String(($('#bk-phone', host) || {}).value || '').replace(/\D/g, '').length < 10) return 'Enter the passenger mobile number with the area code.';
+      const em = $('#bk-gemail', host) || $('#bk-email', host);
+      if (em && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em.value.trim())) return em.id === 'bk-gemail' ? 'Enter your email so we can send your confirmation.' : 'Enter the passenger email for the confirmation.';
+      return '';
+    };
     $('#bk-submit', host).onclick = (e) => busy(e.currentTarget, async () => {
       sync(); $('#bk-err', host).innerHTML = '';
       const b = booking(), tc = $('#bk-terms', host);
       if (tc) b.agreeTerms = tc.checked;
-      try { await opts.onSubmit(b); } catch (err) { flagErr($('#bk-err', host), err); }
+      try { const cm = contactMiss(); if (cm) throw new Error(cm); await opts.onSubmit(b); } catch (err) { flagErr($('#bk-err', host), err); }
     });
     const si = $('#bk-signin', host); if (si && opts.onSignin) si.onclick = () => opts.onSignin(booking());
     // Two steps: check the quote first, then open the rest of the form.
@@ -2543,7 +2554,7 @@
       $('#bk-tonext', host).onclick = () => {
         sync(); const err = $('#bk-err', host); err.innerHTML = '';
         const ge = $('#bk-gemail', host);
-        const miss = C.isAirport(state.pickup) && !String(state.flight || '').trim() ? 'Pickups at the airport need the flight number, for example AS 331, so we can follow the landing.' : state.service !== 'hourly' && C.isAirport(state.dropoff) && !C.isAirport(state.pickup) && !String(state.flight || '').trim() ? 'Rides to the airport need your departing flight number, for example AS 330.' : state.retOn && state.service !== 'hourly' && C.isAirport(state.dropoff) && !String(state.retFlight || '').trim() ? 'Round trip: the return picks up at the airport, so we need the return flight number.' : !String(state.passengerName || '').trim() ? 'Enter the passenger name.' : !String(state.passengerPhone || '').trim() ? 'Enter the passenger mobile number.' : ge && !ge.value.trim() ? 'Enter your email so we can send your confirmation.' : '';
+        const miss = C.isAirport(state.pickup) && !String(state.flight || '').trim() ? 'Pickups at the airport need the flight number, for example AS 331, so we can follow the landing.' : state.service !== 'hourly' && C.isAirport(state.dropoff) && !C.isAirport(state.pickup) && !String(state.flight || '').trim() ? 'Rides to the airport need your departing flight number, for example AS 330.' : state.retOn && state.service !== 'hourly' && C.isAirport(state.dropoff) && !String(state.retFlight || '').trim() ? 'Round trip: the return picks up at the airport, so we need the return flight number.' : contactMiss();
         if (miss) { flagErr(err, new Error(miss)); return; }
         const aside = $('#bk-aside', host);
         aside.style.scrollMarginTop = '90px'; aside.scrollIntoView({ block: 'start', behavior: 'smooth' });
