@@ -1333,6 +1333,29 @@
     }
     const trackUrl = (t) => `${linkBase(coOf(t))}#track.${t.trackToken}`;
 
+    // Special requests: the things a chauffeur must prepare or do for this ride.
+    // The driver has to confirm them; a change asks for a new confirmation (Dawit 2026-11-16).
+    function specialOf(t) {
+      const p = t.prefs || {};
+      return [
+        t.childSeats ? `${t.childSeats} car seat${t.childSeats > 1 ? 's' : ''} (infant to 5)` : '',
+        t.boosterSeats ? `${t.boosterSeats} booster seat${t.boosterSeats > 1 ? 's' : ''} (6 to 8)` : '',
+        t.meetGreet ? `Meet and greet inside, name sign "${t.signName || t.passengerName || 'passenger'}"` : '',
+        p.temp && TEMPS[p.temp] ? `${TEMPS[p.temp]} cabin` : '', p.music && MUSIC[p.music] ? MUSIC[p.music] : '', p.quiet ? 'Quiet ride' : '',
+        str(t.notes, 2000) ? `Note: ${str(t.notes, 2000)}` : '',
+      ].filter(Boolean);
+    }
+    function specialView(t) {
+      const items = specialOf(t), a = t.specialAck;
+      const ok = !!(a && t.driverId && a.driverId === t.driverId && a.key === JSON.stringify(items));
+      return { items, pending: !!(items.length && t.driverId && !ok), ackAt: ok ? a.at : null, ackBy: ok ? a.by : null, changed: !!(items.length && a && !ok && a.driverId === t.driverId) };
+    }
+    function specialConfirm(t, u) {
+      const items = specialOf(t);
+      if (!items.length) return;
+      t.specialAck = { key: JSON.stringify(items), driverId: u.id, by: u.name, at: now().toISOString() };
+      log(t, 'special_ok', u.name, items.join('; ').slice(0, 300));
+    }
     function tripView(t) {
       const d = t.driverId && findUser(t.driverId);
       const v = t.vehicleId && findVehicle(t.vehicleId);
@@ -1345,6 +1368,7 @@
         account: t.accountId ? (() => { const a = db.accounts.find((x) => x.id === t.accountId); const inv = t.invoiceId && db.clientInvoices.find((x) => x.id === t.invoiceId); return a ? { id: a.id, name: a.name, invoice: inv ? { id: inv.id, number: inv.number, status: inv.status, sentAt: inv.sentAt || null, sentTo: inv.sentTo || '' } : null } : null; })() : null,
         statusLabel: t.noShow ? 'No-show' : STATUS_LABELS[t.status],
         serviceLabel: SERVICES[t.service],
+        special: specialView(t),
         wait: waitInfo(t),
         commission: t.agent ? commissionOf(t) : 0,
         cancelTerms: ['confirmed', 'assigned', 'accepted'].includes(t.status) ? cancelTerms(t) : null,
@@ -2703,6 +2727,7 @@
           if (t.driverId !== u.id) continue;
           if (t.status === 'assigned' && t.offer) add(`offer:${t.id}:${t.offer.sentAt}`, `New trip ${t.ref}`, `${at(t)} from ${t.pickup}. Accept within ${Math.max(0, Math.ceil((new Date(t.offer.expiresAt).getTime() - n) / 60e3))} min.`, '#driver', t.offer.sentAt);
           else if (t.status === 'assigned' && recent(lastOf(t, 'assigned') && lastOf(t, 'assigned').at)) add(`assigned:${t.id}`, `New trip ${t.ref}`, `${at(t)} from ${t.pickup}. Open the app to accept.`, '#driver');
+          { const sp = specialView(t); if (sp.pending && ['accepted', 'en_route'].includes(t.status) && new Date(t.pickupAt).getTime() > n - 3600e3) add(`special:${t.id}:${sp.items.join('|').length}:${sp.items.length}`, `Confirm special requests: ${t.ref}`, `${sp.items.join('; ').slice(0, 140)}. Open the app and confirm.`, '#driver'); }
           if (t.noShowNo && t.status === 'arrived' && recent(t.noShowNo.at, 2)) add(`noshowno:${t.id}:${t.noShowNo.at}`, `Keep waiting: ${t.ref}`, `Dispatch says keep waiting for ${t.passengerName || 'the passenger'}.${t.noShowNo.note ? ' ' + t.noShowNo.note : ''}`, '#driver', t.noShowNo.at);
           if (t.noShow && recent(t.noShow.at, 2) && t.noShow.by !== u.name) add(`noshowok:${t.id}`, `No-show confirmed: ${t.ref}`, 'Dispatch closed the trip as a no-show. You can leave.', '#driver', t.noShow.at);
           const mv = lastOf(t, 'pickup_moved');
@@ -2737,6 +2762,7 @@
           if (t.wake && t.wake.alerted && !t.wake.ok && ['assigned', 'accepted'].includes(t.status) && recent(t.wake.alerted, 2)) { const dw = findUser(t.driverId); add(`wake:${t.id}`, `No answer to wake-up call: ${t.ref}`, `${dw ? dw.name : 'The driver'} didn't answer the wake-up call. Pickup ${at(t)} from ${t.pickup}.`, '#dispatch', t.wake.alerted); }
           if (la && ['assigned', 'accepted'].includes(t.status) && recent(la.at, 2)) { const dd = findUser(t.driverId); add(`late:${t.id}:${la.min}`, `Driver not on the way: ${t.ref}`, `${dd ? dd.name : 'The driver'} hasn't tapped On the way. Pickup ${at(t)} from ${t.pickup}.`, '#dispatch', la.at); }
           if (t.status === 'confirmed' && t.needsDriver && !t.farmout && recent(t.needsDriver.at)) add(`need:${t.id}:${t.needsDriver.at}`, t.needsDriver.urgent ? `URGENT: ${t.ref} needs a company` : `${t.ref} needs a driver`, `${t.needsDriver.why}. Pickup ${at(t)}.`, '#dispatch', t.needsDriver.at);
+          { const sp = specialView(t), ms = new Date(t.pickupAt).getTime() - n; if (sp.pending && ['accepted', 'en_route'].includes(t.status) && ms > -3600e3 && ms < 24 * 3600e3) { const dd = findUser(t.driverId); add(`special:${t.id}:${t.driverId}:${sp.items.join('|').length}`, `Special requests not confirmed: ${t.ref}`, `${dd ? dd.name : 'The driver'} has not confirmed: ${sp.items.join('; ').slice(0, 140)}. Pickup ${at(t)}.`, '#dispatch'); } }
           const cx = lastOf(t, 'cancelled');
           if (t.noShowAsk && t.status === 'arrived') add(`noshowask:${t.id}:${t.noShowAsk.at}`, `No-show to confirm: ${t.ref}`, `${t.noShowAsk.by} waited ${t.noShowAsk.waitedMin} min for ${t.passengerName || 'the passenger'}. Confirm the no-show or say keep waiting.`, '#dispatch', t.noShowAsk.at);
           if (t.noShow && recent(t.noShow.at, 3) && t.noShow.by !== u.name) add(`noshow:${t.id}`, `No-show on ${t.ref}`, `${t.passengerName || 'Passenger'}. ${t.noShow.waitedMin ? `Driver waited ${t.noShow.waitedMin} min.` : ''}${t.noShow.fee ? ` Fee $${money(t.noShow.fee)}.` : ''}`.trim(), '#dispatch', t.noShow.at);
@@ -3354,8 +3380,16 @@
       const t = db.trips.find((x) => x.id === a.id && x.driverId === ctx.user.id);
       if (!t) fail('Trip not found.', 404);
       if (t.status !== 'assigned') fail('This trip is not waiting for your answer.');
-      if (a.accept) { t.status = 'accepted'; t.offer = null; t.needsDriver = null; log(t, 'accepted', ctx.user.name); notify(t, 'accepted'); }
+      if (a.accept && specialOf(t).length && !a.ackSpecial) fail('Tick the box to confirm the special requests, then tap Accept.');
+      if (a.accept) { specialConfirm(t, ctx.user); t.status = 'accepted'; t.offer = null; t.needsDriver = null; log(t, 'accepted', ctx.user.name); notify(t, 'accepted'); }
       else { log(t, 'declined', ctx.user.name, str(a.reason, 200)); passOn(t, ctx.user, `${ctx.user.name} declined`); }
+      return tripView(t);
+    });
+    def('driver.ackSpecial', ['driver'], true, (ctx, a) => {
+      const t = db.trips.find((x) => x.id === a.id && x.driverId === ctx.user.id);
+      if (!t) fail('Trip not found.', 404);
+      if (!specialOf(t).length) fail('This ride has no special requests.');
+      specialConfirm(t, ctx.user);
       return tripView(t);
     });
     def('driver.advance', ['driver'], true, (ctx, a) => {
@@ -3363,6 +3397,8 @@
       if (!t) fail('Trip not found.', 404);
       const next = DRIVER_FLOW[t.status];
       if (!next) fail('This trip has no next step.');
+      // The driver confirms the special requests before setting off.
+      if (next === 'en_route' && specialView(t).pending) { if (a.ackSpecial) specialConfirm(t, ctx.user); else fail('Confirm the special requests for this ride before you start.'); }
       t.status = next; log(t, next, ctx.user.name); delete t.noShowAsk;
       if (next === 'en_route') startTracking(t);
       notify(t, next);
@@ -3639,7 +3675,7 @@
       const affBefore = t.farmout && t.farmout.outside && !t.farmout.done ? affKey() : null;
       // The office can change any ride, past ones included (Dawit 2026-11-08).
       const closed = ['completed', 'cancelled'].includes(t.status);
-      const before = t.pickupAt;
+      const before = t.pickupAt, spBefore = JSON.stringify(specialOf(t));
       if (t.invoiceId && ['priceOverride', 'adjustment', 'waitMin', 'tolls', 'milesOverride', 'accountId'].some((k) => k in p)) fail('This trip is on an invoice. Void the invoice first to change the price or account. Other details can change.');
       const beforeAcct = t.accountId || null;
       // Force save: the office changes a ride at the last minute and skips the
@@ -3675,10 +3711,17 @@
       log(t, 'edited', ctx.user.name, closed ? 'Edited after the ride closed' : '');
       // A driver already on this ride hears about changes to the time, places or passenger.
       const drv = !closed && new Date(t.pickupAt).getTime() > now().getTime() - 3600e3 && t.driverId && ['assigned', 'accepted', 'en_route', 'arrived', 'on_board'].includes(t.status) && findUser(t.driverId);
+      const spNow = specialOf(t), spChanged = JSON.stringify(spNow) !== spBefore && spNow.length > 0;
+      if (drv && spChanged && drvKey() === drvBefore && (drv.phone || drv.email)) {
+        const c = ctx.company;
+        db.messages.unshift({ id: id('msg'), companyId: c.id, tripId: t.id, ref: t.ref, at: now().toISOString(), recipient: drv.phone || drv.email, channel: drv.phone ? 'sms' : 'email', kind: 'driver_changed',
+          body: `${c.name}: special requests changed on trip ${t.ref}, pickup ${fmtLocal(t.pickupAt, c, true)}: ${spNow.join('; ').slice(0, 300)}. Open the driver app and confirm them.` });
+        log(t, 'driver_told', ctx.user.name, `Special requests texted to ${drv.name}`);
+      }
       if (drv && drvKey() !== drvBefore && (drv.phone || drv.email)) {
         const c = ctx.company;
         db.messages.unshift({ id: id('msg'), companyId: c.id, tripId: t.id, ref: t.ref, at: now().toISOString(), recipient: drv.phone || drv.email, channel: drv.phone ? 'sms' : 'email', kind: 'driver_changed',
-          body: `${c.name}: trip ${t.ref} was changed by the office. Pickup ${fmtLocal(t.pickupAt, c, true)} at ${t.pickup}${t.service === 'hourly' ? '' : `, to ${t.dropoff}`}. Passenger ${t.passengerName || '-'}${t.passengerPhone ? ` ${t.passengerPhone}` : ''}. Open the driver app for details.` });
+          body: `${c.name}: trip ${t.ref} was changed by the office. Pickup ${fmtLocal(t.pickupAt, c, true)} at ${t.pickup}${t.service === 'hourly' ? '' : `, to ${t.dropoff}`}. Passenger ${t.passengerName || '-'}${t.passengerPhone ? ` ${t.passengerPhone}` : ''}.${spChanged ? ` Special requests changed: ${spNow.join('; ').slice(0, 200)}. Confirm them in the driver app.` : ' Open the driver app for details.'}` });
         log(t, 'driver_told', ctx.user.name, `Change texted to ${drv.name}`);
       }
       if (affBefore && affKey() !== affBefore) affChanged(t, ctx.user.name);

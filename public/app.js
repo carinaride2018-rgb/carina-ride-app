@@ -250,7 +250,7 @@
 
   // ---- UI primitives --------------------------------------------------------
   let toastTimer = null;
-  const HIST_LABELS = { driver_told: 'Driver texted the change', wake_call: 'Wake-up call', wake_ok: 'Driver confirmed awake', wake_alert: 'Office alerted: no answer to wake-up call', late_alert: 'Office alerted: driver not on the way', confirm_resent: 'Confirmation sent again', receipt_sent: 'Receipt emailed', paid: 'Charged', refunded: 'Refunded', card_failed: 'Card declined', card_saved: 'Card saved', card_link: 'Card link sent', no_show: 'No-show', no_show_asked: 'Driver reported a no-show', no_show_declined: 'Dispatch: keep waiting', pickup_moved: 'Pickup moved', flight_cancelled: 'Flight cancelled', declined: 'Declined', edited: 'Edited', unassigned: 'Unassigned', no_answer: 'No answer in time', farm_offered: 'Offered to partner', farm_accepted: 'Partner accepted', farm_declined: 'Partner declined', farm_cancelled: 'Taken back from partner', farm_returned: 'Partner handed it back', farm_expired: 'Partner offer expired', farm_completed: 'Partner completed', auto_farm_none: 'Automatic farm-out stopped', posted: 'Posted to trip board', post_expired: 'Trip board: nobody took it', post_cancelled: 'Taken off the trip board' };
+  const HIST_LABELS = { special_ok: 'Driver confirmed the special requests', driver_told: 'Driver texted the change', wake_call: 'Wake-up call', wake_ok: 'Driver confirmed awake', wake_alert: 'Office alerted: no answer to wake-up call', late_alert: 'Office alerted: driver not on the way', confirm_resent: 'Confirmation sent again', receipt_sent: 'Receipt emailed', paid: 'Charged', refunded: 'Refunded', card_failed: 'Card declined', card_saved: 'Card saved', card_link: 'Card link sent', no_show: 'No-show', no_show_asked: 'Driver reported a no-show', no_show_declined: 'Dispatch: keep waiting', pickup_moved: 'Pickup moved', flight_cancelled: 'Flight cancelled', declined: 'Declined', edited: 'Edited', unassigned: 'Unassigned', no_answer: 'No answer in time', farm_offered: 'Offered to partner', farm_accepted: 'Partner accepted', farm_declined: 'Partner declined', farm_cancelled: 'Taken back from partner', farm_returned: 'Partner handed it back', farm_expired: 'Partner offer expired', farm_completed: 'Partner completed', auto_farm_none: 'Automatic farm-out stopped', posted: 'Posted to trip board', post_expired: 'Trip board: nobody took it', post_cancelled: 'Taken off the trip board' };
   function toast(text, bad, ms) {
     let el = $('.toast');
     if (!el) { el = document.createElement('div'); el.className = 'toast'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
@@ -3406,6 +3406,17 @@
     unsupported: 'This phone can’t share location. The passenger sees an estimated position.',
   };
 
+  // Special requests box for the driver. mode 'tick' adds a box to tick (accepting, starting);
+  // mode 'card' adds a Confirm button while the requests are not confirmed yet.
+  function specialBox(t, mode) {
+    const sp = t && t.special;
+    if (!sp || !sp.items.length) return '';
+    const list = `<ul>${sp.items.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`;
+    const tail = mode === 'tick' ? `<label class="check"><input type="checkbox" data-spck="${t.id}"> <span>I read these requests and I will do them.</span></label>`
+      : sp.pending ? `<button class="btn primary" type="button" data-act="ackspecial" data-id="${t.id}">Confirm special requests</button>`
+      : `<span class="small spok">✓ You confirmed these ${esc(fmtDT(sp.ackAt))}.</span>`;
+    return `<div class="spbox ${sp.pending || mode === 'tick' ? 'need' : ''}"><b>Special requests${sp.changed ? ' (changed by the office)' : ''}</b>${list}${tail}</div>`;
+  }
   // Full details of one of the driver's rides, opened by tapping it (Dawit 2026-11-08).
   function driverTripModal(t) {
     if (!t) return;
@@ -3423,10 +3434,12 @@
         ${extrasList(t).length ? `<dt>Requests</dt><dd>${esc(extrasList(t).join(' · '))}</dd>` : ''}
         ${t.notes ? `<dt>Notes</dt><dd>${esc(t.notes)}</dd>` : ''}
         ${t.status === 'completed' ? '' : `<dt>Fare</dt><dd>${fare}</dd>`}</dl>
+      ${t.special && t.special.items.length ? `<div class="spbox ${t.special.pending ? 'need' : ''}"><b>Special requests${t.special.changed ? ' (changed by the office)' : ''}</b><ul>${t.special.items.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>${t.special.pending ? '<button class="btn primary" type="button" id="dt-ack">Confirm special requests</button>' : t.special.ackAt ? `<span class="small spok">✓ You confirmed these ${esc(fmtDT(t.special.ackAt))}.</span>` : ''}</div>` : ''}
       <div class="grid2"><a class="btn" href="${esc(mapsLink(t.pickup))}" target="_blank" rel="noopener">Map to pickup</a>${t.dropoff ? `<a class="btn" href="${esc(mapsLink(t.dropoff))}" target="_blank" rel="noopener">Map to drop-off</a>` : ''}</div>
       ${['accepted', 'assigned'].includes(t.status) ? '<button class="btn" type="button" id="dtm-sign">Show name sign</button>' : ''}
     </div>` });
     const sg = $('#dtm-sign', m); if (sg) sg.onclick = () => nameSign(t);
+    const ak = $('#dt-ack', m); if (ak) ak.onclick = () => busy(ak, async () => { try { await api('driver.ackSpecial', { id: t.id }); closeModal(); toast('Special requests confirmed. The office can see it.'); render(); } catch (err) { toast(err.message, true); } });
   }
 
   // The driver's own rides on a month or week calendar, in a full-width sheet.
@@ -3451,7 +3464,7 @@
     const v = shell({ narrow: true });
     let last = '';
     const opened = new Set();
-    let allPast = false, drvTab = 'current';
+    let allPast = false, drvTab = 'current', drvTrips = [];
     const savePhoto = async (photo) => { const u = await api('driver.setPhoto', { photo }); last = ''; refresh(true); return u; };
     function myPhoto(me) {
       const m = openModal({ title: 'My photo', body: '<div id="mp"></div>' });
@@ -3463,16 +3476,20 @@
     function confirmStart(b) {
       const m = openModal({
         title: 'Start this trip?',
-        body: `<p>Press <b>Yes, I'm on the way</b> only when you are leaving for the pickup now. Dispatch and the passenger are told right away, and your location is shared until the trip is done.</p>`,
+        body: `<p>Press <b>Yes, I'm on the way</b> only when you are leaving for the pickup now. Dispatch and the passenger are told right away, and your location is shared until the trip is done.</p>${(() => { const t = drvTrips.find((x) => x.id === b.dataset.id); return t && t.special && t.special.pending ? specialBox(t, 'tick') + '<p class="error" id="cs-err" hidden>Tick the box to confirm the special requests first.</p>' : ''; })()}`,
         footer: `<button class="btn" type="button" data-close>Not yet</button><button class="btn primary" type="button" id="cs-yes">Yes, I'm on the way</button>`,
       });
       $('[data-close]', m).onclick = closeModal;
-      $('#cs-yes', m).onclick = () => { closeModal(); b.dataset.sure = '1'; b.click(); delete b.dataset.sure; };
+      $('#cs-yes', m).onclick = () => {
+        const ck = $('[data-spck]', m);
+        if (ck && !ck.checked) { $('#cs-err', m).hidden = false; return; }
+        closeModal(); b.dataset.sure = '1'; if (ck) b.dataset.sp = '1'; b.click(); delete b.dataset.sure; delete b.dataset.sp;
+      };
     }
     async function refresh(silent) {
       let data;
       try { data = await api('driver.trips'); } catch (e) { if (!silent) showErr(v, e); return; }
-      const { me, trips, week, stats } = data; const vehicles = data.vehicles || [];
+      const { me, trips, week, stats } = data; const vehicles = data.vehicles || []; drvTrips = trips;
       const waiting = trips.filter((t) => t.status === 'assigned' && stillUpcoming(t));
       const live = trips.find((t) => ['en_route', 'arrived', 'on_board'].includes(t.status)) || trips.find((t) => t.status === 'accepted' && stillUpcoming(t));
       const soon = (t) => new Date(t.pickupAt).getTime() - Date.now() <= DRV_OPEN_MIN * 60000;
@@ -3496,12 +3513,13 @@
           ${waiting.length ? `<div class="stack"><span class="label">Needs your answer</span>${waiting.map((t) => `
             <div class="trip"><div class="spread"><b>${esc(fmtDT(t.pickupAt))}</b><span class="mono small faint">${esc(t.ref)}</span></div>
               ${routeHtml(t)}${flightLine(t)}<p class="small muted">${esc(t.serviceLabel)} · ${esc(t.vehicle ? t.vehicle.name : t.vehicleType)} · ${t.passengers} pax${extrasList(t).length ? ' · ' + esc(extrasList(t).join(' · ')) : ''}</p>
+              ${specialBox(t, 'tick')}
               ${t.offer ? `<p class="small offertag">Accept within ${minsLeft(t.offer.expiresAt)} min or it goes to another driver.</p>` : ''}
               <div class="grid2"><button class="btn primary" type="button" data-act="accept" data-id="${t.id}">Accept</button><button class="btn" type="button" data-act="decline" data-id="${t.id}">Decline</button></div></div>`).join('')}</div>` : ''}
           ${live && !full ? `<div class="stack" ${H('current')}><span class="label">Next trip</span>
             <div class="trip">
               <div class="spread"><b style="font-size:18px">${esc(fmtTime(live.pickupAt))} <span class="muted" style="font-weight:500;font-size:14px">${esc(fmtDate(live.pickupAt))}</span></b>${pill(live)}</div>
-              ${routeHtml(live)}${flightLine(live)}
+              ${routeHtml(live)}${flightLine(live)}${specialBox(live, 'card')}
               <p class="small muted" style="margin:4px 0 8px">Full details open by themselves ${DRV_OPEN_MIN} minutes before pickup.</p>
               <button class="btn primary" type="button" data-act="openfull" data-id="${live.id}">Open trip details</button>
             </div></div>` : ''}
@@ -3518,6 +3536,7 @@
                 ${extrasList(live).length ? `<dt>Requests</dt><dd>${esc(extrasList(live).join(' · '))}</dd>` : ''}
                 ${live.notes ? `<dt>Notes</dt><dd>${esc(live.notes)}</dd>` : ''}
                 ${live.farmIn ? `<dt>Fare</dt><dd>Billed to ${esc(live.farmIn.fromName)}. Don't collect payment.</dd>` : live.pay ? `<dt>Fare</dt><dd><span class="num">${money(live.price.total)}</span> · paid by card. Don't take payment.</dd>` : `<dt>Fare</dt><dd><span class="num">${money(live.price.total)}</span> · the office handles payment. Don't take payment.</dd>`}</dl>
+              ${specialBox(live, 'card')}
               <button class="btn primary drv-next" type="button" data-act="advance" data-st="${live.status}" data-id="${live.id}">${esc(NEXT_LABEL[live.status])}</button>
               <div class="grid2 drv-btns"><a class="btn" href="${esc(mapsLink(live.status === 'on_board' && live.dropoff ? live.dropoff : live.pickup))}" target="_blank" rel="noopener">Navigate to ${live.status === 'on_board' && live.dropoff ? 'drop-off' : 'pickup'}</a>
               ${['accepted', 'en_route', 'arrived'].includes(live.status) ? `<button class="btn" type="button" data-act="sign" data-id="${live.id}">Show name sign</button>` : `<button class="btn" type="button" data-act="incident" data-id="${live.id}">Report an incident</button>`}</div>
@@ -3533,7 +3552,7 @@
           ${vehicles.length ? `<label class="field" ${H('current')}><span>My vehicle</span><select id="drv-veh"><option value="">No usual vehicle</option>${vehicles.map((x) => `<option value="${esc(x.id)}" ${me.vehicleId === x.id ? 'selected' : ''}>${esc(x.name)}${x.plate ? ' · ' + esc(x.plate) : ''} (${esc(x.type)})</option>`).join('')}</select><span class="hint">The car you usually drive. New trips use it when the type fits.</span></label>` : ''}
           <div class="row" ${H('current')}><button class="btn" type="button" data-act="calendar">My calendar</button>${me.photo ? `<button class="btn" type="button" data-act="photo">My photo</button>` : ''}</div>
           ${upcoming.length ? '' : `<div class="panel muted" ${H('upcoming')}>No upcoming trips.</div>`}
-          ${upcoming.length ? `<div class="stack" ${H('upcoming')}><span class="label">Coming up</span>${upcoming.map((t) => `<div class="trip click" role="button" tabindex="0" data-open="${t.id}" title="Tap for details"><div class="spread"><b>${esc(fmtDT(t.pickupAt))}</b><span class="mono small faint">${esc(t.ref)} ›</span></div>${routeHtml(t)}${flightLine(t)}<p class="small muted" style="margin:4px 0 0">${esc(t.passengerName || '')} · ${t.passengers} pax · ${esc(t.vehicle ? t.vehicle.name : t.vehicleType)} · <span class="linkbtn">Details</span></p></div>`).join('')}</div>` : ''}
+          ${upcoming.length ? `<div class="stack" ${H('upcoming')}><span class="label">Coming up</span>${upcoming.map((t) => `<div class="trip click" role="button" tabindex="0" data-open="${t.id}" title="Tap for details"><div class="spread"><b>${esc(fmtDT(t.pickupAt))}</b><span class="mono small faint">${esc(t.ref)} ›</span></div>${routeHtml(t)}${flightLine(t)}<p class="small muted" style="margin:4px 0 0">${esc(t.passengerName || '')} · ${t.passengers} pax · ${esc(t.vehicle ? t.vehicle.name : t.vehicleType)} · <span class="linkbtn">Details</span></p>${t.special && t.special.pending ? '<p class="small sptag">Special requests to confirm. Tap to open.</p>' : ''}</div>`).join('')}</div>` : ''}
           <div class="stack" ${H('completed')}><span class="label">This week</span>
             <div class="tiles three">
               <div class="tile"><span class="label">Pay so far</span><b>${money(week.total)}</b><span class="small faint">${week.trips} trips · ${money(week.tips)} tips</span></div>
@@ -3560,9 +3579,14 @@
         : b.dataset.act === 'calendar' ? driverCalendar() : b.dataset.act === 'photo' ? myPhoto(me) : b.dataset.act === 'sign' ? nameSign(trips.find((x) => x.id === b.dataset.id)) : b.dataset.act === 'incident' ? incidentModal({ trip: (() => { const t = trips.find((x) => x.id === b.dataset.id); return t ? { id: t.id, ref: t.ref, pickupAt: t.pickupAt, passengerName: t.passengerName } : null; })() }, { done: () => {} }) : b.dataset.act === 'noshow' ? noShowModal(trips.find((x) => x.id === b.dataset.id), 'driver.noShow', () => { last = ''; refresh(); }) : busy(b, async () => {
         const id = b.dataset.id;
         try {
-          if (b.dataset.act === 'accept') { await api('driver.respond', { id, accept: true }); toast('Trip accepted. The passenger has been told.'); }
+          if (b.dataset.act === 'accept') {
+            const ck = $(`[data-spck="${id}"]`, v);
+            if (ck && !ck.checked) { ck.closest('.spbox').scrollIntoView({ block: 'center', behavior: 'smooth' }); throw new Error('Tick the box to confirm the special requests, then tap Accept.'); }
+            await api('driver.respond', { id, accept: true, ackSpecial: !!ck }); toast('Trip accepted. The passenger has been told.');
+          }
+          if (b.dataset.act === 'ackspecial') { await api('driver.ackSpecial', { id }); toast('Special requests confirmed. The office can see it.'); }
           if (b.dataset.act === 'decline') { await api('driver.respond', { id, accept: false }); toast('Declined. Dispatch will reassign it.'); }
-          if (b.dataset.act === 'advance') { const t = await api('driver.advance', { id }); toast(t.statusLabel + '.'); }
+          if (b.dataset.act === 'advance') { const t = await api('driver.advance', { id, ackSpecial: b.dataset.sp === '1' }); toast(t.statusLabel + '.'); }
           if (b.dataset.act === 'wake') { await api('driver.wakeOk', { id }); toast('Thanks. Have a safe drive.'); }
           last = ''; refresh();
         } catch (err) { toast(err.message, true); }
@@ -4304,6 +4328,7 @@
               <div class="row"><button class="btn sm danger" type="button" id="te-nsyes">Confirm no-show</button><button class="btn sm" type="button" id="te-nsno">Keep waiting</button></div></div>` : ''}
             ${!t.farmout || t.farmout.done ? `<div class="sidebox"><div class="spread"><span class="label">Status</span>${pill(t)}</div>
               ${t.status === 'assigned' && t.offer && t.driver ? `<p class="small offertag">Waiting for ${esc(t.driver.name)} to accept · ${minsLeft(t.offer.expiresAt)} min left</p>` : ''}
+              ${t.special && t.special.items.length ? `<div class="spbox ${t.special.pending ? 'need' : ''}"><b>Special requests</b><ul>${t.special.items.map((x) => `<li>${esc(x)}</li>`).join('')}</ul><span class="small ${t.special.ackAt ? 'spok' : ''}">${t.special.ackAt ? `✓ Confirmed by ${esc(t.special.ackBy || 'the driver')}, ${esc(fmtDT(t.special.ackAt))}` : t.driver ? `Not confirmed by ${esc(t.driver.name)} yet${t.special.changed ? ' after the change' : ''}.` : 'No driver yet. The driver must confirm these.'}</span></div>` : ''}
               ${t.status === 'confirmed' && t.needsDriver ? `<p class="small needtag">Needs a driver: ${esc(t.needsDriver.why)}</p>` : ''}
               ${canSuggest ? '<div id="te-suggest" class="suggest"><p class="small faint">Finding the best drivers…</p></div>' : ''}
               <label class="field"><span>Driver</span><select id="te-driver" ${noAssign ? 'disabled' : ''}><option value="">Unassigned</option>${drivers.filter((d) => d.active).map((d) => `<option value="${d.id}" ${t.driverId === d.id ? 'selected' : ''}>${esc(d.name)}${d.available ? '' : ' (off duty)'}</option>`).join('')}</select></label>
