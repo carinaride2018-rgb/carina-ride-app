@@ -4060,8 +4060,8 @@
           // Past rides from another system: a ride that is already here is skipped, not doubled.
           if (a.completed) {
             const ext = str(r.extRef, 40), nm = str(b.passengerName, 80).toLowerCase().replace(/\s+/g, ' ');
-            const dup = db.trips.find((x) => x.companyId === c.id && x.status !== 'cancelled' && ((ext && x.extRef === ext) || (x.pickupAt === b.pickupAt && String(x.passengerName || '').toLowerCase().replace(/\s+/g, ' ') === nm)))
-              || plans.find((pl) => (ext && pl.b._extRef === ext) || (pl.b.pickupAt === b.pickupAt && str(pl.b.passengerName, 80).toLowerCase().replace(/\s+/g, ' ') === nm));
+            const dup = db.trips.find((x) => x.companyId === c.id && x.status !== 'cancelled' && ((ext && x.extRef === ext) || ((!ext || !x.extRef) && x.pickupAt === b.pickupAt && String(x.passengerName || '').toLowerCase().replace(/\s+/g, ' ') === nm)))
+              || plans.find((pl) => (ext && pl.b._extRef === ext) || ((!ext || !pl.b._extRef) && pl.b.pickupAt === b.pickupAt && str(pl.b.passengerName, 80).toLowerCase().replace(/\s+/g, ' ') === nm));
             if (dup) { out.push({ row: i + 1, ok: true, skip: true, pickupAt: b.pickupAt, passengerName: b.passengerName, pickup: b.pickup, dropoff: b.dropoff, vehicleType: b.vehicleType, total: 0, note: `Already in LimoRelay${dup.ref ? ` as ${dup.ref}` : ' (same ride twice in this file)'}` }); return; }
             b._extRef = ext; b._pay = /card|credit|stripe/i.test(String(r.payment || '')) ? 'card' : 'cash';
           }
