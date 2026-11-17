@@ -2763,7 +2763,7 @@
     session = keep;
     // Signed-in office staff get back to their dashboard; everyone else to the booking page.
     const me = session && session.user, back = me && HOME[me.role] && me.role !== 'customer' ? { href: '#' + HOME[me.role], label: 'Back to dashboard' } : { href: '#book.' + slug, label: 'Back to booking page' };
-    v.innerHTML = `<div style="margin-bottom:12px"><a class="btn" id="ag-back" href="${back.href}">&larr; ${back.label}</a></div>
+    v.innerHTML = `
       <div class="brandhead">${info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : ''}<div class="stack" style="gap:6px"><h1>${esc(info.company.name)} for travel agents</h1><p>Book chauffeured rides for your clients and earn commission.</p></div></div>
       <div class="panel stack" style="max-width:600px">
         <ul class="small muted" style="margin:0;padding-left:18px"><li>Book for any client: they get the chauffeur's texts, you get a copy.</li><li>Charge your card on file, or text your client a link to pay with their own card.</li><li>Commission on every completed ride, shown month by month.</li><li>Your clients are saved, so the next booking takes seconds.</li></ul>
@@ -2773,7 +2773,8 @@
           <label class="field"><span>Password</span><input id="ag-pass" name="password" type="password" autocomplete="new-password"><span class="hint">At least 8 characters</span></label>
           <div id="ag-err"></div>
           <div class="row"><button class="btn brand" type="submit" id="ag-go">Create agent account</button><a class="linkbtn" href="#signin">I already have an account</a></div>
-        </form></div>`;
+        </form></div>
+      <div style="max-width:600px;margin-top:18px"><a class="btn backdash" id="ag-back" href="${back.href}">&larr; ${back.label}</a></div>`;
     $('#ag-form', v).onsubmit = async (e) => {
       e.preventDefault();
       const f = formData(e.target);
