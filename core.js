@@ -875,6 +875,7 @@
       d.pwTokens = d.pwTokens || [];
       d.clientInvoices = d.clientInvoices || [];
       d.quotes = d.quotes || [];
+      d.campaigns = d.campaigns || [];
       d.incidents = d.incidents || [];
       d.timeEntries = d.timeEntries || [];
       d.vehiclePhotos = d.vehiclePhotos || {};
@@ -2436,6 +2437,70 @@
       };
     }
 
+    // ---- Seasonal email marketing (Dawit 2026-11-17) -------------------------
+    // Email only. The owner reviews each campaign and presses Send; nothing goes
+    // out by itself. Every email ends with the company's address and an unsubscribe link.
+    const SEASONS = [
+      { key: 'newyear', name: "New Year's Eve", month: 12, day: 31, lead: 14, subject: "Your New Year's Eve ride, sorted", body: "Hi {first},\n\nNew Year's Eve is the busiest night of the year for rides. Book your chauffeur now and enjoy the night without thinking about parking or the drive home.\n\nYou see the price before you book, and your chauffeur waits for you when the night ends.\n\nHappy New Year from all of us at {company}." },
+      { key: 'valentine', name: "Valentine's Day", month: 2, day: 14, lead: 10, subject: "Make Valentine's Day easy", body: "Hi {first},\n\nPlanning a Valentine's dinner? Let us do the driving. A chauffeur picks you up at the door, takes you to dinner and brings you home.\n\nEvenings fill up fast around February 14, so book early.\n\n{company}" },
+      { key: 'springbreak', name: 'Spring break travel', month: 3, day: 15, lead: 21, subject: 'Spring break airport rides', body: "Hi {first},\n\nFlying for spring break? Book your airport ride now. We track your flight, so your chauffeur is there when you land, even if the plane is late.\n\nWe have room for the whole family and all the bags.\n\n{company}" },
+      { key: 'prom', name: 'Prom and graduation', month: 5, day: 15, lead: 30, subject: 'Prom and graduation rides', body: "Hi {first},\n\nProm and graduation season is close. A professional chauffeur gets the group there safely and brings everyone home.\n\nThe best dates go first. Ask us for a quote today.\n\n{company}" },
+      { key: 'wedding', name: 'Wedding season', month: 6, day: 1, lead: 45, subject: 'Wedding transportation, handled', body: "Hi {first},\n\nPlanning a wedding, or going to one? We move the couple, the family and the guests on time, with one plan for the whole day.\n\nSend us your date and we will prepare a quote.\n\n{company}" },
+      { key: 'summer', name: 'Summer travel', month: 6, day: 20, lead: 21, subject: 'Summer trips start with an easy ride', body: "Hi {first},\n\nSummer is here. Airport runs, day trips and nights out are easier with a chauffeur.\n\nBook online in a minute. You see the price first.\n\n{company}" },
+      { key: 'fall', name: 'Fall business travel', month: 9, day: 8, lead: 14, subject: 'Back to business travel', body: "Hi {first},\n\nBusiness travel picks up again in the fall. Book your airport and meeting rides ahead, and get a receipt for every trip.\n\nTravel often? Ask us about a company account with one invoice a month.\n\n{company}" },
+      { key: 'thanksgiving', name: 'Thanksgiving travel', month: 11, day: 0, lead: 14, subject: 'Thanksgiving travel: book your airport ride', body: "Hi {first},\n\nThanksgiving week is the busiest time of the year at the airport. Book your ride now and skip the stress.\n\nWe track your flight, and you see the price before you book.\n\nHappy Thanksgiving from {company}." },
+      { key: 'holiday', name: 'Holiday parties and Christmas', month: 12, day: 20, lead: 21, subject: 'Holiday rides for parties and family visits', body: "Hi {first},\n\nHoliday parties, family visits and airport runs: we drive, you enjoy the season.\n\nDecember evenings fill up early, so book your dates now.\n\nHappy holidays from {company}." },
+    ];
+    // The date of a season's event in a year (Thanksgiving: the fourth Thursday of November).
+    function seasonDate(sn, year) {
+      if (sn.key === 'thanksgiving') { const d = new Date(Date.UTC(year, 10, 1)); const off = (4 - d.getUTCDay() + 7) % 7; return new Date(Date.UTC(year, 10, 1 + off + 21)); }
+      return new Date(Date.UTC(year, sn.month - 1, sn.day));
+    }
+    function seasonNext(sn) {
+      const today = now().getTime() - 86400e3;
+      let ev = seasonDate(sn, now().getUTCFullYear());
+      if (ev.getTime() < today) ev = seasonDate(sn, now().getUTCFullYear() + 1);
+      return { eventDate: ev.toISOString().slice(0, 10), sendOn: new Date(ev.getTime() - sn.lead * 86400e3).toISOString().slice(0, 10) };
+    }
+    function mkAudience(c, filter) {
+      const cut = now().getTime() - 365 * 86400e3;
+      const recent = new Set(db.trips.filter((t) => t.companyId === c.id && t.customerId && t.status !== 'cancelled' && new Date(t.pickupAt).getTime() >= cut).map((t) => t.customerId));
+      const seen = new Set();
+      return db.users.filter((u) => {
+        if (u.companyId !== c.id || u.role !== 'customer' || u.agent || u.active === false || u.noMarketing) return false;
+        const e = String(u.email || '').toLowerCase();
+        if (!emailOk(e) || /\.demo$|@example\./.test(e) && !db.sample || seen.has(e)) return false;
+        if (filter === '12m' && !recent.has(u.id)) return false;
+        seen.add(e); return true;
+      });
+    }
+    const mkAddress = (c) => str(c.marketing && c.marketing.address, 200);
+    function mkBody(c, camp, u) {
+      if (!u.mkToken) u.mkToken = randomId(10);
+      const first = String(u.name || '').trim().split(/\s+/)[0] || 'there';
+      const text = String(camp.body || '').replace(/\{first\}/g, first).replace(/\{company\}/g, c.name).replace(/\{phone\}/g, c.phone || '');
+      const site = siteOf(c);
+      return `${text.trim()}\n\nBook now link: ${site}#book.${c.slug}\n\nSender address: ${c.name}, ${mkAddress(c)}\nUnsubscribe link: ${site}#unsub.${u.mkToken}`;
+    }
+    const campView = (x) => ({ id: x.id, seasonKey: x.seasonKey, name: x.name, subject: x.subject, body: x.body, audience: x.audience, status: x.status, total: x.total || 0, sent: x.sent || 0, left: (x.queue || []).length, createdAt: x.createdAt, sentAt: x.sentAt || null, by: x.by || '' });
+    // Sends a campaign a few emails at a time, so ride messages are never held up behind it.
+    function marketingTick() {
+      let changed = false;
+      for (const x of db.campaigns) {
+        if (x.status !== 'sending') continue;
+        const c = findCompany(x.companyId);
+        const batch = (x.queue || []).splice(0, 15); changed = true;
+        for (const uid of batch) {
+          const u = findUser(uid);
+          if (!c || !u || u.noMarketing || u.active === false || !emailOk(String(u.email || ''))) continue;
+          db.messages.unshift({ id: id('msg'), companyId: c.id, at: now().toISOString(), recipient: u.email, channel: 'email', kind: 'marketing', subject: x.subject, body: mkBody(c, x, u), campaignId: x.id });
+          x.sent = (x.sent || 0) + 1;
+        }
+        if (!(x.queue || []).length) { x.status = 'sent'; x.sentAt = now().toISOString(); }
+      }
+      return changed;
+    }
+
     // ---- Method table -------------------------------------------------------
     const M = {};
     // roles: 'public' | 'any' | array of roles. write: persist after success.
@@ -2755,6 +2820,11 @@
           if (q.customerId === u.id && q.status === 'sent' && recent(q.sentAt, 48)) add(`qsent:${q.id}:${q.sentAt}`, `Your quote ${q.number} is ready`, `$${money(quoteTotals(q).total)}. Tap to review and book.`, `#quote.${q.token}`, q.sentAt);
         }
       } else if (STAFF.includes(u.role)) {
+        if (u.role === 'admin') for (const sn of SEASONS) {
+          const nx = seasonNext(sn), today = now().toISOString().slice(0, 10), soon = new Date(now().getTime() + 7 * 86400e3).toISOString().slice(0, 10);
+          const done = db.campaigns.some((x) => x.companyId === c.id && x.seasonKey === sn.key && x.status !== 'draft' && n - new Date(x.sentAt || x.createdAt).getTime() < 120 * 86400e3);
+          if (!done && nx.sendOn <= soon && nx.eventDate >= today) add(`mk:${sn.key}:${nx.eventDate}`, `Time to send your ${sn.name} email`, 'Open Marketing in Dispatch to review it and send it to your customers.', '#dispatch', `${nx.sendOn < today ? today : nx.sendOn}T12:00:00.000Z`);
+        }
         for (const t of db.trips) {
           if (t.companyId !== c.id) continue;
           if (t.source === 'online' && !t.farmIn && !t.landingOf && recent(t.createdAt, 3) && t.status !== 'cancelled') add(`booked:${t.id}`, `New booking ${t.ref}`, `${t.passengerName || 'Passenger'}, ${at(t)}, ${t.vehicleType}. $${money(t.price.total)}.${(() => { const l = t.landingId && db.trips.find((x) => x.id === t.landingId); return l ? ` Plus a pickup when they land${l.outOfTown ? ` in ${l.outOfTown.city}` : ''} (${l.ref}${l.farmout ? `, sent to ${l.farmout.toName}` : l.outOfTown ? ', needs a local company' : ''}).` : ''; })()}`, '#dispatch', t.createdAt);
@@ -3356,6 +3426,69 @@
     });
 
     // Driver
+    def('marketing.overview', ['admin'], false, (ctx) => {
+      const c = ctx.company, mine = db.campaigns.filter((x) => x.companyId === c.id);
+      return {
+        address: mkAddress(c),
+        audience: { all: mkAudience(c, 'all').length, recent: mkAudience(c, '12m').length, unsubscribed: db.users.filter((u) => u.companyId === c.id && u.role === 'customer' && u.noMarketing).length },
+        seasons: SEASONS.map((sn) => { const last = mine.filter((x) => x.seasonKey === sn.key && x.status !== 'draft').sort((a, b) => String(b.sentAt || b.createdAt).localeCompare(String(a.sentAt || a.createdAt)))[0]; return { key: sn.key, name: sn.name, subject: sn.subject, body: sn.body, ...seasonNext(sn), lastSent: last ? (last.sentAt || last.createdAt) : null }; }).sort((a, b) => a.sendOn.localeCompare(b.sendOn)),
+        campaigns: mine.slice().sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).map(campView),
+      };
+    });
+    def('marketing.settings', ['admin'], true, (ctx, a) => {
+      const addr = str(a.address, 200);
+      if (addr.length < 10) fail('Enter your business mailing address: street, city, state and ZIP.');
+      ctx.company.marketing = { ...(ctx.company.marketing || {}), address: addr };
+      return { address: addr };
+    });
+    def('marketing.save', ['admin'], true, (ctx, a) => {
+      const subject = str(a.subject, 120).replace(/\s+/g, ' '), body = String(a.body == null ? '' : a.body).replace(/\r/g, '').trim().slice(0, 4000);
+      if (subject.length < 4) fail('Enter the email subject.');
+      if (body.length < 20) fail('Write the email text.');
+      const audience = a.audience === '12m' ? '12m' : 'all';
+      let x = a.id ? db.campaigns.find((k) => k.id === a.id && k.companyId === ctx.company.id) : null;
+      if (a.id && !x) fail('Campaign not found.', 404);
+      if (x && x.status !== 'draft') fail('This campaign was already sent. Start a new one.');
+      const sn = SEASONS.find((k) => k.key === a.seasonKey);
+      if (!x) { x = { id: id('camp'), companyId: ctx.company.id, seasonKey: sn ? sn.key : 'custom', name: sn ? sn.name : (str(a.name, 60) || 'Custom email'), status: 'draft', createdAt: now().toISOString(), by: ctx.user.name }; db.campaigns.push(x); }
+      Object.assign(x, { subject, body, audience });
+      return { ...campView(x), count: mkAudience(ctx.company, audience).length };
+    });
+    def('marketing.test', ['admin'], true, (ctx, a) => {
+      const x = db.campaigns.find((k) => k.id === a.id && k.companyId === ctx.company.id);
+      if (!x) fail('Campaign not found.', 404);
+      if (!mkAddress(ctx.company)) fail('Add your business mailing address first. The law requires it in every marketing email.');
+      if (!emailOk(String(ctx.user.email || ''))) fail('Your login has no email address.');
+      db.messages.unshift({ id: id('msg'), companyId: ctx.company.id, at: now().toISOString(), recipient: ctx.user.email, channel: 'email', kind: 'marketing', subject: `[Test] ${x.subject}`, body: mkBody(ctx.company, x, { name: ctx.user.name, mkToken: 'test' }), campaignId: x.id });
+      return { to: ctx.user.email };
+    });
+    def('marketing.send', ['admin'], true, (ctx, a) => {
+      const x = db.campaigns.find((k) => k.id === a.id && k.companyId === ctx.company.id);
+      if (!x) fail('Campaign not found.', 404);
+      if (x.status !== 'draft') fail('This campaign was already sent.');
+      if (!mkAddress(ctx.company)) fail('Add your business mailing address first. The law requires it in every marketing email.');
+      const list = mkAudience(ctx.company, x.audience);
+      if (!list.length) fail('No customers to send to. Customers need an email address and must not have unsubscribed.');
+      if (a.expect != null && Number(a.expect) !== list.length) fail(`The list changed: it is now ${list.length} customers. Check the number and press Send again.`);
+      Object.assign(x, { status: 'sending', queue: list.map((u) => u.id), total: list.length, sent: 0, approvedAt: now().toISOString(), by: ctx.user.name });
+      return campView(x);
+    });
+    def('marketing.remove', ['admin'], true, (ctx, a) => {
+      const x = db.campaigns.find((k) => k.id === a.id && k.companyId === ctx.company.id);
+      if (!x) fail('Campaign not found.', 404);
+      if (x.status === 'sending') { x.queue = []; x.status = 'sent'; x.stopped = true; x.sentAt = now().toISOString(); return campView(x); }
+      if (x.status !== 'draft') fail('A sent campaign stays in the list as a record.');
+      db.campaigns = db.campaigns.filter((k) => k !== x);
+      return { ok: true };
+    });
+    def('public.unsubscribe', 'public', true, (ctx, a) => {
+      const tok = str(a.token, 40);
+      const u = tok && tok !== 'test' && db.users.find((k) => k.mkToken === tok);
+      if (!u) { if (tok === 'test') return { company: '', test: true }; fail('This unsubscribe link is not valid.', 404); }
+      if (a.undo) delete u.noMarketing; else if (!u.noMarketing) u.noMarketing = now().toISOString();
+      const c = findCompany(u.companyId);
+      return { company: c ? c.name : '', slug: c ? c.slug : '', off: !!u.noMarketing };
+    });
     def('driver.trips', ['driver'], false, (ctx) => {
       if (monitorFlights(ctx.company)) ctx.dirty = true;
       const n = now();
@@ -8353,7 +8486,7 @@
           const t = m.tripId && m.channel === 'email' && db.trips.find((x) => x.id === m.tripId);
           const toPassenger = t && String(t.passengerEmail || '').toLowerCase() === String(m.recipient || '').toLowerCase();
           const body = toPassenger && c.slug && !/#terms\./.test(m.body) ? `${m.body}\n\nTerms and Conditions: ${base}#terms.${c.slug}` : m.body;
-          out.push({ id: m.id, channel: m.channel, recipient: m.recipient, body, ...(m.wakeKey ? { answerUrl: `${(opts.publicUrl || '').replace(/#.*$/, '')}twilio/wake?k=${m.wakeKey}` } : {}), kind: m.kind || '', ref: m.ref || '', replyTo: m.replyTo || '', company: { name: c.name || '', email: c.email || '', phone: c.phone || '', color: c.color || '', logoData: m.channel === 'email' ? c.logo || '' : '', bannerData: m.channel === 'email' ? c.banner || '' : '', logoUrl: c.logo && c.slug && base ? `${base}logo/${c.slug}.${(c.logo.match(/^data:image\/(\w+)/) || [])[1] || 'png'}?v=${fnv(c.logo).toString(36)}` : '', termsUrl: c.slug && base ? `${base}#terms.${c.slug}` : '' } });
+          out.push({ id: m.id, channel: m.channel, recipient: m.recipient, body, ...(m.wakeKey ? { answerUrl: `${(opts.publicUrl || '').replace(/#.*$/, '')}twilio/wake?k=${m.wakeKey}` } : {}), kind: m.kind || '', subject: m.subject || '', ref: m.ref || '', replyTo: m.replyTo || '', company: { name: c.name || '', email: c.email || '', phone: c.phone || '', color: c.color || '', logoData: m.channel === 'email' ? c.logo || '' : '', bannerData: m.channel === 'email' ? c.banner || '' : '', logoUrl: c.logo && c.slug && base ? `${base}logo/${c.slug}.${(c.logo.match(/^data:image\/(\w+)/) || [])[1] || 'png'}?v=${fnv(c.logo).toString(36)}` : '', termsUrl: c.slug && base ? `${base}#terms.${c.slug}` : '' } });
         }
         if (changed) save(db);
         return out;
@@ -8423,6 +8556,7 @@
         for (const c of db.companies) if (c.status === 'active' && sweepDispatch(c, true)) changed = true;
         if (billingTick()) changed = true;
         if (purgeDeleted()) changed = true;
+        if (marketingTick()) changed = true;
         if (changed) { syncFarmouts(); syncCredits(); meterTexts(); save(db); }
         return changed;
       },

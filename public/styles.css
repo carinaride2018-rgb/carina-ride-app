@@ -1063,3 +1063,7 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .pgbackwrap { margin-top: 22px; display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; }
 :has(> #book-host .booking.step1) > .pgbackwrap { grid-template-columns: minmax(0, 680px); }
 @media (max-width: 860px) { .pgbackwrap, :has(> #book-host .booking.step1) > .pgbackwrap { grid-template-columns: minmax(0, 1fr); } }
+
+/* Marketing tab */
+.mkgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.mkcard.due { border-color: #d9a400; background: #fffaf0; }

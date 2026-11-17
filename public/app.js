@@ -759,6 +759,16 @@
   function render2() {
     const route = location.hash.slice(1) || '';
     document.title = DEFAULT_TITLE;
+    if (route.startsWith('unsub.')) {
+      // "Unsubscribe" from a marketing email.
+      const tok = route.slice(6), v = shell({ narrow: true });
+      const show = (r) => {
+        v.innerHTML = `<div class="panel stack"><h2>${r.off ? 'You are unsubscribed' : 'You are subscribed again'}</h2><p class="muted">${r.test ? 'This is the test link. In a real email, this page unsubscribes the customer.' : r.off ? `${esc(r.company || 'We')} will not send you marketing emails any more. You still get emails about rides you book.` : `${esc(r.company || 'We')} can send you seasonal offers again.`}</p>${r.test ? '' : `<div><button class="btn" type="button" id="un-undo">${r.off ? 'I clicked by mistake: keep me subscribed' : 'Unsubscribe'}</button></div>`}</div>`;
+        const b = $('#un-undo', v); if (b) b.onclick = () => api('public.unsubscribe', { token: tok, undo: r.off }).then(show).catch((e) => toast(e.message, true));
+      };
+      api('public.unsubscribe', { token: tok }).then((r) => show(r.test ? { ...r, off: true } : r)).catch((e) => { v.innerHTML = `<div class="panel stack"><h2>Link not valid</h2><p class="muted">${esc(e.message)}</p></div>`; });
+      return;
+    }
     if (route.startsWith('return.')) {
       // "Book your return trip" from a confirmation email.
       api('public.returnInfo', { token: route.slice(7) }).then((r) => { returnPrefill = { slug: r.slug, data: r.prefill, from: r.from, booked: r.booked }; viewBook(r.slug); })
@@ -3692,7 +3702,7 @@
     const tabs = [
       { key: 'board', label: 'Board' }, { key: 'inbox', label: 'Inbox' }, { key: 'phone', label: 'Phone agent' }, { key: 'trips', label: 'Trips' }, { key: 'calendar', label: 'Calendar' }, { key: 'quotes', label: 'Quotes' }, { key: 'flights', label: 'Flights' },
       { key: 'drivers', label: 'Drivers' }, { key: 'fleet', label: 'Fleet' }, { key: 'incidents', label: 'Incidents' }, { key: 'customers', label: 'Customers' }, ...(P.reports ? [{ key: 'reports', label: 'Reports' }] : []),
-      { key: 'network', label: 'Network' }, { key: 'pricing', label: 'Pricing' }, { key: 'messages', label: 'Texts & emails' },
+      { key: 'network', label: 'Network' }, { key: 'pricing', label: 'Pricing' }, { key: 'messages', label: 'Texts & emails' }, ...(isAdmin ? [{ key: 'marketing', label: 'Marketing' }] : []),
       { key: 'settings', label: 'Rates & brand' }, ...(isAdmin ? [{ key: 'team', label: 'Team' }] : []),
     ];
     const tabKey = 'livery-dispatch-tab-' + session.user.id;
@@ -3706,7 +3716,7 @@
     const draw = () => {
       const v = shell({ tabs, active: tab, onTab: go2, wide: tab === 'board', search: openSearch });
       if (tab !== 'inbox') inboxBadge();
-      ({ board: drawBoard, inbox: drawInbox, phone: drawPhone, trips: drawTrips, calendar: drawCalendar, quotes: drawQuotes, flights: drawFlights, drivers: drawDrivers, fleet: drawFleet, incidents: drawIncidents, customers: drawCustomers, reports: drawReports, network: drawNetwork, pricing: drawPricing, messages: drawMessages, settings: drawSettings, team: drawTeam })[tab](v);
+      ({ board: drawBoard, inbox: drawInbox, phone: drawPhone, trips: drawTrips, calendar: drawCalendar, quotes: drawQuotes, flights: drawFlights, drivers: drawDrivers, fleet: drawFleet, incidents: drawIncidents, customers: drawCustomers, reports: drawReports, network: drawNetwork, pricing: drawPricing, messages: drawMessages, marketing: drawMarketing, settings: drawSettings, team: drawTeam })[tab](v);
     };
     // Quick search --------------------------------------------------------------
     // One box for trips (ref, passenger, phone, address, flight), customers,
@@ -5214,6 +5224,69 @@
     }
 
     // Flights ----------------------------------------------------------------
+    // Seasonal email marketing: ready-made emails for each season. The owner
+    // reviews, sends a test and presses Send; nothing goes out by itself.
+    function drawMarketing(v) {
+      const day = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+      const today = () => new Date().toISOString().slice(0, 10);
+      async function refresh() {
+        let d;
+        try { d = await api('marketing.overview'); } catch (e) { return showErr(v, e); }
+        const drafts = d.campaigns.filter((x) => x.status === 'draft'), done = d.campaigns.filter((x) => x.status !== 'draft');
+        const due = (sn) => sn.sendOn <= today();
+        v.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Marketing</h1>
+            <p class="muted">Ready-made emails for each season. You check the text, send a test to yourself, then send it to your customers. Nothing goes out until you press Send.</p></div>
+            <button class="btn primary" type="button" id="mk-new">Write my own email</button></div>
+          <div class="tiles" style="margin-bottom:16px">
+            <div class="tile"><span class="label">Customers with email</span><b>${d.audience.all}</b></div>
+            <div class="tile"><span class="label">Booked in the last 12 months</span><b>${d.audience.recent}</b></div>
+            <div class="tile"><span class="label">Unsubscribed</span><b>${d.audience.unsubscribed}</b></div>
+          </div>
+          <form class="panel stack" id="mk-addr" style="margin-bottom:16px;gap:8px">
+            <label class="field"><span>Business mailing address</span><input name="address" value="${esc(d.address)}" placeholder="Street, city, state and ZIP"><span class="hint">Shown at the bottom of every marketing email. US law requires it, together with the unsubscribe link we add for you.</span></label>
+            <div><button class="btn sm" type="submit">Save address</button></div></form>
+          ${drafts.length ? `<h2 style="margin:18px 0 8px">Drafts</h2><div class="stack">${drafts.map((x) => `<div class="panel spread"><div class="stack" style="gap:2px"><b>${esc(x.name)}</b><span class="small muted">${esc(x.subject)}</span></div><div class="row"><button class="btn sm primary" type="button" data-edit="${x.id}">Open</button><button class="btn sm" type="button" data-del="${x.id}">Delete</button></div></div>`).join('')}</div>` : ''}
+          <h2 style="margin:18px 0 8px">Seasons</h2>
+          <div class="mkgrid">${d.seasons.map((sn) => `<div class="panel stack mkcard${due(sn) ? ' due' : ''}" style="gap:6px">
+              <div class="spread"><b>${esc(sn.name)}</b>${due(sn) ? '<span class="pill unpaid">Send now</span>' : ''}</div>
+              <span class="small muted">Event: ${esc(day(sn.eventDate))}</span>
+              <span class="small muted">Best day to send: ${esc(day(sn.sendOn))}</span>
+              <span class="small faint">${sn.lastSent ? `Last sent ${esc(fmtDate(sn.lastSent))}` : 'Not sent yet'}</span>
+              <div><button class="btn sm" type="button" data-season="${sn.key}">Prepare email</button></div></div>`).join('')}</div>
+          <h2 style="margin:22px 0 8px">Sent</h2>
+          ${done.length ? `<div class="tablewrap"><table><thead><tr><th>Campaign</th><th>Subject</th><th>Sent</th><th>Emails</th><th></th></tr></thead><tbody>${done.map((x) => `<tr><td><b>${esc(x.name)}</b></td><td class="small">${esc(x.subject)}</td><td class="small">${x.status === 'sending' ? '<span class="pill unpaid">Sending</span>' : esc(fmtDT(x.sentAt || x.createdAt))}</td><td class="num">${x.sent} of ${x.total}</td><td>${x.status === 'sending' ? `<button class="btn sm" type="button" data-stop="${x.id}">Stop</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : '<div class="panel muted">No campaign sent yet.</div>'}`;
+        $('#mk-addr', v).onsubmit = async (e) => { e.preventDefault(); try { await api('marketing.settings', formData(e.target)); toast('Address saved.'); refresh(); } catch (err) { toast(err.message, true); } };
+        $('#mk-new', v).onclick = () => editor(d, { seasonKey: 'custom', name: 'Custom email', subject: '', body: `Hi {first},\n\n\n\n${session.company.name}`, audience: 'all' });
+        $$('[data-season]', v).forEach((b) => { b.onclick = () => { const sn = d.seasons.find((k) => k.key === b.dataset.season); editor(d, { seasonKey: sn.key, name: sn.name, subject: sn.subject, body: sn.body, audience: 'all' }); }; });
+        $$('[data-edit]', v).forEach((b) => { b.onclick = () => editor(d, d.campaigns.find((k) => k.id === b.dataset.edit)); });
+        $$('[data-del]', v).forEach((b) => { b.onclick = async () => { try { await api('marketing.remove', { id: b.dataset.del }); toast('Draft deleted.'); refresh(); } catch (err) { toast(err.message, true); } }; });
+        $$('[data-stop]', v).forEach((b) => { b.onclick = async () => { try { await api('marketing.remove', { id: b.dataset.stop }); toast('Stopped. No more emails go out for this campaign.'); refresh(); } catch (err) { toast(err.message, true); } }; });
+        if (done.some((x) => x.status === 'sending')) setTimeout(() => { if (document.body.contains(v) && $('#mk-addr', v)) refresh(); }, 15000);
+      }
+      function editor(d, c) {
+        let cid = c.id || null;
+        const count = (a) => (a === '12m' ? d.audience.recent : d.audience.all);
+        const m = openModal({ title: c.name, wide: true, body: `<form id="mk-form" class="stack" novalidate>
+            <label class="field"><span>Subject</span><input name="subject" maxlength="120" value="${esc(c.subject)}"></label>
+            <label class="field"><span>Email text</span><textarea name="body" rows="12">${esc(c.body)}</textarea><span class="hint">{first} becomes the customer's first name. {company} becomes your company name. A "Book a ride" button, your address and the unsubscribe link are added for you.</span></label>
+            <label class="field"><span>Send to</span><select name="audience"><option value="all" ${c.audience !== '12m' ? 'selected' : ''}>All customers with an email (${d.audience.all})</option><option value="12m" ${c.audience === '12m' ? 'selected' : ''}>Customers who booked in the last 12 months (${d.audience.recent})</option></select></label>
+            <div id="mk-err"></div></form>`,
+          footer: `<button class="btn" type="button" id="mk-save">Save draft</button><button class="btn" type="button" id="mk-test">Send a test to me</button><button class="btn primary" type="button" id="mk-send">Send to customers</button>` });
+        const save = async () => { const f = formData($('#mk-form', m)); const r = await api('marketing.save', { ...f, id: cid, seasonKey: c.seasonKey, name: c.name }); cid = r.id; return r; };
+        const run = (btn, fn) => busy(btn, async () => { $('#mk-err', m).innerHTML = ''; try { await fn(); } catch (err) { showErr($('#mk-err', m), err); } });
+        $('#mk-save', m).onclick = (e) => run(e.currentTarget, async () => { await save(); toast('Draft saved.'); closeModal(); refresh(); });
+        $('#mk-test', m).onclick = (e) => run(e.currentTarget, async () => { await save(); const r = await api('marketing.test', { id: cid }); toast(`Test sent to ${r.to}. Check your inbox.`); });
+        $('#mk-send', m).onclick = (e) => run(e.currentTarget, async () => {
+          const r = await save();
+          if (!r.count) throw new Error('No customers to send to.');
+          const box = $('#mk-err', m);
+          box.innerHTML = `<div class="note stack" style="gap:8px"><b>Send "${esc(r.subject)}" to ${r.count} customer${r.count === 1 ? '' : 's'}?</b><span class="small">This cannot be undone. Emails go out over the next few minutes.</span><div class="row"><button class="btn primary" type="button" id="mk-yes">Yes, send to ${r.count}</button><button class="btn" type="button" id="mk-no">Not yet</button></div></div>`;
+          $('#mk-no', box).onclick = () => { box.innerHTML = ''; };
+          $('#mk-yes', box).onclick = (ev) => busy(ev.currentTarget, async () => { try { await api('marketing.send', { id: cid, expect: r.count }); closeModal(); toast(`Sending to ${r.count} customers.`); refresh(); } catch (err) { showErr(box, err); } });
+        });
+      }
+      refresh();
+    }
     function drawFlights(v) {
       let last = '';
       async function refresh(silent, force) {

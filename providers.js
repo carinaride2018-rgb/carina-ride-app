@@ -73,6 +73,7 @@ function createProviders(rawEnv, opts) {
   const fromAddress = () => { const m = String(env.EMAIL_FROM).match(/<([^>]+)>/); return (m ? m[1] : String(env.EMAIL_FROM)).trim(); };
   const SUBJECTS = { chauffeur: 'Your chauffeur', en_route: 'Your chauffeur is on the way', approach: 'Your chauffeur is 10 minutes away', arrived: 'Your chauffeur has arrived', confirm: 'Ride confirmed', receipt: 'Your receipt', changed: 'Ride changed', office_new: 'New booking', office_changed: 'Booking changed', biz_request: 'Business account request', biz_reply: 'Business rides', net_post: 'New trip on the trip board', late_driver: 'Driver not on the way', noshow_ask: 'No-show to confirm',  reminder: 'Ride reminder', reminder24: 'Ride reminder', quote: 'Your quote', invoice: 'Your invoice', login: 'Your LimoRelay login', reset: 'Reset your password', test: 'LimoRelay test email', signup: 'LimoRelay sign-up', approved: 'Your LimoRelay account is approved', declined: 'Your LimoRelay sign-up', planinvoice: 'Your LimoRelay invoice', pay_warning: 'Final notice: payment needed for', pay_cancel: 'Reservation cancelled', office_pay_cancel: 'Ride cancelled, not paid', billing: 'Your LimoRelay membership' };
   function subjectOf(m) {
+    if (m.subject) return String(m.subject).replace(/\s+/g, ' ').slice(0, 150);
     if (SUBJECTS[m.kind]) return `${SUBJECTS[m.kind]}${m.ref ? ' ' + m.ref : ''}`;
     // One line only: a greeting ("Hi Tsion,") is skipped and line breaks become
     // spaces, since a subject with line breaks is refused by the email service.
@@ -510,6 +511,9 @@ function emailHtml(m, opt) {
   if (lines.length && co.name && lines[0].trim() === `${co.name}:`) lines = lines.slice(1);
   let terms = '';
   lines = lines.filter((l) => { const t = l.match(/^Terms and Conditions:\s*(\S+)\s*$/); if (t) { terms = t[1]; return false; } return true; });
+  // Marketing emails: "Book now link:" becomes a button, "Unsubscribe link:" a small line at the end.
+  let bookUrl = '', unsubUrl = '', sender = '';
+  lines = lines.filter((l) => { const t = l.match(/^Book now link:\s*(https?:\/\/\S+)\s*$/); if (t) { bookUrl = t[1]; return false; } const sa = l.match(/^Sender address:\s*(.+)$/); if (sa) { sender = sa[1].trim(); return false; } const u = l.match(/^Unsubscribe link:\s*(https?:\/\/\S+)\s*$/); if (u) { unsubUrl = u[1]; return false; } return true; });
   // "Return trip link:" becomes a button under the message.
   let retUrl = '';
   lines = lines.filter((l) => { const t = l.match(/^Return trip link:\s*(https?:\/\/\S+)\s*$/); if (t) { retUrl = t[1]; return false; } return true; });
@@ -551,9 +555,11 @@ ${banner ? `<tr><td style="padding:0;font-size:0;line-height:0">${banner}</td></
 ${title}
 <tr><td style="padding:0 24px 6px;word-break:break-word;overflow-wrap:anywhere">${html}</td></tr>
 ${payUrl ? `<tr><td style="padding:0 24px 18px"><table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;background:#d32f2f;border-radius:10px"><tr><td style="padding:18px 16px;text-align:center"><div style="font-size:17px;line-height:1.4;font-weight:800;color:#ffffff">${hesc(payText)}</div><a href="${hesc(payUrl)}" style="display:inline-block;margin-top:14px;padding:12px 28px;background:#ffffff;color:#d32f2f;border-radius:8px;font-size:16px;font-weight:800;text-decoration:none">Pay now</a><div style="margin-top:10px;font-size:12px;line-height:1.4;word-break:break-all"><a href="${hesc(payUrl)}" style="color:#ffffff">${hesc(payUrl)}</a></div></td></tr></table></td></tr>` : ''}
+${bookUrl ? `<tr><td style="padding:0 24px 22px;text-align:center"><a href="${hesc(bookUrl)}" style="display:inline-block;padding:13px 34px;background:${color};color:#ffffff;border-radius:8px;font-size:16px;font-weight:800;text-decoration:none">Book a ride</a></td></tr>` : ''}
 ${retUrl ? `<tr><td style="padding:0 24px 18px"><table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border:1px solid #e3e3e6;border-radius:10px"><tr><td style="padding:16px;text-align:center"><div style="font-size:16px;line-height:1.4;font-weight:700;color:#111111">Need a ride back?</div><div style="font-size:14px;line-height:1.4;color:#555555;margin-top:4px">Your details are already filled in. Just choose the date and time.</div><a href="${hesc(retUrl)}" style="display:inline-block;margin-top:12px;padding:12px 28px;background:${color};color:#ffffff;border-radius:8px;font-size:16px;font-weight:800;text-decoration:none">Book your return trip</a></td></tr></table></td></tr>` : ''}
 ${pdfNote}
 <tr><td style="background:#f7f7f8;border-top:1px solid #ececee;padding:18px 24px;text-align:center;font-size:13px;line-height:1.6;color:#333333">${co.name ? `<div style="font-weight:700;color:#111111">${hesc(co.name)}</div>` : ''}${contact ? `<div>${contact}</div>` : ''}${termsLink}</td></tr>
+${unsubUrl ? `<tr><td style="padding:12px 24px 16px;text-align:center;font-size:12px;line-height:1.5;color:#8a8d93;background:#f7f7f8">You get this email because you booked a ride with ${hesc(co.name || 'us')}.${sender ? `<br>${hesc(sender)}` : ''}<br><a href="${hesc(unsubUrl)}" style="color:#8a8d93">Unsubscribe</a></td></tr>` : ''}
 </table></td></tr></table></body></html>`;
 }
 const withTimeout = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(r, ms).unref())]);
