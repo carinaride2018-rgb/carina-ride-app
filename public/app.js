@@ -5077,7 +5077,7 @@
     }
 
     // Trip import: a CSV saved from Excel or Google Sheets, checked row by row before anything is saved.
-    const IMPORT_COLS = [['date', 'Date'], ['time', 'Time'], ['passengerName', 'Passenger'], ['passengerPhone', 'Phone'], ['passengerEmail', 'Email'], ['pickup', 'Pickup'], ['dropoff', 'Drop-off'], ['vehicleType', 'Vehicle type'], ['passengers', 'Passengers'], ['service', 'Service'], ['hours', 'Hours'], ['flight', 'Flight'], ['account', 'Company account'], ['poNumber', 'PO number'], ['price', 'Price'], ['notes', 'Notes']];
+    const IMPORT_COLS = [['date', 'Date'], ['time', 'Time'], ['passengerName', 'Passenger'], ['passengerPhone', 'Phone'], ['passengerEmail', 'Email'], ['pickup', 'Pickup'], ['dropoff', 'Drop-off'], ['vehicleType', 'Vehicle type'], ['passengers', 'Passengers'], ['service', 'Service'], ['hours', 'Hours'], ['flight', 'Flight'], ['account', 'Company account'], ['poNumber', 'PO number'], ['price', 'Price'], ['notes', 'Notes'], ['driver', 'Driver'], ['payment', 'Payment'], ['extRef', 'Old reference']];
     function parseCsv(text) {
       const rows = []; let row = [], cell = '', q = false;
       for (let i = 0; i < text.length; i++) {
@@ -5190,7 +5190,9 @@
         body: `<div class="stack"><p class="small muted">Choose an Excel (.xlsx) or CSV file with one trip per row and a header row. Your own column names are fine: we match Date, Time, Passenger, Phone, Email, Pickup, Drop-off, Vehicle, Passengers, Flight, Price and Notes, and common names like Customer, From, To or Fare. Times are ${esc(session.company.name)}'s local time. We check every row first and save nothing until all rows are right.</p>
           <div class="row"><label class="btn sm primary"><input type="file" id="im-file" accept=".xlsx,.csv,.txt,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xls" hidden>Choose Excel or CSV file</label><button class="btn sm" type="button" id="im-tpl">Download the template</button><span class="small faint" id="im-name"></span></div>
           <div id="im-cols"></div>
-          <label class="switch"><input type="checkbox" id="im-confirm"><span>Send each passenger the booking confirmation</span></label>
+          <label class="switch"><input type="checkbox" id="im-past"><span>These rides are already done. Save them as completed trips.</span></label>
+          <p class="small muted" id="im-pastnote" hidden style="margin:0">Past rides need a Driver column with the name of one of your drivers. They are saved as completed and paid. No message is sent and no card is charged. A ride that is already in LimoRelay is skipped.</p>
+          <label class="switch" id="im-confirmrow"><input type="checkbox" id="im-confirm"><span>Send each passenger the booking confirmation</span></label>
           <div id="im-out"></div></div>`,
         footer: '<button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="im-go" disabled>Import</button>',
       });
@@ -5200,9 +5202,12 @@
         const sample = [IMPORT_COLS.map((c) => c[1]), [d, '14:30', 'Jordan Smith', '(206) 555-0100', 'jordan@example.com', 'Seattle-Tacoma International Airport (SEA)', '1201 3rd Ave, Seattle', 'Sedan', '1', 'Airport transfer', '', 'AS 330', '', '', '', 'Meet at baggage claim'], [d, '6:00 PM', 'Casey Lee', '(206) 555-0101', '', 'Space Needle, Seattle', '', 'SUV', '4', 'By the hour', '3', '', '', '', '450.00', '']];
         await saveFile('trip-import-template.csv', sample.map((r) => r.map((x) => /[",]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x).join(',')).join('\r\n'), 'text/csv');
       };
+      const past = () => $('#im-past', m).checked;
+      $('#im-past', m).onchange = () => { $('#im-pastnote', m).hidden = !past(); $('#im-confirmrow', m).hidden = past(); if (past()) $('#im-confirm', m).checked = false; if (rows) { rows = null; $('#im-go', m).disabled = true; $('#im-out', m).innerHTML = '<p class="small">Choose the file again.</p>'; } };
       const show = (res, saved) => {
-        $('#im-out', m).innerHTML = `<p class="${res.bad ? 'needtag' : 'small'}">${saved ? `Imported ${res.saved} trips.` : res.bad ? `${res.bad} of ${res.rows.length} rows need fixing. Fix them in the spreadsheet and choose the file again.` : `All ${res.rows.length} rows are ready.`}</p>
-          <div class="tablewrap"><table><thead><tr><th>Row</th><th>Passenger</th><th>Pickup</th><th>Result</th></tr></thead><tbody>${res.rows.map((r) => `<tr><td class="mono small">${r.row + 1}</td><td>${esc(r.passengerName || '')}</td><td class="small">${r.ok ? `${esc(fmtDT(r.pickupAt))}<br><span class="faint">${esc(r.pickup)}</span>` : ''}</td><td class="small">${r.ok ? (r.ref ? `<span class="mono">${esc(r.ref)}</span>` : `${esc(r.vehicleType)} · ${money(r.total)}`) : `<span class="err-text">${esc(r.error)}</span>`}</td></tr>`).join('')}</tbody></table></div>`;
+        const sk = res.skipped ? ` ${res.skipped} already in LimoRelay, skipped.` : '';
+        $('#im-out', m).innerHTML = `<p class="${res.bad ? 'needtag' : 'small'}">${saved ? `Imported ${res.saved} trips.${sk}` : res.bad ? `${res.bad} of ${res.rows.length} rows need fixing. Fix them in the spreadsheet and choose the file again.` : res.skipped ? `${res.rows.length - res.skipped} rows are ready.${sk}` : res.bad ? `${res.bad} of ${res.rows.length} rows need fixing. Fix them in the spreadsheet and choose the file again.` : `All ${res.rows.length} rows are ready.`}</p>
+          <div class="tablewrap"><table><thead><tr><th>Row</th><th>Passenger</th><th>Pickup</th><th>Result</th></tr></thead><tbody>${res.rows.map((r) => `<tr><td class="mono small">${r.row + 1}</td><td>${esc(r.passengerName || '')}</td><td class="small">${r.ok ? `${esc(fmtDT(r.pickupAt))}<br><span class="faint">${esc(r.pickup)}</span>` : ''}</td><td class="small">${r.ok ? (r.skip ? `<span class="faint">${esc(r.note)}</span>` : r.ref ? `<span class="mono">${esc(r.ref)}</span>` : `${esc(r.vehicleType)} · ${money(r.total)}`) : `<span class="err-text">${esc(r.error)}</span>`}</td></tr>`).join('')}</tbody></table></div>`;
       };
       $('#im-file', m).onchange = async (e) => {
         const file = e.target.files[0]; if (!file) return;
@@ -5212,13 +5217,13 @@
           const g = await importFile(file); rows = g.rows;
           $('#im-cols', m).innerHTML = `<p class="small"><b>Columns used:</b> ${g.used.map(([h, l]) => norm2(h) === norm2(l) ? esc(l) : `${esc(h)} → ${esc(l)}`).join(', ')}${g.ignored.length ? `<br><span class="faint">Not used: ${esc(g.ignored.join(', '))}</span>` : ''}</p>`;
           if (rows.length > 500) throw new Error(`The file has ${rows.length} trips. Import up to 500 at a time.`);
-          const res = await api('dispatch.importTrips', { rows, check: true }); show(res); $('#im-go', m).disabled = !!res.bad;
+          const res = await api('dispatch.importTrips', { rows, check: true, completed: past() }); show(res); $('#im-go', m).disabled = !!res.bad;
         }
         catch (err) { rows = null; $('#im-go', m).disabled = true; $('#im-out', m).innerHTML = `<p class="err-text">${esc(err.message)}</p>`; }
         e.target.value = '';
       };
       $('#im-go', m).onclick = (e) => busy(e.currentTarget, async () => {
-        try { const res = await api('dispatch.importTrips', { rows, confirm: $('#im-confirm', m).checked }); show(res, true); $('#im-go', m).disabled = true; toast(`Imported ${res.saved} trips.`); done(); }
+        try { const res = await api('dispatch.importTrips', { rows, confirm: !past() && $('#im-confirm', m).checked, completed: past() }); show(res, true); $('#im-go', m).disabled = true; toast(`Imported ${res.saved} trips.`); done(); }
         catch (err) { $('#im-out', m).insertAdjacentHTML('afterbegin', `<p class="err-text">${esc(err.message)}</p>`); }
       });
     }

@@ -4056,7 +4056,15 @@
           let accountId = '';
           if (r.account) { const acc = db.accounts.find((x) => x.companyId === c.id && x.name.toLowerCase() === str(r.account, 120).toLowerCase()); if (!acc) fail(`No company account named ${str(r.account, 60)}.`); accountId = acc.id; }
           const raw = { service, pickupAt: at, pickup: r.pickup, dropoff: r.dropoff, vehicleType: type, passengers: r.passengers || 1, hours: r.hours, flight: r.flight, passengerName: r.passengerName, passengerPhone: r.passengerPhone, passengerEmail: r.passengerEmail, notes: r.notes, accountId, poNumber: r.poNumber };
-          const b = cleanBooking(c, raw, { allowPast: !!a.completed });
+          const b = cleanBooking(c, raw, { allowPast: !!a.completed, force: !!a.completed });
+          // Past rides from another system: a ride that is already here is skipped, not doubled.
+          if (a.completed) {
+            const ext = str(r.extRef, 40), nm = str(b.passengerName, 80).toLowerCase().replace(/\s+/g, ' ');
+            const dup = db.trips.find((x) => x.companyId === c.id && x.status !== 'cancelled' && ((ext && x.extRef === ext) || (x.pickupAt === b.pickupAt && String(x.passengerName || '').toLowerCase().replace(/\s+/g, ' ') === nm)))
+              || plans.find((pl) => (ext && pl.b._extRef === ext) || (pl.b.pickupAt === b.pickupAt && str(pl.b.passengerName, 80).toLowerCase().replace(/\s+/g, ' ') === nm));
+            if (dup) { out.push({ row: i + 1, ok: true, skip: true, pickupAt: b.pickupAt, passengerName: b.passengerName, pickup: b.pickup, dropoff: b.dropoff, vehicleType: b.vehicleType, total: 0, note: `Already in LimoRelay${dup.ref ? ` as ${dup.ref}` : ' (same ride twice in this file)'}` }); return; }
+            b._extRef = ext; b._pay = /card|credit|stripe/i.test(String(r.payment || '')) ? 'card' : 'cash';
+          }
           // Past rides added as already done: each row names its driver.
           if (a.completed) {
             if (new Date(b.pickupAt).getTime() > now().getTime()) fail('This ride is not in the past. Import it as an upcoming trip.');
@@ -4076,15 +4084,15 @@
           out.push({ row: i + 1, ok: false, error: e.message, passengerName: str(r.passengerName, 80) });
         }
       });
-      const bad = out.filter((x) => !x.ok).length;
-      if (a.check || bad) return { saved: 0, bad, rows: out };
+      const bad = out.filter((x) => !x.ok).length, skipped = out.filter((x) => x.skip).length;
+      if (a.check || bad) return { saved: 0, bad, skipped, rows: out };
       for (const { row, b } of plans) {
         let customer = null;
         if (b.passengerEmail) {
           customer = db.users.find((u) => u.companyId === c.id && u.email === b.passengerEmail && u.role === 'customer');
           if (!customer) { customer = { id: id('usr'), role: 'customer', companyId: c.id, email: b.passengerEmail, name: b.passengerName, phone: b.passengerPhone, active: true, createdAt: now().toISOString() }; db.users.push(customer); }
         }
-        const driverId = b._driverId; delete b._driverId;
+        const driverId = b._driverId, extRef = b._extRef, payMethod = b._pay; delete b._driverId; delete b._extRef; delete b._pay;
         const t = newTrip(c, b, customer, 'import', ctx.user.name, '', a.completed ? true : !a.confirm);
         if (driverId) {
           // No texts or emails: the ride already happened.
@@ -4092,11 +4100,15 @@
           const own = d.vehicleId && findVehicle(d.vehicleId);
           const v = own && own.type === t.vehicleType ? own : db.vehicles.find((x) => x.companyId === c.id && x.type === t.vehicleType && x.status === 'active') || own || null;
           t.driverId = d.id; t.vehicleId = v ? v.id : null; t.needsDriver = null; t.offer = null; t.status = 'completed';
-          log(t, 'completed', ctx.user.name, 'Imported as a past ride');
+          // The ride was paid in the old system: never charge it again here.
+          t.payment = { status: 'paid', method: payMethod || 'cash', paidAt: t.pickupAt, imported: true };
+          delete t.card; delete t.cardToken;
+          if (extRef) t.extRef = extRef;
+          log(t, 'completed', ctx.user.name, `Imported as a past ride${extRef ? ` (old reference ${extRef})` : ''}`);
         }
         out.find((x) => x.row === row).ref = t.ref;
       }
-      return { saved: plans.length, bad: 0, rows: out };
+      return { saved: plans.length, bad: 0, skipped, rows: out };
     });
 
     // ---- Accounting export (QuickBooks) ----------------------------------------
