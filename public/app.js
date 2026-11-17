@@ -636,7 +636,7 @@
     const v = shell({ narrow: true });
     const roleName = { customer: 'Customer', driver: 'Chauffeur', admin: 'Company admin', dispatcher: 'Dispatcher', owner: 'Platform owner' }[u.role] || u.role;
     v.innerHTML = `<div class="stack">
-      <div><a class="linkbtn small" href="#${HOME[u.role]}">← Back</a><h1 style="margin-top:6px">My account</h1></div>
+      <div><h1>My account</h1></div>
       <section class="panel"><dl class="kv"><dt>Name</dt><dd>${esc(u.name)}</dd><dt>Email</dt><dd>${esc(u.email)}</dd>${u.phone ? `<dt>Mobile</dt><dd>${esc(u.phone)}</dd>` : ''}<dt>Account</dt><dd>${esc(roleName)}${co ? ` · ${esc(co.name)}` : ''}</dd></dl></section>
       <section class="panel stack"><h2>Your privacy</h2><p class="small muted">What we keep and why is in the ${privacyLink()}. To change your name or number, ${u.role === 'customer' ? `call ${esc((co && co.name) || 'the company')}` : 'ask your office'}.</p></section>
       ${u.role === 'admin' ? '<section class="panel stack" id="acct-plan"><h2>LimoRelay membership</h2><p class="small faint">Loading…</p></section>' : ''}
@@ -644,6 +644,7 @@
       ${u.role === 'owner' ? '' : `<section class="panel stack danger-zone"><h2>Delete my account</h2>
         <p class="small muted">${u.role === 'customer' ? 'This removes your login, saved card and contact details. Past rides stay on the company\'s books for tax records, with your name removed. You can\'t undo this.' : 'This switches off your login and removes your name, contact details and photo. Past trips and pay records stay on the company\'s books without your name. You can\'t undo this.'}</p>
         <button class="btn danger" type="button" id="acct-del">Delete my account</button></section>`}
+      <a class="btn backdash" href="#${HOME[u.role]}">&larr; Back</a>
     </div>`;
     if (u.role === 'admin') drawMembership($('#acct-plan', v));
     const em = $('#acct-email', v);
@@ -2586,7 +2587,6 @@
     session = keep;
     document.documentElement.style.setProperty('--brand', info.company.color);
     v.innerHTML = `
-      <div class="row" style="padding:4px 0"><button class="btn sm" type="button" id="bk-back">&#8592; Back</button></div>
       ${info.company.banner ? `<img class="bh-banner" src="${esc(info.company.banner)}" alt="${esc(info.company.name)}">` : ''}
       <div class="brandhead slim${info.company.banner ? ' withbanner' : ''}">${info.company.banner ? '' : info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : '<div></div>'}
         <div class="bh-phone">${info.company.phone ? `<a href="tel:${esc(info.company.phone)}">${esc(fmtPhone(info.company.phone))}</a>` : ''}${signedHere ? ` · Signed in as ${esc(session.user.name)} · <a href="#customer">My trips</a>` : ''}</div>
@@ -2608,9 +2608,10 @@
         <dt>Can I change or cancel?</dt><dd>Yes. Log in to change a booking online, or call us. Cancellation terms show in your quote.</dd>
         <dt>Planning an event or group trip?</dt><dd>Use "Book your event" above and we will send you a quote.</dd></dl>
         <div class="house-join"><b>Run a chauffeur company?</b> Join the LimoRelay network and receive rides in your city. <a class="btn sm brand" href="/">Become a member company</a></div>
-      </section>` : ''}`;
+      </section>` : ''}
+      <div style="margin-top:22px"><button class="btn backdash" type="button" id="pg-back">&larr; Back</button></div>`;
     // The phone app and an installed app have no browser back button: go back a screen, or to the company's staff page.
-    $('#bk-back', v).onclick = () => { const staff = session && session.user && session.user.role !== 'customer'; if (history.length > 1) history.back(); else go(staff ? `team.${slug}` : signedHere ? 'customer' : 'signin'); };
+    $('#pg-back', v).onclick = () => { const staff = session && session.user && session.user.role !== 'customer'; if (history.length > 1) history.back(); else go(staff ? `team.${slug}` : signedHere ? 'customer' : 'signin'); };
     const pending = { booking: null };
     // A new company with no cars yet can't take online bookings.
     if (!info.vehicleTypes.length) {
@@ -2801,7 +2802,7 @@
     let mode = start;
     const draw = () => {
       const up = mode === 'signup';
-      v.innerHTML = `<div style="margin-bottom:12px"><a class="btn" href="#book.${esc(slug)}">&larr; Back to booking page</a></div>
+      v.innerHTML = `
         <div class="brandhead">${info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : ''}<div class="stack" style="gap:6px"><h1>${up ? 'Create your account' : 'Log in'}</h1><p>${up ? `Book faster, see your trips and get your receipts from ${esc(info.company.name)}.` : `Welcome back to ${esc(info.company.name)}.`}</p></div></div>
         <div class="panel stack" style="max-width:520px">
           <form id="ca-form" class="stack" novalidate>
@@ -2812,7 +2813,8 @@
             <div class="row"><button class="btn brand" type="submit" id="ca-go">${up ? 'Create account' : 'Log in'}</button>
               <a class="linkbtn" href="#${up ? 'login' : 'signup'}.${esc(slug)}">${up ? 'I already have an account' : 'Create an account'}</a>
               ${up ? '' : '<button class="linkbtn" type="button" id="ca-forgot">Forgot password?</button>'}</div>
-          </form></div>`;
+          </form></div>
+        <div style="max-width:520px;margin-top:18px"><a class="btn backdash" href="#book.${esc(slug)}">&larr; Back to booking page</a></div>`;
       const cf = $('#ca-forgot', v); if (cf) cf.onclick = () => forgotModal($('#ca-email', v).value);
       $('#ca-form', v).onsubmit = async (e) => {
         e.preventDefault();
