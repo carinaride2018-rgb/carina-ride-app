@@ -2609,7 +2609,7 @@
         <dt>Planning an event or group trip?</dt><dd>Use "Book your event" above and we will send you a quote.</dd></dl>
         <div class="house-join"><b>Run a chauffeur company?</b> Join the LimoRelay network and receive rides in your city. <a class="btn sm brand" href="/">Become a member company</a></div>
       </section>` : ''}
-      <div style="margin-top:22px"><button class="btn backdash" type="button" id="pg-back">&larr; Back</button></div>`;
+      <div class="pgbackwrap"><button class="btn backdash" type="button" id="pg-back">&larr; Back</button></div>`;
     // The phone app and an installed app have no browser back button: go back a screen, or to the company's staff page.
     $('#pg-back', v).onclick = () => { const staff = session && session.user && session.user.role !== 'customer'; if (history.length > 1) history.back(); else go(staff ? `team.${slug}` : signedHere ? 'customer' : 'signin'); };
     const pending = { booking: null };

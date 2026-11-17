@@ -1058,3 +1058,8 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 /* Back button at the bottom of a page: double line so it is easy to spot */
 .btn.backdash { display: flex; justify-content: center; width: 100%; min-height: 54px; font-size: 16px; font-weight: 700; border: 5px double var(--brand, #c62828) !important; border-radius: 12px; color: inherit; background: color-mix(in srgb, var(--brand, #c62828) 8%, transparent) !important; }
 .btn.backdash:hover { background: color-mix(in srgb, var(--brand, #c62828) 16%, transparent) !important; }
+
+/* The Back button under the booking form is as wide as the form */
+.pgbackwrap { margin-top: 22px; display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; }
+:has(> #book-host .booking.step1) > .pgbackwrap { grid-template-columns: minmax(0, 680px); }
+@media (max-width: 860px) { .pgbackwrap, :has(> #book-host .booking.step1) > .pgbackwrap { grid-template-columns: minmax(0, 1fr); } }
