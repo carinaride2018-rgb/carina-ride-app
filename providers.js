@@ -514,6 +514,9 @@ function emailHtml(m, opt) {
   // Marketing emails: "Book now link:" becomes a button, "Unsubscribe link:" a small line at the end.
   let bookUrl = '', unsubUrl = '', sender = '';
   lines = lines.filter((l) => { const t = l.match(/^Book now link:\s*(https?:\/\/\S+)\s*$/); if (t) { bookUrl = t[1]; return false; } const sa = l.match(/^Sender address:\s*(.+)$/); if (sa) { sender = sa[1].trim(); return false; } const u = l.match(/^Unsubscribe link:\s*(https?:\/\/\S+)\s*$/); if (u) { unsubUrl = u[1]; return false; } return true; });
+  // "Review on Google: https://..." lines become buttons.
+  const revs = [];
+  lines = lines.filter((l) => { const t = l.match(/^Review on ([A-Za-z ]{2,20}):\s*(https?:\/\/\S+)\s*$/); if (t) { revs.push([t[1], t[2]]); return false; } return true; });
   // "Return trip link:" becomes a button under the message.
   let retUrl = '';
   lines = lines.filter((l) => { const t = l.match(/^Return trip link:\s*(https?:\/\/\S+)\s*$/); if (t) { retUrl = t[1]; return false; } return true; });
@@ -555,6 +558,7 @@ ${banner ? `<tr><td style="padding:0;font-size:0;line-height:0">${banner}</td></
 ${title}
 <tr><td style="padding:0 24px 6px;word-break:break-word;overflow-wrap:anywhere">${html}</td></tr>
 ${payUrl ? `<tr><td style="padding:0 24px 18px"><table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;background:#d32f2f;border-radius:10px"><tr><td style="padding:18px 16px;text-align:center"><div style="font-size:17px;line-height:1.4;font-weight:800;color:#ffffff">${hesc(payText)}</div><a href="${hesc(payUrl)}" style="display:inline-block;margin-top:14px;padding:12px 28px;background:#ffffff;color:#d32f2f;border-radius:8px;font-size:16px;font-weight:800;text-decoration:none">Pay now</a><div style="margin-top:10px;font-size:12px;line-height:1.4;word-break:break-all"><a href="${hesc(payUrl)}" style="color:#ffffff">${hesc(payUrl)}</a></div></td></tr></table></td></tr>` : ''}
+${revs.length ? `<tr><td style="padding:0 24px 20px;text-align:center"><div style="font-size:14px;color:#555555;margin-bottom:10px">Choose where to leave your review:</div>${revs.map(([n, u]) => `<a href="${hesc(u)}" style="display:inline-block;margin:4px 5px;padding:12px 22px;background:${color};color:#ffffff;border-radius:8px;font-size:15px;font-weight:800;text-decoration:none">${hesc(n)}</a>`).join('')}</td></tr>` : ''}
 ${bookUrl ? `<tr><td style="padding:0 24px 22px;text-align:center"><a href="${hesc(bookUrl)}" style="display:inline-block;padding:13px 34px;background:${color};color:#ffffff;border-radius:8px;font-size:16px;font-weight:800;text-decoration:none">Book a ride</a></td></tr>` : ''}
 ${retUrl ? `<tr><td style="padding:0 24px 18px"><table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:separate;border:1px solid #e3e3e6;border-radius:10px"><tr><td style="padding:16px;text-align:center"><div style="font-size:16px;line-height:1.4;font-weight:700;color:#111111">Need a ride back?</div><div style="font-size:14px;line-height:1.4;color:#555555;margin-top:4px">Your details are already filled in. Just choose the date and time.</div><a href="${hesc(retUrl)}" style="display:inline-block;margin-top:12px;padding:12px 28px;background:${color};color:#ffffff;border-radius:8px;font-size:16px;font-weight:800;text-decoration:none">Book your return trip</a></td></tr></table></td></tr>` : ''}
 ${pdfNote}

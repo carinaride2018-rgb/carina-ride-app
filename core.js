@@ -81,7 +81,7 @@
     arrived: { label: 'Chauffeur arrived', text: '{company}:\n\nYour chauffeur has arrived for RES: {ref}\n\n{chauffeur_block}\nPickup: {pickup}' },
     receipt: { label: 'Receipt (email)', text: '{company}: thanks for riding with us. Receipt for {ref}: {total}.' },
     review_sms: { label: 'Review request (text)', text: '{company}:\n\nThank you for riding with us{driver_and}. How was your trip?\n\nRate it in one tap: {review_link}' },
-    review_email: { label: 'Review request (email)', text: '{company}:\n\nThank you for riding with us{driver_and}. How was your trip?\n\nRate it in one tap: {review_link}\n\nSincerely,\n{signer}' },
+    review_email: { label: 'Review request (email)', text: '{company}:\n\nThank you for riding with us{driver_and}. How was your trip?\n\nRate it in one tap: {review_links}\n\nSincerely,\n{signer}' },
     cancelled: { label: 'Booking cancelled', text: '{company}: booking {ref} has been cancelled.' },
     no_show: { label: 'No-show', text: "{company}: your chauffeur waited{waited} at {pickup} and couldn't find you, so {ref} is closed as a no-show.{fee_line}{wrong_line}" },
     card_charged: { label: 'Fare charged to card', text: '{company}: we charged {amount} to your card ending {last4} for ride {ref}, {pickup_time}.' },
@@ -89,9 +89,9 @@
     card_refund: { label: 'Refund to card', text: '{company}: we refunded {amount} to your card ending {last4} for {ref}.' },
     card_failed: { label: "Card couldn't be charged", text: "{company}: we couldn't charge {amount} to your card ending {last4} for ride {ref}. Please add a card here: {card_link}{call_line}" },
   };
-  const MSG_WORDS = ['company', 'ref', 'passenger', 'pickup_time', 'pickup', 'dropoff', 'vehicle_type', 'passengers', 'ride', 'driver', 'driver_first', 'driver_and', 'vehicle', 'plate', 'vehicle_line', 'car_line', 'total', 'phone', 'flight', 'track_link', 'review_link', 'call_line', 'wrong_line', 'dropoff_line', 'flight_line', 'flight_short_line', 'flight_track_line', 'chauffeur_line', 'track_line', 'landing_line', 'landing_short_line', 'waited', 'fee', 'fee_line', 'amount', 'last4', 'extras', 'card_link', 'hi_name', 'dropoff_to', 'signer', 'contact', 'passenger_name', 'cellphone', 'destination', 'flight_info_line', 'vehicle_choice', 'passenger_count', 'bag_count', 'landing_block', 'chauffeur_block', 'track_block', 'flight_remind_line', 'chauffeur_info_line'];
+  const MSG_WORDS = ['company', 'ref', 'passenger', 'pickup_time', 'pickup', 'dropoff', 'vehicle_type', 'passengers', 'ride', 'driver', 'driver_first', 'driver_and', 'vehicle', 'plate', 'vehicle_line', 'car_line', 'total', 'phone', 'flight', 'track_link', 'review_link', 'review_links', 'call_line', 'wrong_line', 'dropoff_line', 'flight_line', 'flight_short_line', 'flight_track_line', 'chauffeur_line', 'track_line', 'landing_line', 'landing_short_line', 'waited', 'fee', 'fee_line', 'amount', 'last4', 'extras', 'card_link', 'hi_name', 'dropoff_to', 'signer', 'contact', 'passenger_name', 'cellphone', 'destination', 'flight_info_line', 'vehicle_choice', 'passenger_count', 'bag_count', 'landing_block', 'chauffeur_block', 'track_block', 'flight_remind_line', 'chauffeur_info_line'];
   const INCIDENT_KINDS = { accident: 'Accident', damage: 'Vehicle damage', injury: 'Injury', complaint: 'Complaint', lost_item: 'Lost item', other: 'Other' };
-  const DEFAULT_CLIENT_MSGS = { confirmText: true, confirmEmail: true, officeNew: true, remind24: true, approach: true, review: true, reviewDelayMin: 0, reviewUrl: '' };
+  const DEFAULT_CLIENT_MSGS = { confirmText: true, confirmEmail: true, officeNew: true, remind24: true, approach: true, review: true, reviewDelayMin: 0, reviewUrl: '', reviewTripadvisor: '', reviewYelp: '' };
   // Corporate accounts: payment terms in days (0 = due on receipt).
   const ACCOUNT_TERMS = [0, 15, 30, 45];
   // Smart dispatch: auto-assign, accept timer, reminders, late-start alert.
@@ -1033,6 +1033,8 @@
     }
 
     const cmsg = (c) => ({ ...DEFAULT_CLIENT_MSGS, ...(c.clientMsgs || {}) });
+    // The outside review pages a company uses: Google, Tripadvisor and Yelp (Dawit 2026-11-17).
+    const reviewSites = (c) => { const m = cmsg(c); return [['Google', m.reviewUrl], ['Tripadvisor', m.reviewTripadvisor], ['Yelp', m.reviewYelp]].filter((x) => x[1]); };
     // Links in texts and emails use the company's own booking address
     // (for example https://reserve.carinaride.com/) when it has one.
     const linkBase = (c) => (c && c.domain ? `https://${c.domain}/` : (opts.publicUrl || ''));
@@ -1182,7 +1184,10 @@
         vehicle: v ? v.name : t.vehicleType, plate: v ? v.plate || '' : '', vehicle_line: v ? `, ${[v.color, v.name].filter(Boolean).join(' ')}${v.plate ? `, plate ${v.plate}` : ''}` : '',
         car_line: v ? ` Look for a ${[v.color, v.name].filter(Boolean).join(' ')}${v.plate ? `, plate ${v.plate}` : ''}.` : '',
         total: `$${money(t.price.total)}`, phone: c.phone || 'us', flight: t.flight || '',
-        track_link: t.trackToken ? trackUrl(t) : '', review_link: cmsg(c).reviewUrl || (t.reviewToken ? reviewUrl(t) : ''), card_link: t.cardToken ? cardUrl(t) : '',
+        track_link: t.trackToken ? trackUrl(t) : '', review_link: reviewSites(c).length > 1 && t.reviewToken ? reviewUrl(t) : cmsg(c).reviewUrl || (reviewSites(c)[0] || [])[1] || (t.reviewToken ? reviewUrl(t) : ''),
+        // Several review pages: a text gets one link to a page with all of them; an email lists each one.
+        review_links: reviewSites(c).length > 1 ? `\n${reviewSites(c).map(([n, u]) => `Review on ${n}: ${u}`).join('\n')}` : cmsg(c).reviewUrl || (reviewSites(c)[0] || [])[1] || (t.reviewToken ? reviewUrl(t) : ''),
+        card_link: t.cardToken ? cardUrl(t) : '',
         call_line: c.phone ? ` Questions? Call ${c.phone}.` : '', wrong_line: c.phone ? ` If this is wrong, call ${c.phone}.` : '',
         dropoff_line: t.dropoff ? ` Drop-off: ${t.dropoff}.` : '',
         hi_name: (t.passengerName || '').trim().split(' ')[0] || 'there', dropoff_to: t.dropoff ? ` to ${t.dropoff}` : '',
@@ -2766,7 +2771,7 @@
       const t = reviewTrip(a);
       const v = tripView(t);
       return { company: pubCompany(findCompany(t.companyId)), ref: t.ref, pickupAt: t.pickupAt, pickup: t.pickup, dropoff: t.dropoff, status: t.status,
-        passengerName: (t.passengerName || '').split(' ')[0], driver: v.driver ? { name: v.driver.name.split(' ')[0] } : null, rating: t.rating ? clone(t.rating) : null };
+        passengerName: (t.passengerName || '').split(' ')[0], driver: v.driver ? { name: v.driver.name.split(' ')[0] } : null, rating: t.rating ? clone(t.rating) : null, sites: reviewSites(findCompany(t.companyId)).map(([name, url]) => ({ name, url })) };
     });
     def('public.rate', 'public', true, (ctx, a) => {
       const t = reviewTrip(a);
@@ -4253,9 +4258,11 @@
       const b = (k) => (k in r ? !!r[k] : cur[k]);
       ctx.company.clientMsgs = { confirmText: b('confirmText'), confirmEmail: b('confirmEmail'), officeNew: b('officeNew'), remind24: b('remind24'), approach: b('approach'), review: b('review'), reviewDelayMin: Math.min(1440, Math.max(0, Math.round(num(r.reviewDelayMin, cur.reviewDelayMin)))) };
       // Optional outside review page (Google, Yelp). Empty: our own review page.
-      const ru = 'reviewUrl' in r ? str(r.reviewUrl, 300) : cur.reviewUrl || '';
-      if (ru && !/^https:\/\/[^\s]+\.[^\s]+$/i.test(ru)) fail('The review link must be a full web address starting with https://');
-      if (ru) ctx.company.clientMsgs.reviewUrl = ru;
+      for (const [k, label] of [['reviewUrl', 'Google review link'], ['reviewTripadvisor', 'Tripadvisor review link'], ['reviewYelp', 'Yelp review link']]) {
+        const ru = k in r ? str(r[k], 300) : cur[k] || '';
+        if (ru && !/^https:\/\/[^\s]+\.[^\s]+$/i.test(ru)) fail(`The ${label} must be a full web address starting with https://`);
+        if (ru) ctx.company.clientMsgs[k] = ru;
+      }
       return clone(ctx.company.clientMsgs);
     });
     def('dispatch.saveRules', ['admin'], true, (ctx, a) => {

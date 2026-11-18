@@ -1048,6 +1048,7 @@
     v.innerHTML = `<div class="stack">
       <div><h1 style="font-size:24px">How was your ride?</h1><p class="muted small">${esc(d.company.name)} · ${esc(d.ref)} · ${esc(fmtDT(d.pickupAt))}</p></div>
       <div class="panel small"><dl class="kv"><dt>From</dt><dd>${esc(d.pickup)}</dd>${d.dropoff ? `<dt>To</dt><dd>${esc(d.dropoff)}</dd>` : ''}${d.driver ? `<dt>Chauffeur</dt><dd>${esc(d.driver.name)}</dd>` : ''}</dl></div>
+      ${d.sites && d.sites.length ? `<div class="panel stack" style="text-align:center;gap:10px"><b>Leave a public review</b><span class="small muted">Choose one. It takes about a minute and helps ${esc(d.company.name)} a lot.</span><div class="stack" style="gap:8px">${d.sites.map((x) => `<a class="btn primary big" href="${esc(x.url)}" target="_blank" rel="noopener">Review on ${esc(x.name)}</a>`).join('')}</div></div><p class="small muted" style="text-align:center;margin:0">Or tell us privately:</p>` : ''}
       <div id="rv">${d.rating ? thanks(d.rating.stars) : `<form class="panel stack" id="rv-form" novalidate>
         <span class="label">Tap the stars</span>
         <div class="stars rate big" id="rv-stars">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-n="${n}" aria-label="${n} star${n > 1 ? 's' : ''}">★</button>`).join('')}</div>
@@ -6314,7 +6315,9 @@
               ${sw('officeNew', 'Email the office about each new online booking')}
             </div>
             <label class="field" style="max-width:420px"><span>Send the review request this many minutes after the trip ends (0 = right away)</span><input class="input" type="number" name="reviewDelayMin" min="0" max="1440" value="${cm.reviewDelayMin}" ${ro}></label>
-            <label class="field" style="max-width:520px"><span>Review link (optional)</span><input class="input" type="url" name="reviewUrl" maxlength="300" placeholder="https://g.page/r/…/review" value="${esc(cm.reviewUrl || '')}" ${ro}><span class="hint">Your Google review page, for example. Leave empty to use our own rating page.</span></label>
+            <label class="field" style="max-width:520px"><span>Google review link (optional)</span><input class="input" type="url" name="reviewUrl" maxlength="300" placeholder="https://g.page/r/…/review" value="${esc(cm.reviewUrl || '')}" ${ro}><span class="hint">Leave all three empty to use our own rating page.</span></label>
+            <label class="field" style="max-width:520px"><span>Tripadvisor review link (optional)</span><input class="input" type="url" name="reviewTripadvisor" maxlength="300" placeholder="https://www.tripadvisor.com/UserReviewEdit-…" value="${esc(cm.reviewTripadvisor || '')}" ${ro}></label>
+            <label class="field" style="max-width:520px"><span>Yelp review link (optional)</span><input class="input" type="url" name="reviewYelp" maxlength="300" placeholder="https://www.yelp.com/writeareview/biz/…" value="${esc(cm.reviewYelp || '')}" ${ro}><span class="hint">With two or more links, the email shows a button for each site, and the text opens a page where the passenger picks one.</span></label>
             <p class="small faint">The 24-hour reminder goes to trips booked more than a day ahead. Passengers of trips taken from a partner company hear from that company. ${isAdmin ? '' : 'Only a company admin can change these.'}</p>
             <div class="row">${isAdmin ? '<button class="btn primary" type="submit">Save</button>' : ''}<button class="btn" type="button" id="cm-words">Edit the wording</button></div>
           </form>
