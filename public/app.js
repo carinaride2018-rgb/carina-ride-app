@@ -1469,7 +1469,6 @@
     ['What happens after the free trial?', 'You choose a plan and add a card. Nothing is charged during the 30 days, and you keep all your rides, drivers and customers.'],
     ['Do my drivers and passengers need to download anything?', 'No. Everything works in the phone’s browser and can be added to the home screen like an app.'],
     ['What if I run out of texts?', 'Each plan includes a monthly text allowance. Extra texts are $15 for 500, and emails are always free.'],
-    ['How does the farm-out commission work?', `When your client books a ride in another city through your booking page, a LimoRelay company there drives it. Your client pays you, the partner is paid their share and you keep the rest: ${KEEP_PCT}% by default, and you can change it in Network settings.`],
     ['Can I bring my existing rides?', 'Yes. Upcoming rides can be imported from a spreadsheet, so you can switch without losing bookings.'],
   ];
   // Where a signed-out person goes: their company's branded sign-in page if we know it.
