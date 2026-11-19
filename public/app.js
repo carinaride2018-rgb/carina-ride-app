@@ -1531,21 +1531,6 @@
         <div class="roles">${DEMO_LOGINS.map((d) => `<button type="button" class="role" data-demo="${d.key}"><b>${esc(d.label)}</b><span>${esc(d.who)}. ${esc(d.what)}</span><span class="mono">${esc(d.email)}</span></button>`).join('')}</div>
       </section>` : ''}
       ${companies.length && sample ? `<section class="stack lp-sec"><span class="label">Public booking pages</span><div class="row">${companies.map((c) => `<a class="btn" href="#book.${esc(c.slug)}"><span class="seal" style="width:10px;height:10px;border-radius:50%;background:${esc(c.color)}"></span>${esc(c.name)}</a>`).join('')}</div></section>` : ''}
-      <section class="lp-sec lp-earn" id="lp-earn">
-        <div class="lp-earn-copy stack">
-          <span class="lp-kicker">Farm-out commission</span>
-          <h2>Helping each other pays, too.</h2>
-          <p>Your client flies out of your city and books their pickup at the other end through you. A LimoRelay company there drives the ride, and you keep a commission on it: ${KEEP_PCT}% of the fare by default, set by you.</p>
-          <ul class="lp-ticks"><li>Clients book it with their flight on your booking page</li><li>Priced at the local company’s rates</li><li>Your client stays your client</li></ul>
-          <div><button class="btn brand lp-cta" type="button" data-scroll="lp-trial">Join the network</button></div>
-        </div>
-        <div class="lp-earn-card">
-          <span class="small faint">Example</span>
-          <p><b>Seattle to New York.</b> Your client books their drive to SEA with you and adds a pickup when they land at JFK.</p>
-          <dl class="lp-earn-math"><dt>JFK to Manhattan fare</dt><dd>$150.00</dd><dt>Paid to the New York company</dt><dd>$${(150 * (100 - KEEP_PCT) / 100).toFixed(2)}</dd><dt class="em">Your commission</dt><dd class="em">$${(150 * KEEP_PCT / 100).toFixed(2)}</dd></dl>
-          <p class="small faint">The same works for any ride you send to a partner when your own cars are busy.</p>
-        </div>
-      </section>
       <section class="lp-sec" id="lp-benefits">
         <div class="lp-head"><h2>What you get out of it</h2><p class="muted">What changes for your company once you join.</p></div>
         <div class="lp-grid lp-grid3">${LP_BENEFITS.map(([t, d]) => `<div class="lp-card lp-benefit"><h3>${esc(t)}</h3><p class="small muted">${esc(d)}</p></div>`).join('')}</div>
