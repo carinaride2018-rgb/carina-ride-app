@@ -1571,6 +1571,14 @@
         </div>
         <p class="small faint" style="margin-top:12px">Extra texts are $15 for 500. Card fees are billed by your own card service (Stripe, Square, Authorize.net or PayPal); ${PLATFORM} takes no share of your fares.</p>
       </section>
+      <section class="lp-sec" id="lp-compare">
+        <div class="lp-head"><h2>How we compare</h2><p class="muted">Everything is included in one flat monthly price. No fee per ride.</p></div>
+        <div class="lp-cmp-wrap"><table class="lp-cmp"><colgroup><col class="f"><col><col><col></colgroup>
+          <thead><tr><th scope="col">Feature</th><th scope="col" class="lp-us">${PLATFORM}</th><th scope="col">Limo Anywhere</th><th scope="col">Limosys</th></tr></thead>
+          <tbody><tr><th scope="row">Online booking and dispatch</th><td class="lp-us"><span class="lp-yes" aria-label="Yes">✓</span></td><td><span class="lp-yes" aria-label="Yes">✓</span></td><td><span class="lp-yes" aria-label="Yes">✓</span></td></tr><tr><th scope="row">Driver app</th><td class="lp-us"><span class="lp-yes" aria-label="Yes">✓</span></td><td><span class="lp-yes" aria-label="Yes">✓</span></td><td><span class="lp-yes" aria-label="Yes">✓</span></td></tr><tr><th scope="row">Passenger app</th><td class="lp-us">Included</td><td>$99/month extra on most plans</td><td>Included</td></tr><tr><th scope="row">Monthly price</th><td class="lp-us">$49 to $199</td><td>$99 to $549, plus a fee per ride</td><td>Custom quote</td></tr><tr><th scope="row">Fee per ride</th><td class="lp-us">None</td><td>$0.20 to $0.50</td><td>None</td></tr><tr><th scope="row">Setup fee</th><td class="lp-us">None</td><td>$299 to $899</td><td>Not listed</td></tr><tr><th scope="row">Free trial</th><td class="lp-us">30 days, no card</td><td>Not listed</td><td>Not listed</td></tr><tr><th scope="row">Affiliate network</th><td class="lp-us">Included, no fee</td><td>$0.25 to $0.75 per ride</td><td>25,000-car network</td></tr><tr><th scope="row">Contract</th><td class="lp-us">Month to month</td><td>Month to month, 30 days notice</td><td>Not listed</td></tr></tbody>
+        </table></div>
+        <p class="small faint" style="margin-top:12px">From each company’s public website, November 2026. Their prices can change.</p>
+      </section>
       <section class="lp-sec lp-trial" id="lp-trial">
         <div class="stack" style="gap:8px"><h2>Join us, free for 30 days</h2><p class="muted" id="tr-lead">It takes two minutes. Your free trial starts right away, with no card needed, and a short setup guide helps you add your cars, prices and first booking. Questions? Email ${mailLink()}.</p></div>
         <form id="tr-form" class="stack" novalidate>

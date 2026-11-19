@@ -1067,3 +1067,17 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 /* Marketing tab */
 .mkgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
 .mkcard.due { border-color: #d9a400; background: #fffaf0; }
+
+/* Home page comparison table */
+.lp-cmp-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.lp-cmp { width: 100%; border-collapse: collapse; font-size: 15px; table-layout: fixed; }
+.lp-cmp th, .lp-cmp td { text-transform: none; letter-spacing: normal; white-space: normal; font-size: inherit; overflow-wrap: anywhere; line-height: 1.35; }
+.lp-cmp col.f { width: 28%; }
+.lp-cmp th, .lp-cmp td { padding: 14px 16px; border-bottom: 1px solid var(--line); text-align: center; vertical-align: middle; color: var(--ink-2); }
+.lp-cmp tbody tr:last-child th, .lp-cmp tbody tr:last-child td { border-bottom: 0; }
+.lp-cmp thead th { background: var(--surface-2); color: var(--ink); font-weight: 700; }
+.lp-cmp th[scope=row], .lp-cmp thead th:first-child { text-align: left; color: var(--ink); font-weight: 600; }
+.lp-cmp .lp-us { color: var(--ink); font-weight: 650; background: color-mix(in srgb, var(--brand) 7%, transparent); }
+.lp-cmp thead .lp-us { background: color-mix(in srgb, var(--brand) 14%, var(--surface-2)); }
+.lp-yes { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--brand); color: #fff; font-size: 15px; font-weight: 800; }
+@media (max-width: 600px) { .lp-cmp { font-size: 12px; } .lp-cmp th, .lp-cmp td { padding: 10px 5px; overflow-wrap: normal; word-break: normal; } .lp-cmp col.f { width: 30%; } .lp-yes { width: 22px; height: 22px; font-size: 13px; } }
