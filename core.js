@@ -1374,6 +1374,7 @@
         account: t.accountId ? (() => { const a = db.accounts.find((x) => x.id === t.accountId); const inv = t.invoiceId && db.clientInvoices.find((x) => x.id === t.invoiceId); return a ? { id: a.id, name: a.name, invoice: inv ? { id: inv.id, number: inv.number, status: inv.status, sentAt: inv.sentAt || null, sentTo: inv.sentTo || '' } : null } : null; })() : null,
         statusLabel: t.noShow ? 'No-show' : STATUS_LABELS[t.status],
         serviceLabel: SERVICES[t.service],
+        chatOpen: chatAllowed(t),
         special: specialView(t),
         wait: waitInfo(t),
         commission: t.agent ? commissionOf(t) : 0,
@@ -2742,7 +2743,8 @@
       const v = tripView(t);
       return {
         company: pubCompany(c), ref: t.ref, status: t.status, statusLabel: t.noShow ? 'No-show' : STATUS_LABELS[t.status], pickup: t.pickup, dropoff: t.dropoff, pickupAt: t.pickupAt,
-        passengerName: (t.passengerName || '').split(' ')[0], driver: v.driver ? { name: v.driver.name.split(' ')[0], photo: driverPhoto(t), partner: v.driver.partner || '', ...(['accepted', 'en_route', 'arrived'].includes(t.status) && v.driver.phone ? { phone: v.driver.phone } : {}) } : null,
+        passengerName: (t.passengerName || '').split(' ')[0], driver: v.driver ? { name: v.driver.name.split(' ')[0], photo: driverPhoto(t), partner: v.driver.partner || '', ...(['accepted', 'en_route', 'arrived'].includes(t.status) && v.driver.phone && !(bridgeOn() && t.driverId) ? { phone: v.driver.phone } : {}) } : null,
+        chat: !!t.driverId && chatAllowed(t), canCall: !!t.driverId && chatAllowed(t) && !!t.passengerPhone && !!(chatDriver(t) || {}).phone,
         vehicle: v.vehicle ? { name: v.vehicle.name, type: v.vehicle.type, plate: v.vehicle.plate, color: v.vehicle.color || '', year: v.vehicle.year || null } : null, live: v.live,
       };
     });
@@ -2804,6 +2806,7 @@
           if (mv && recent(mv.at) && busyStatus(t.status)) add(`moved:${t.id}:${t.pickupAt}`, `Pickup moved for ${t.ref}`, `New pickup time ${at(t)}. ${mv.note || ''}`.trim(), '#driver', mv.at);
           const cx = lastOf(t, 'cancelled');
           if (t.status === 'cancelled' && cx && recent(cx.at)) add(`cancel:${t.id}`, `${t.ref} was cancelled`, `${at(t)} from ${t.pickup}.`, '#driver', cx.at);
+          { const pm = (t.chat || []).filter((x) => x.from === 'passenger'); const lm = pm[pm.length - 1]; if (lm && pm.length > (t.chatSeenDriverP || 0) && recent(lm.at, 2)) add(`chat:${t.id}:${pm.length}`, `Message from ${t.passengerName ? t.passengerName.split(' ')[0] : 'your passenger'} (${t.ref})`, lm.body.slice(0, 140), '#driver', lm.at); }
           if (t.wake && !t.wake.ok && t.wake.driverId === u.id && t.wake.calls.length && ['assigned', 'accepted'].includes(t.status) && recent(t.wake.calls[t.wake.calls.length - 1], 2)) add(`wake:${t.id}:${t.wake.calls.length}`, 'Wake-up call', `Pickup ${at(t)} from ${t.pickup}. Open the app and tap I'm awake.`, '#driver', t.wake.calls[t.wake.calls.length - 1]);
         }
       } else if (u.role === 'customer') {
@@ -2814,6 +2817,7 @@
           if (h('accepted') && recent(h('accepted').at, 24) && busyStatus(t.status)) add(`accepted:${t.id}:${t.driverId}`, `Chauffeur confirmed for ${t.ref}`, `${v.driver ? v.driver.name : 'Your chauffeur'}${v.vehicle ? `, ${v.vehicle.name} (${v.vehicle.plate || ''})` : ''}. Pickup ${at(t)}.`, '#customer', h('accepted').at);
           if (t.status === 'en_route') add(`enroute:${t.id}`, `${d} is on the way`, v.live ? `About ${v.live.etaMin} min away. Tap to follow the car.` : 'Tap to follow the car.', t.trackToken ? `#track.${t.trackToken}` : '#customer', h('en_route') && h('en_route').at);
           if (t.status === 'arrived') add(`arrived:${t.id}`, `${d} has arrived`, `Waiting at ${t.pickup}.`, '#customer', h('arrived') && h('arrived').at);
+          { const dm = (t.chat || []).filter((x) => x.from === 'driver'); const lm = dm[dm.length - 1]; if (lm && dm.length > (t.chatSeenPassengerD || 0) && recent(lm.at, 2)) add(`chat:${t.id}:${dm.length}`, `Message from ${d}`, lm.body.slice(0, 140), '#customer', lm.at); }
           const mv = h('pickup_moved');
           if (mv && recent(mv.at) && busyStatus(t.status)) add(`moved:${t.id}:${t.pickupAt}`, `Pickup moved for ${t.ref}`, `Your flight changed, so pickup is now ${at(t)}.`, '#customer', mv.at);
           const pv = onFile(t) && payView(t);
@@ -3283,7 +3287,8 @@
     def('customer.trips', ['customer'], false, (ctx) => {
       if (monitorFlights(ctx.company)) ctx.dirty = true;
       return db.trips.filter((t) => t.customerId === ctx.user.id && !t.hiddenByCustomer).sort((x, y) => y.pickupAt.localeCompare(x.pickupAt))
-        .map((t) => (['assigned', 'accepted', 'en_route', 'arrived', 'on_board'].includes(t.status) ? withPhoto(tripView(t), t) : tripView(t)));
+        .map((t) => (['assigned', 'accepted', 'en_route', 'arrived', 'on_board'].includes(t.status) ? withPhoto(tripView(t), t) : tripView(t)))
+        .map((v) => (bridgeOn() && v.driver ? { ...v, driver: { ...v.driver, phone: '' } } : v));
     });
     // Delete a finished or cancelled ride from the customer's own list. The
     // company keeps the trip for its records, invoices and payments.
@@ -3502,7 +3507,9 @@
       return {
         me: { ...pubUser(ctx.user), payType: ctx.user.payType, payRate: ctx.user.payRate },
         vehicles: db.vehicles.filter((v) => v.companyId === ctx.company.id && (v.status === 'active' || v.id === ctx.user.vehicleId)).map((v) => ({ id: v.id, name: v.name, plate: v.plate || '', type: v.type })),
-        trips: db.trips.filter((t) => t.driverId === ctx.user.id && t.status !== 'cancelled').sort((x, y) => x.pickupAt.localeCompare(y.pickupAt)).map(tripView),
+        // With app calling on, the chauffeur calls and texts through the app, so the passenger's number stays private.
+        trips: db.trips.filter((t) => t.driverId === ctx.user.id && t.status !== 'cancelled').sort((x, y) => x.pickupAt.localeCompare(y.pickupAt)).map(tripView)
+          .map((v) => ({ ...v, canCall: !!v.passengerPhone, chatNew: Math.max(0, (v.chat || []).filter((x) => x.from === 'passenger').length - ((db.trips.find((x) => x.id === v.id) || {}).chatSeenDriverP || 0)), ...(bridgeOn() ? { passengerPhone: '' } : {}) })),
         week: { from: monday.toISOString(), ...driverPay(ctx.user, week) },
         stats: driverStats(ctx.user, 30),
       };
@@ -3603,6 +3610,117 @@
       return pubUser(ctx.user);
     });
     def('driver.availability', ['driver'], true, (ctx, a) => { ctx.user.available = !!a.available; return pubUser(ctx.user); });
+
+    // ---- Calls and messages through the app (Dawit 2026-11-19) ----------------
+    // Calls: the app rings the caller's own phone first, then connects them.
+    // Both people see the company's texting number, never each other's.
+    // Messages: passenger and chauffeur write on the trip. The other person
+    // gets an app notification and a text with the message.
+    const CHAT_OPEN = ['accepted', 'en_route', 'arrived', 'on_board'];
+    const bridgeOn = () => !!(opts.live && opts.live.voice);
+    const chatOf = (t) => t.chat || (t.chat = []);
+    const chatDriver = (t) => (t.driverId && findUser(t.driverId)) || null;
+    function chatAllowed(t) {
+      if (!CHAT_OPEN.includes(t.status) || !t.driverId) return false;
+      // Open until 2 hours after the pickup time, for rides that run long.
+      return now().getTime() < new Date(t.pickupAt).getTime() + Math.max(6, (t.hours || 0) + 3) * 3600e3;
+    }
+    function chatSend(t, from, name, text, via) {
+      const body = str(text, 500).trim();
+      if (!body) fail('Type a message first.');
+      if (!chatAllowed(t)) fail(t.status === 'completed' ? 'This ride is finished, so messages are closed.' : 'Messages open when your chauffeur accepts the ride.');
+      const list = chatOf(t), at = now().toISOString();
+      if (list.filter((x) => x.from === from && new Date(x.at).getTime() > Date.now() - 60e3).length >= 8) fail('Too many messages. Wait a minute and try again.');
+      list.push({ id: id('cm'), from, name: str(name, 60), body, at, ...(via ? { via } : {}) });
+      if (list.length > 200) list.splice(0, list.length - 200);
+      const c = findCompany(t.companyId), d = chatDriver(t);
+      if (!t.trackToken) t.trackToken = randomId(6);
+      if (from === 'driver' && t.passengerPhone) {
+        db.messages.unshift({ id: id('msg'), companyId: c.id, tripId: t.id, ref: t.ref, at, recipient: t.passengerPhone, channel: 'sms', kind: 'chat_passenger',
+          body: `${c.name}: Message from your chauffeur ${String(name || '').split(' ')[0]}: "${body}" Reply here or in the app: ${trackUrl(t)}` });
+      }
+      if (from === 'passenger' && d && d.phone) {
+        db.messages.unshift({ id: id('msg'), companyId: c.id, tripId: t.id, ref: t.ref, at, recipient: d.phone, channel: 'sms', kind: 'chat_driver',
+          body: `${c.name}: Message from passenger ${String(t.passengerName || '').split(' ')[0]} (${t.ref}): "${body}" Reply in the driver app.` });
+      }
+      if (db.messages.length > 600) db.messages.length = 600;
+      return list[list.length - 1];
+    }
+    const chatView = (t) => ({ open: chatAllowed(t), list: (t.chat || []).slice(-60).map((x) => ({ id: x.id, from: x.from, name: x.from === 'driver' ? String(x.name || '').split(' ')[0] : x.name, body: x.body, at: x.at })) });
+    // A call: ring `first` (the person who tapped Call), then connect `second`.
+    function bridgeCall(t, c, first, second, who, by) {
+      const a = phoneKey(first), b = phoneKey(second);
+      if (!a) fail('We need your phone number to connect the call.');
+      if (!b) fail('There is no phone number to call.');
+      if (a === b) fail('That is the same phone number.');
+      const calls = db.messages.filter((m) => m.kind === 'bridge' && m.companyId === c.id && phoneKey(m.recipient) === a && Date.now() - new Date(m.at).getTime() < 3600e3);
+      if (calls.some((m) => Date.now() - new Date(m.at).getTime() < 20e3)) fail('We are calling you now. Please wait a moment.');
+      if (calls.length >= 12) fail('Too many calls in the last hour. Please try again later.');
+      const at = now().toISOString();
+      db.messages.unshift({ id: id('msg'), companyId: c.id, tripId: t ? t.id : null, ref: t ? t.ref : 'Call', at, recipient: first, bridgeTo: second, channel: 'call', kind: 'bridge',
+        body: `Connecting you to ${who}.` });
+      if (db.messages.length > 600) db.messages.length = 600;
+      if (t) log(t, 'call', by, `Call: ${by} to ${who}`);
+      return { ok: true, live: bridgeOn(), ringing: first.replace(/^(.*)(\d{4})$/, (m0, p, l) => '•••' + l) };
+    }
+    def('driver.chat', ['driver'], false, (ctx, a) => {
+      const t = db.trips.find((x) => x.id === a.id && x.driverId === ctx.user.id);
+      if (!t) fail('Trip not found.', 404);
+      if (a.body != null) { chatSend(t, 'driver', ctx.user.name, a.body); ctx.dirty = true; }
+      const seenP = (t.chat || []).filter((x) => x.from === 'passenger').length;
+      if (t.chatSeenDriverP !== seenP) { t.chatSeenDriverP = seenP; ctx.dirty = true; }
+      return chatView(t);
+    });
+    def('driver.call', ['driver'], true, (ctx, a) => {
+      const t = db.trips.find((x) => x.id === a.id && x.driverId === ctx.user.id);
+      if (!t) fail('Trip not found.', 404);
+      if (!chatAllowed(t)) fail('Calls open when you accept the ride.');
+      if (!t.passengerPhone) fail('This ride has no passenger phone number. Call the office.');
+      return bridgeCall(t, ctx.company, ctx.user.phone, t.passengerPhone, 'your passenger', ctx.user.name);
+    });
+    def('customer.chat', ['customer'], false, (ctx, a) => {
+      const t = db.trips.find((x) => x.id === a.id && x.customerId === ctx.user.id);
+      if (!t) fail('Trip not found.', 404);
+      if (a.body != null) { chatSend(t, 'passenger', (t.passengerName || ctx.user.name || '').split(' ')[0], a.body); ctx.dirty = true; }
+      const seenD = (t.chat || []).filter((x) => x.from === 'driver').length;
+      if (t.chatSeenPassengerD !== seenD) { t.chatSeenPassengerD = seenD; ctx.dirty = true; }
+      return chatView(t);
+    });
+    def('customer.callDriver', ['customer'], true, (ctx, a) => {
+      const t = db.trips.find((x) => x.id === a.id && x.customerId === ctx.user.id);
+      if (!t) fail('Trip not found.', 404);
+      const d = chatDriver(t);
+      if (!chatAllowed(t) || !d || !d.phone) fail('You can call your chauffeur once they accept the ride.');
+      return bridgeCall(t, ctx.company, str(a.phone, 30) || t.passengerPhone || ctx.user.phone, d.phone, 'your chauffeur', 'Passenger');
+    });
+    // The tracking page (#track.<token>, no login) has the same message box and Call button.
+    const trackTrip = (a) => { const tok = str(a.token, 40); const t = tok && db.trips.find((x) => x.trackToken === tok); if (!t) fail('This link is not valid.', 404); return t; };
+    def('public.trackChat', 'public', false, (ctx, a) => {
+      const t = trackTrip(a);
+      if (a.body != null) { chatSend(t, 'passenger', (t.passengerName || 'Passenger').split(' ')[0], a.body); ctx.dirty = true; }
+      const seenD = (t.chat || []).filter((x) => x.from === 'driver').length;
+      if (t.chatSeenPassengerD !== seenD) { t.chatSeenPassengerD = seenD; ctx.dirty = true; }
+      return chatView(t);
+    });
+    def('public.trackCall', 'public', true, (ctx, a) => {
+      const t = trackTrip(a), d = chatDriver(t);
+      if (!chatAllowed(t) || !d || !d.phone) fail('You can call your chauffeur once they accept the ride.');
+      if (!t.passengerPhone) fail('There is no phone number on this ride. Please call the office.');
+      return bridgeCall(t, findCompany(t.companyId), t.passengerPhone, d.phone, 'your chauffeur', 'Passenger');
+    });
+    // The office calls a passenger, customer or any number: we ring the
+    // dispatcher's phone first (saved per person), then the client.
+    def('dispatch.call', STAFF, true, (ctx, a) => {
+      const mine = str(a.myPhone, 30).trim() || ctx.user.callFrom || ctx.user.phone || '';
+      if (phoneKey(mine).length < 10) fail('Enter your phone number. We call you first, then connect the client.');
+      if (a.myPhone) ctx.user.callFrom = mine;
+      let t = null, to = str(a.phone, 30), who = str(a.name, 60) || 'the client';
+      if (a.tripId) { t = ownTrip(ctx, str(a.tripId, 40)); to = to || t.passengerPhone; who = t.passengerName || who; }
+      if (a.driverId) { const d = db.users.find((x) => x.id === a.driverId && x.role === 'driver' && x.companyId === ctx.company.id); if (!d || !d.phone) fail('This driver has no phone number.'); to = d.phone; who = d.name; }
+      if (a.driverTrip) { t = ownTrip(ctx, str(a.driverTrip, 40)); const d = chatDriver(t); if (!d || !d.phone) fail('This ride has no driver phone number.'); to = d.phone; who = d.name; }
+      return bridgeCall(t, ctx.company, mine, to, who, ctx.user.name);
+    });
+    def('dispatch.callFrom', STAFF, false, (ctx) => ({ phone: ctx.user.callFrom || ctx.user.phone || '', live: bridgeOn() }));
     def('dispatch.board', STAFF, false, (ctx, a) => {
       if (monitorFlights(ctx.company)) ctx.dirty = true;
       const from = new Date(a.from), to = new Date(a.to);
@@ -4977,6 +5095,10 @@
       inboxOf().unshift({ id: id('sms'), companyId, key, phone: str(from, 30), dir: 'in', body: str(words, 1600) + (media ? `${words ? ' ' : ''}[${media === 1 ? 'a picture' : media + ' pictures'}]` : ''), at: at || now().toISOString(), read: false,
         tripId: p.trip ? p.trip.id : null, ref: p.trip ? p.trip.ref : '', sid: str(sid, 64), ...(stop ? { stop: true } : {}), ...(start ? { start: true } : {}) });
       if (db.inbox.length > 3000) db.inbox.length = 3000;
+      // A passenger's text during the ride also reaches the chauffeur.
+      if (p.trip && p.who === 'Passenger' && words && !stop && !start && chatAllowed(p.trip)) {
+        try { chatSend(p.trip, 'passenger', (p.trip.passengerName || 'Passenger').split(' ')[0], words, 'sms'); } catch (e) { /* too many or closed */ }
+      }
       return { ok: true, routed: !!companyId };
     }
 

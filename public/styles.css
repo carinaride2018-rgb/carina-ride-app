@@ -1174,3 +1174,9 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   body:has(.topbar.fewtabs .tabs button) .booking.app .bkcta { bottom: calc(54px + env(safe-area-inset-bottom, 0px)); }
   body:has(.topbar.fewtabs .tabs button) .booking.app .bkbar:not([hidden]) { bottom: calc(54px + env(safe-area-inset-bottom, 0px)); }
 }
+/* Calls and messages through the app */
+.badge { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: #d93025; color: #fff; font-size: 11px; font-weight: 700; vertical-align: middle; }
+.chat { display: flex; flex-direction: column; gap: 8px; }
+.chat .chat-msgs { min-height: 120px; max-height: 50vh; background: var(--surface);  border: 1px solid var(--line); border-radius: var(--r); padding: 8px; }
+.chat .chat-form textarea { min-height: 44px; }
+.chat .bub.in .bt { background: var(--surface-2); border: 1px solid var(--line); }

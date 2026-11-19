@@ -139,6 +139,19 @@ function createProviders(rawEnv, opts) {
     });
     return r && r.sid;
   }
+  // A connected call: ring `to` first, then dial `other`. Both see the
+  // company's Twilio number, so personal numbers stay private.
+  async function placeBridge(to, other, body) {
+    const sid = env.TWILIO_ACCOUNT_SID, from = voiceFrom();
+    if (!from) throw new Error('Set TWILIO_VOICE_FROM to a Twilio phone number to place calls');
+    const x = (t) => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const twiml = `<Response><Say voice="Polly.Joanna">${x(body)}</Say><Dial callerId="${x(from)}" timeout="30" answerOnBridge="true"><Number>${x(other)}</Number></Dial><Say voice="Polly.Joanna">The call could not be connected. Please try again.</Say></Response>`;
+    const r = await request('POST', `${url('TWILIO', 'https://api.twilio.com')}/2010-04-01/Accounts/${encodeURIComponent(sid)}/Calls.json`, {
+      headers: { Authorization: 'Basic ' + Buffer.from(`${sid}:${env.TWILIO_AUTH_TOKEN}`).toString('base64') }, form: { To: to, From: from, Twiml: twiml },
+    });
+    return r && r.sid;
+  }
+  on.voice = has('TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN') && !!voiceFrom();
   // Twilio's delivery state for one sent text, e.g. delivered, or undelivered with error 30034.
   async function smsStatus(msgSid) {
     // Signal House reports delivery by callback, not by lookup: treat an accepted text as sent.
@@ -187,6 +200,13 @@ function createProviders(rawEnv, opts) {
     if (m.channel === 'call') {
       if (!phone) return { id: m.id, status: 'skipped', error: 'No phone number' };
       if (!on.sms) return { id: m.id, status: 'simulated' };
+      if (m.kind === 'bridge') {
+        const other = e164(String(m.bridgeTo || ''));
+        if (!other) return { id: m.id, status: 'skipped', error: 'No phone number to connect' };
+        if (!on.voice) return { id: m.id, status: 'simulated' };
+        try { return { id: m.id, status: 'sent', via: String((await placeBridge(phone, other, m.body)) || '') }; }
+        catch (e) { log(`call to ${rcpt} failed: ${e.message}`); return { id: m.id, status: 'failed', error: e.message }; }
+      }
       try { return { id: m.id, status: 'sent', via: String((await placeCall(phone, m.body, m.answerUrl)) || '') }; }
       catch (e) { log(`call to ${rcpt} failed: ${e.message}`); return { id: m.id, status: 'failed', error: e.message }; }
     }

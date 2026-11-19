@@ -250,7 +250,7 @@
 
   // ---- UI primitives --------------------------------------------------------
   let toastTimer = null;
-  const HIST_LABELS = { special_ok: 'Driver confirmed the special requests', driver_told: 'Driver texted the change', wake_call: 'Wake-up call', wake_ok: 'Driver confirmed awake', wake_alert: 'Office alerted: no answer to wake-up call', late_alert: 'Office alerted: driver not on the way', confirm_resent: 'Confirmation sent again', receipt_sent: 'Receipt emailed', paid: 'Charged', refunded: 'Refunded', card_failed: 'Card declined', card_saved: 'Card saved', card_link: 'Card link sent', no_show: 'No-show', no_show_asked: 'Driver reported a no-show', no_show_declined: 'Dispatch: keep waiting', pickup_moved: 'Pickup moved', flight_cancelled: 'Flight cancelled', declined: 'Declined', edited: 'Edited', unassigned: 'Unassigned', no_answer: 'No answer in time', farm_offered: 'Offered to partner', farm_accepted: 'Partner accepted', farm_declined: 'Partner declined', farm_cancelled: 'Taken back from partner', farm_returned: 'Partner handed it back', farm_expired: 'Partner offer expired', farm_completed: 'Partner completed', auto_farm_none: 'Automatic farm-out stopped', posted: 'Posted to trip board', post_expired: 'Trip board: nobody took it', post_cancelled: 'Taken off the trip board' };
+  const HIST_LABELS = { call: 'Call', special_ok: 'Driver confirmed the special requests', driver_told: 'Driver texted the change', wake_call: 'Wake-up call', wake_ok: 'Driver confirmed awake', wake_alert: 'Office alerted: no answer to wake-up call', late_alert: 'Office alerted: driver not on the way', confirm_resent: 'Confirmation sent again', receipt_sent: 'Receipt emailed', paid: 'Charged', refunded: 'Refunded', card_failed: 'Card declined', card_saved: 'Card saved', card_link: 'Card link sent', no_show: 'No-show', no_show_asked: 'Driver reported a no-show', no_show_declined: 'Dispatch: keep waiting', pickup_moved: 'Pickup moved', flight_cancelled: 'Flight cancelled', declined: 'Declined', edited: 'Edited', unassigned: 'Unassigned', no_answer: 'No answer in time', farm_offered: 'Offered to partner', farm_accepted: 'Partner accepted', farm_declined: 'Partner declined', farm_cancelled: 'Taken back from partner', farm_returned: 'Partner handed it back', farm_expired: 'Partner offer expired', farm_completed: 'Partner completed', auto_farm_none: 'Automatic farm-out stopped', posted: 'Posted to trip board', post_expired: 'Trip board: nobody took it', post_cancelled: 'Taken off the trip board' };
   function toast(text, bad, ms) {
     let el = $('.toast');
     if (!el) { el = document.createElement('div'); el.className = 'toast'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
@@ -295,6 +295,73 @@
   async function busy(btn, fn) {
     if (btn) btn.disabled = true;
     try { return await fn(); } finally { if (btn) btn.disabled = false; }
+  }
+
+  // ---- Calls and messages through the app (2026-11-19) ----------------------
+  // Call: the app rings your own phone first, then connects the other person.
+  // Both see the company number, so personal numbers stay private. On a live
+  // site without Twilio calling, the button dials the number directly instead.
+  const useBridge = async () => { const L = await getLive(); return DEMO || !!L.sample || !!(L.live && L.live.voice); };
+  async function appCall(btn, method, args, fallbackTel) {
+    if (!(await useBridge())) {
+      if (fallbackTel) { location.href = 'tel:' + String(fallbackTel).replace(/[^\d+]/g, ''); return; }
+      return toast('Calls are not switched on yet. Please call the office.', true);
+    }
+    return busy(btn, async () => {
+      try {
+        const r = await api(method, args);
+        toast(r.live ? `Calling your phone (${r.ringing}) now. Answer it and we connect you.` : `Sample site: no real call. On the live site your phone (${r.ringing}) rings first, then we connect you.`, false, 7000);
+      } catch (e) { toast(e.message, true); }
+    });
+  }
+  // Messages between passenger and chauffeur on one ride. `call(body)` loads
+  // the messages (body null) or sends one. `me` is 'driver' or 'passenger'.
+  function mountChat(host, { call, me, other }) {
+    host.innerHTML = `<div class="chat"><div class="ib-msgs chat-msgs"><p class="faint small">Loading…</p></div>
+      <form class="ib-form chat-form" novalidate><textarea class="input" rows="1" maxlength="500" placeholder="Message ${esc(other)}…" aria-label="Message"></textarea><button class="btn primary" type="submit">Send</button></form>
+      <p class="small faint chat-note"></p></div>`;
+    const box = $('.chat-msgs', host), f = $('.chat-form', host), ta = $('textarea', f), note = $('.chat-note', host);
+    let sig = '', stopped = false;
+    const draw = (d) => {
+      const s = JSON.stringify(d); if (s === sig) return; sig = s;
+      box.innerHTML = d.list.length ? d.list.map((x) => `<div class="bub ${x.from === me ? 'out' : 'in'}"><div class="bt">${esc(x.body)}</div><div class="bm">${x.from === me ? 'You' : esc(x.name || (x.from === 'driver' ? 'Chauffeur' : 'Passenger'))} · ${esc(fmtTime(x.at))}</div></div>`).join('')
+        : `<p class="faint small">No messages yet. Write to ${esc(other)} below.</p>`;
+      box.scrollTop = box.scrollHeight;
+      ta.disabled = !d.open; $('button', f).disabled = !d.open;
+      note.textContent = d.open ? `${me === 'driver' ? 'The passenger' : 'Your chauffeur'} also gets it as a text. Your phone number stays private.` : 'Messages are closed for this ride.';
+    };
+    const load = async () => { if (stopped) return; try { draw(await call(null)); } catch (e) { note.textContent = e.message; } };
+    ta.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); f.requestSubmit(); } };
+    f.onsubmit = (e) => {
+      e.preventDefault();
+      if (!ta.value.trim()) return ta.focus();
+      busy($('button', f), async () => { try { draw(await call(ta.value)); ta.value = ''; ta.focus(); } catch (err) { toast(err.message, true); } });
+    };
+    load();
+    const timer = setInterval(() => { if (!host.isConnected) { clearInterval(timer); return; } load(); }, 6000);
+    return { stop() { stopped = true; clearInterval(timer); }, load };
+  }
+  function chatModal(title, opts) {
+    const m = openModal({ title, body: '<div id="chat-host"></div>' });
+    const ch = mountChat($('#chat-host', m), opts);
+    m._onClose = () => ch.stop();
+  }
+  // The office: ring my phone first, then the client. Asks for my number once.
+  async function officeCall(btn, args, label) {
+    if (!(await useBridge())) { if (args.phone || args.fallback) location.href = 'tel:' + String(args.phone || args.fallback).replace(/[^\d+]/g, ''); return; }
+    let me = '';
+    try { me = (await api('dispatch.callFrom')).phone || ''; } catch (e) { /* ask below */ }
+    const m = openModal({ title: `Call ${label}`, body: `<form id="oc" class="stack" novalidate><p class="small muted">We call your phone first. When you answer, we connect ${esc(label)}. They see the company number, not yours.</p>
+      <label class="field"><span>Your phone</span><input name="myPhone" type="tel" value="${esc(me)}" required></label><div id="oc-err"></div></form>`,
+      footer: '<button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="oc-go">Call now</button>' });
+    $('[data-close]', m).onclick = closeModal;
+    const go = $('#oc-go', m);
+    $('#oc', m).onsubmit = (e) => { e.preventDefault(); go.click(); };
+    go.onclick = () => busy(go, async () => {
+      const { fallback, ...rest } = args;
+      try { const r = await api('dispatch.call', { ...rest, myPhone: $('[name=myPhone]', m).value }); closeModal(); toast(r.live ? `Calling your phone (${r.ringing}) now. Answer it and we connect ${label}.` : `Sample site: no real call. On the live site your phone (${r.ringing}) rings first, then ${label}.`, false, 7000); }
+      catch (err) { showErr($('#oc-err', m), err); }
+    });
   }
 
   // ---- Shell and routing ----------------------------------------------------
@@ -999,15 +1066,20 @@
         ${d.driver ? `<div class="panel">${chauffeurCard(d.driver, d.vehicle)}</div>` : ''}
         <div class="panel"><dl class="kv">${!d.driver && d.vehicle ? `<dt>Vehicle</dt><dd>${esc(carLine(d.vehicle))}</dd>${d.vehicle.plate ? `<dt>Plate</dt><dd class="mono">${esc(d.vehicle.plate)}</dd>` : ''}` : ''}
           <dt>Pickup</dt><dd>${esc(d.pickup)}</dd><dt>Time</dt><dd>${esc(fmtDT(d.pickupAt))}</dd></dl></div>
-        ${d.driver && d.driver.phone ? `<a class="btn primary" href="tel:${esc(d.driver.phone.replace(/[^\d+]/g, ''))}">Call your driver</a>` : ''}
+        ${d.canCall || (d.driver && d.driver.phone) ? `<button class="btn primary" type="button" id="tk-call">Call your chauffeur</button>` : ''}
+        ${d.chat ? `<div class="panel stack" style="gap:8px"><b>Message your chauffeur</b><div class="tk-chat-slot"></div></div>` : ''}
         ${d.company.phone ? `<a class="btn" href="tel:${esc(d.company.phone.replace(/[^\d+]/g, ''))}">Call ${esc(d.company.name)}</a>` : ''}
       </div>`;
+      const kc = $('#tk-call', v); if (kc) kc.onclick = () => (d.canCall ? appCall(kc, 'public.trackCall', { token }, d.driver && d.driver.phone) : (location.href = 'tel:' + d.driver.phone.replace(/[^\d+]/g, '')));
+      // The message box lives outside the page refresh, so typing isn't lost.
+      const cs = $('.tk-chat-slot', v);
+      if (cs) { if (!tk.chat) { tk.chatEl = document.createElement('div'); tk.chat = mountChat(tk.chatEl, { me: 'passenger', other: 'your chauffeur', call: (body) => api('public.trackChat', { token, body }) }); } cs.appendChild(tk.chatEl); }
 
       return d;
     };
     // With a Google Maps key the passenger gets a real street map: the car at
     // the driver's live GPS spot and the pickup pin. The map survives refreshes.
-    const tg = { on: false };
+    const tg = { on: false }, tk = {};
     const info = await getLive();
     if (!DEMO && info.mapsKey) { try { await loadGoogle(info.mapsKey); tg.on = true; } catch (e) { tg.on = false; } }
     const paint = (d) => {
@@ -3103,6 +3175,7 @@
           ${t.status === 'completed' && t.driver ? (t.rating ? `<div class="small muted">You rated this ride <span class="stars">${'★'.repeat(t.rating.stars)}${'☆'.repeat(5 - t.rating.stars)}</span></div>` : `<div class="row small"><span class="muted">Rate your ride with ${esc(t.driver.name.split(' ')[0])}:</span><span class="stars rate">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-act="rate" data-id="${t.id}" data-stars="${n}" aria-label="${n} star${n > 1 ? 's' : ''}">★</button>`).join('')}</span></div>`) : ''}
           ${t.live ? trackMap(t.live, t.pickup) : ''}
           ${showDriver ? chauffeurCard(t.driver, t.vehicle, t.status === 'en_route' ? 'On the way to you now.' : t.status === 'arrived' ? 'Waiting at your pickup.' : '') : ''}
+          ${t.chatOpen && t.driver && t.driverId ? `<div class="grid2"><button class="btn primary sm" type="button" data-act="calldrv" data-id="${t.id}">Call chauffeur</button><button class="btn sm" type="button" data-act="chat" data-id="${t.id}">Message chauffeur${(t.chat || []).filter((x) => x.from === 'driver').length > (t.chatSeenPassengerD || 0) ? ' <span class="badge">New</span>' : ''}</button></div>` : ''}
           <div class="row">
             ${t.account && t.status !== 'cancelled' ? `<span class="small muted">Billed to ${esc(t.account.name)}${t.poNumber ? ' · PO ' + esc(t.poNumber) : ''}</span>` : ''}
             ${t.pay && (t.pay.needsCard || t.pay.failed) && t.status !== 'cancelled' ? (t.agent && t.agent.payBy === 'passenger' ? `<span class="small muted">Waiting for ${esc((t.passengerName || 'your client').split(' ')[0])} to add a card. <a href="#card.${esc(t.cardToken)}">Add it for them</a></span>` : `<a class="btn brand sm" href="#card.${esc(t.cardToken)}">${t.pay.needsCard ? 'Add a card' : 'Update card'}</a>`) : ''}
@@ -3200,6 +3273,8 @@
         }
         if (kind === 'pay') payModal(t, () => { last = ''; refresh(); });
         if (kind === 'receipt') receiptModal(t);
+        if (kind === 'calldrv') await appCall(btn, 'customer.callDriver', { id: t.id }, t.driver && t.driver.phone);
+        if (kind === 'chat') chatModal(`Message ${t.driver.name.split(' ')[0]}`, { me: 'passenger', other: t.driver.name.split(' ')[0], call: (body) => api('customer.chat', { id: t.id, body }) });
         if (kind === 'rate') await busy(btn, async () => { try { await api('customer.rate', { id: t.id, stars: +btn.dataset.stars }); toast('Thanks for rating your ride.'); last = ''; refresh(); } catch (e) { toast(e.message, true); } });
       }
     }
@@ -3451,8 +3526,11 @@
         ${t.status === 'completed' ? '' : `<dt>Fare</dt><dd>${fare}</dd>`}</dl>
       ${t.special && t.special.items.length ? `<div class="spbox ${t.special.pending ? 'need' : ''}"><b>Special requests${t.special.changed ? ' (changed by the office)' : ''}</b><ul>${t.special.items.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>${t.special.pending ? '<button class="btn primary" type="button" id="dt-ack">Confirm special requests</button>' : t.special.ackAt ? `<span class="small spok">✓ You confirmed these ${esc(fmtDT(t.special.ackAt))}.</span>` : ''}</div>` : ''}
       <div class="grid2"><a class="btn" href="${esc(mapsLink(t.pickup))}" target="_blank" rel="noopener">Map to pickup</a>${t.dropoff ? `<a class="btn" href="${esc(mapsLink(t.dropoff))}" target="_blank" rel="noopener">Map to drop-off</a>` : ''}</div>
+      ${t.chatOpen && (t.canCall || t.passengerPhone) ? '<div class="grid2"><button class="btn" type="button" id="dtm-call">Call passenger</button><button class="btn" type="button" id="dtm-chat">Message passenger</button></div>' : ''}
       ${['accepted', 'assigned'].includes(t.status) ? '<button class="btn" type="button" id="dtm-sign">Show name sign</button>' : ''}
     </div>` });
+    const dc = $('#dtm-call', m); if (dc) dc.onclick = () => appCall(dc, 'driver.call', { id: t.id }, t.passengerPhone);
+    const dch = $('#dtm-chat', m); if (dch) dch.onclick = () => { const nm = (t.passengerName || 'passenger').split(' ')[0]; chatModal(`Message ${nm}`, { me: 'driver', other: nm, call: (body) => api('driver.chat', { id: t.id, body }) }); };
     const sg = $('#dtm-sign', m); if (sg) sg.onclick = () => nameSign(t);
     const ak = $('#dt-ack', m); if (ak) ak.onclick = () => busy(ak, async () => { try { await api('driver.ackSpecial', { id: t.id }); closeModal(); toast('Special requests confirmed. The office can see it.'); render(); } catch (err) { toast(err.message, true); } });
   }
@@ -3551,6 +3629,7 @@
                 ${extrasList(live).length ? `<dt>Requests</dt><dd>${esc(extrasList(live).join(' · '))}</dd>` : ''}
                 ${live.notes ? `<dt>Notes</dt><dd>${esc(live.notes)}</dd>` : ''}
                 ${live.farmIn ? `<dt>Fare</dt><dd>Billed to ${esc(live.farmIn.fromName)}. Don't collect payment.</dd>` : live.pay ? `<dt>Fare</dt><dd><span class="num">${money(live.price.total)}</span> · paid by card. Don't take payment.</dd>` : `<dt>Fare</dt><dd><span class="num">${money(live.price.total)}</span> · the office handles payment. Don't take payment.</dd>`}</dl>
+              ${live.chatOpen && (live.canCall || live.passengerPhone) ? `<div class="grid2 drv-talk"><button class="btn" type="button" data-act="callpax" data-id="${live.id}">Call passenger</button><button class="btn" type="button" data-act="chat" data-id="${live.id}">Message passenger${live.chatNew ? ` <span class="badge">${live.chatNew} new</span>` : ''}</button></div>` : ''}
               ${specialBox(live, 'card')}
               <button class="btn primary drv-next" type="button" data-act="advance" data-st="${live.status}" data-id="${live.id}">${esc(NEXT_LABEL[live.status])}</button>
               <div class="grid2 drv-btns"><a class="btn" href="${esc(mapsLink(live.status === 'on_board' && live.dropoff ? live.dropoff : live.pickup))}" target="_blank" rel="noopener">Navigate to ${live.status === 'on_board' && live.dropoff ? 'drop-off' : 'pickup'}</a>
@@ -3591,6 +3670,8 @@
         : b.dataset.act === 'tab' ? (drvTab = b.dataset.tab, last = '', refresh(true))
         : b.dataset.act === 'allpast' ? (allPast = !allPast, last = '', refresh(true))
         : b.dataset.act === 'advance' && b.dataset.st === 'accepted' && !b.dataset.sure ? confirmStart(b)
+        : b.dataset.act === 'callpax' ? (() => { const t = trips.find((x) => x.id === b.dataset.id); appCall(b, 'driver.call', { id: t.id }, t.passengerPhone); })()
+        : b.dataset.act === 'chat' ? (() => { const t = trips.find((x) => x.id === b.dataset.id); const nm = (t.passengerName || 'passenger').split(' ')[0]; chatModal(`Message ${nm}`, { me: 'driver', other: nm, call: (body) => api('driver.chat', { id: t.id, body }) }); const mm = modalEl; if (mm) { const prev = mm._onClose; mm._onClose = () => { if (prev) prev(); last = ''; refresh(); }; } })()
         : b.dataset.act === 'calendar' ? driverCalendar() : b.dataset.act === 'photo' ? myPhoto(me) : b.dataset.act === 'sign' ? nameSign(trips.find((x) => x.id === b.dataset.id)) : b.dataset.act === 'incident' ? incidentModal({ trip: (() => { const t = trips.find((x) => x.id === b.dataset.id); return t ? { id: t.id, ref: t.ref, pickupAt: t.pickupAt, passengerName: t.passengerName } : null; })() }, { done: () => {} }) : b.dataset.act === 'noshow' ? noShowModal(trips.find((x) => x.id === b.dataset.id), 'driver.noShow', () => { last = ''; refresh(); }) : busy(b, async () => {
         const id = b.dataset.id;
         try {
@@ -3840,11 +3921,12 @@
           openSig = head;
           box.innerHTML = `<div class="ib-head"><button class="btn sm ib-back" type="button" id="ib-back" aria-label="All conversations">‹</button>
               <div class="grow"><b>${who(th)}</b>${th.who ? ` <span class="pill">${esc(th.who)}</span>` : ''}
-              <div class="small muted">${th.phone ? `<a href="tel:${esc(th.phone)}">${esc(th.phone)}</a>` : ''}${th.trip ? ` · <button type="button" class="linkbtn" id="ib-trip">${esc(th.trip.ref)}, ${esc(fmtDT(th.trip.pickupAt))}</button>` : ''}</div></div></div>
+              <div class="small muted">${th.phone ? `<a href="tel:${esc(th.phone)}">${esc(th.phone)}</a>` : ''}${th.trip ? ` · <button type="button" class="linkbtn" id="ib-trip">${esc(th.trip.ref)}, ${esc(fmtDT(th.trip.pickupAt))}</button>` : ''}</div></div>${th.phone ? '<button class="btn sm primary" type="button" id="ib-call">Call</button>' : ''}</div>
             <div class="ib-msgs" id="ib-msgs"></div>
             <form class="ib-form" id="ib-form" novalidate><textarea class="input" id="ib-text" rows="2" maxlength="560" placeholder="Type a reply…" aria-label="Reply" ${blocked ? 'disabled' : ''}></textarea><button class="btn primary" type="submit" ${blocked ? 'disabled' : ''}>Send</button></form>
             <p class="small faint" id="ib-note"></p>`;
           $('#ib-back', box).onclick = () => { inboxOpen = null; ib.classList.remove('open'); openSig = ''; lastTh = ''; box.innerHTML = '<p class="faint ib-pick">Pick a conversation to read it and reply.</p>'; last = ''; refresh(); };
+          const ibc = $('#ib-call', box); if (ibc) ibc.onclick = () => officeCall(ibc, { phone: th.phone, name: th.name || '' }, th.name ? th.name.split(' ')[0] : th.phone);
           const tb = $('#ib-trip', box); if (tb) tb.onclick = () => tripModal(th.trip.id, () => { lastTh = ''; refresh(); });
           const f = $('#ib-form', box), ta = $('#ib-text', box);
           ta.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); f.requestSubmit(); } };
@@ -4355,7 +4437,9 @@
               <button class="btn sm" type="button" id="te-sheet">Print trip sheet</button>
               ${t.status !== 'cancelled' && (t.passengerEmail || t.passengerPhone) ? '<button class="btn sm" type="button" id="te-confirm">Resend confirmation</button>' : ''}
               ${t.status === 'completed' || t.payment.status === 'paid' ? '<button class="btn sm" type="button" id="te-receipt">Receipt</button>' : ''}
-              ${t.passengerPhone ? '<button class="btn sm" type="button" id="te-text">Text passenger</button>' : ''}
+              ${t.driver && t.driver.phone && t.driverId ? '<div class="grid2"><button class="btn sm" type="button" id="te-calldrv">Call driver</button><button class="btn sm" type="button" id="te-textdrv">Text driver</button></div>' : ''}
+              ${t.passengerPhone ? '<div class="grid2"><button class="btn sm" type="button" id="te-callpax">Call passenger</button><button class="btn sm" type="button" id="te-text">Text passenger</button></div>' : ''}
+              ${(t.chat || []).length ? '<button class="btn sm" type="button" id="te-chat">Passenger and driver messages (' + t.chat.length + ')</button>' : ''}
               ${canFarm ? '<button class="btn sm" type="button" id="te-farm">Send to a partner company</button><button class="btn sm" type="button" id="te-affsend">Send to an outside affiliate</button><button class="btn sm" type="button" id="te-post">Post to city board</button>' : ''}
               ${t.netPost && ['open', 'closed'].includes(t.netPost.status) ? `<p class="small muted" style="margin:0">On the ${esc(t.netPost.label)} trip board${t.netPost.status === 'closed' ? ': prices are in, choose one' : ''}. <button class="linkbtn small" type="button" id="te-board">Open trip board</button></p>` : ''}
             </div>` : ''}
@@ -4453,6 +4537,10 @@
         busy(hb, async () => { try { await api('network.handBack', { tripId: id, reason: $('#te-hbreason', m).value }); toast(`Handed back to ${t.farmIn.fromName}.`); closeModal(); } catch (err) { toast(err.message, true); } });
       };
       const tx = $('#te-text', m); if (tx) tx.onclick = () => { inboxOpen = { tripId: t.id }; m._onClose = null; closeModal(); go2('inbox'); };
+      const tdc = $('#te-calldrv', m); if (tdc) tdc.onclick = () => { m._onClose = null; officeCall(tdc, { driverTrip: t.id, fallback: t.driver.phone }, t.driver.name.split(' ')[0]); };
+      const tdt = $('#te-textdrv', m); if (tdt) tdt.onclick = () => { inboxOpen = { key: t.driver.phone }; m._onClose = null; closeModal(); go2('inbox'); };
+      const tpc = $('#te-callpax', m); if (tpc) tpc.onclick = () => { m._onClose = null; officeCall(tpc, { tripId: t.id, fallback: t.passengerPhone }, (t.passengerName || 'the passenger').split(' ')[0]); };
+      const tch = $('#te-chat', m); if (tch) tch.onclick = () => openModal({ title: `${t.ref} · passenger and driver`, body: `<div class="ib-msgs">${t.chat.map((x) => `<div class="bub ${x.from === 'driver' ? 'out' : 'in'}"><div class="bt">${esc(x.body)}</div><div class="bm">${x.from === 'driver' ? 'Driver' : 'Passenger'} ${esc(x.name || '')} · ${esc(fmtDT(x.at))}</div></div>`).join('')}</div>`, onClose: () => tripModal(id, done) });
       const mp = $('#te-msgpartner', m); if (mp) mp.onclick = () => { netState.sub = 'messages'; netState.partner = mp.dataset.partner; m._onClose = null; closeModal(); go2('network'); };
       const rc = $('#te-confirm', m); if (rc) rc.onclick = (e) => busy(e.currentTarget, async () => {
         try { const r = await api('dispatch.resendConfirmation', { id }); toast(`Confirmation sent to ${r.sent.join(' and ')}.`); reopen(); } catch (err) { toast(err.message, true); }
@@ -5420,6 +5508,7 @@
             <div class="tile"><span class="label">On time</span><b>${pct(s.onTime)}</b></div>
             <div class="tile"><span class="label">Last 30 days</span><b>${s.completed30} trips</b><span class="small faint">${money0(s.revenue30)} billed</span></div></div>` : ''}
           ${id ? `<div id="dm-photo">${photoField(d.name, d.photo, 'dm-photofile')}</div>` : ''}
+          ${id && d.phone ? `<div class="row"><button class="btn primary sm" type="button" id="dm-call">Call ${esc(d.name.split(' ')[0])}</button><button class="btn sm" type="button" id="dm-text">Text ${esc(d.name.split(' ')[0])}</button></div>` : ''}
           <form id="dm" class="stack" novalidate>
             <h3>Contact and login</h3>
             <div class="grid3"><label class="field"><span>Full name</span><input id="dm-name" name="name" value="${esc(d.name)}"></label>
@@ -5447,6 +5536,8 @@
         if (!confirm(`Delete ${d.name}?\n\nThis removes the driver and their login. It cannot be undone. A driver with trips on record cannot be deleted: turn off "Login enabled" instead.`)) return;
         busy(db1, async () => { try { await api('dispatch.deleteDriver', { id }); toast(`${d.name} deleted.`); closeModal(); done && done(); } catch (err) { showErr($('#dm-err', m), err); } });
       };
+      const dmc = $('#dm-call', m); if (dmc) dmc.onclick = () => { m._onClose = null; officeCall(dmc, { driverId: id, fallback: d.phone }, d.name.split(' ')[0]); };
+      const dmt = $('#dm-text', m); if (dmt) dmt.onclick = () => { inboxOpen = { key: d.phone }; m._onClose = null; closeModal(); go2('inbox'); };
       const lb = $('#dm-login', m); if (lb) lb.onclick = () => busy(lb, async () => {
         try {
           const r = await api('dispatch.sendDriverLogin', { id });
