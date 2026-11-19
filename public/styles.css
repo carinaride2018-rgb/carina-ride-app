@@ -1081,3 +1081,96 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .lp-cmp thead .lp-us { background: color-mix(in srgb, var(--brand) 14%, var(--surface-2)); }
 .lp-yes { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--brand); color: #fff; font-size: 15px; font-weight: 800; }
 @media (max-width: 600px) { .lp-cmp { font-size: 12px; } .lp-cmp th, .lp-cmp td { padding: 10px 5px; overflow-wrap: normal; word-break: normal; } .lp-cmp col.f { width: 30%; } .lp-yes { width: 22px; height: 22px; font-size: 13px; } }
+
+/* App-style booking form (passengers and agents): phone first, big tap targets,
+   step progress, ride-app vehicle list, sticky price and next buttons. */
+.booking.app { --ar: 14px; }
+.booking.app.step1 { grid-template-columns: minmax(0, 620px); }
+.booking.app:not(.step1) { grid-template-columns: minmax(0, 1fr) 360px; max-width: 1080px; }
+@media (max-width: 860px) { .booking.app:not(.step1) { grid-template-columns: 1fr; } }
+.booking.app > .panel { border-radius: 20px; padding: 22px; box-shadow: var(--shadow); }
+.booking.app .bkstep-head { flex-direction: column; gap: 10px; }
+.booking.app .stepno { display: none; }
+.booking.app .bkstepof { display: block; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--brand); margin-bottom: 2px; }
+.booking.app .bkstep-head h2 { font-size: 24px; }
+.bkprog { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; width: 100%; }
+.bkprog i { height: 5px; border-radius: 3px; background: var(--line); }
+.bkprog i.on { background: var(--brand); }
+.bkstepof { display: none; }
+/* Bigger fields: 16px text so phones do not zoom in. */
+.booking.app .field input, .booking.app .field select, .booking.app .field textarea { min-height: 52px; font-size: 16px; border-radius: var(--ar); padding: 12px 14px; }
+.booking.app .field textarea { min-height: 90px; }
+.booking.app .field > span { font-size: 13.5px; }
+/* Transfer / By the hour and One way / Round trip: full-width pill switches. */
+.booking.app .segrow { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.booking.app .segrow .seg { display: grid; grid-template-columns: 1fr 1fr; border-radius: 999px; padding: 4px; gap: 4px; background: var(--surface-2); border-color: var(--line); }
+.booking.app .segrow .seg button { border: 0; border-radius: 999px; min-height: 44px; padding: 8px 10px; font-size: 15px; }
+.booking.app .segrow .seg button[aria-pressed="true"] { background: var(--brand); color: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.18); }
+.booking.app .segrow > .small:empty { display: none; }
+.booking.app .segrow > .small { grid-column: 1 / -1; }
+@media (max-width: 520px) { .booking.app .segrow { grid-template-columns: 1fr; } }
+/* Date and time side by side, also on phones. */
+.booking.app .whenrow { grid-template-columns: 1fr 1fr; }
+.booking.app .whenrow > [data-show="hourly"] { grid-column: 1 / -1; }
+@media (min-width: 641px) { .booking.app .whenrow:has(> [data-show="hourly"]:not([hidden])) { grid-template-columns: 1fr 1fr 1fr; } .booking.app .whenrow > [data-show="hourly"] { grid-column: auto; } }
+/* Pickup and drop-off in one route card, with a dot and a square like a ride app. */
+.routebox { display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface-2); }
+.routebox .rpick, .routebox .rdrop, .routebox .stoprow .field.grow { position: relative; }
+.routebox .rpick input, .routebox .rdrop input, .routebox [data-stop] { padding-left: 40px !important; }
+.routebox .rpick::after, .routebox .rdrop::after, .routebox .stoprow .field.grow::after { content: ""; position: absolute; left: 15px; bottom: 21px; width: 10px; height: 10px; }
+.routebox .rpick::after { border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
+.routebox .rdrop::after { background: var(--ink); border-radius: 2px; }
+.routebox .stoprow .field.grow::after { border-radius: 50%; border: 2px solid var(--ink-3); width: 8px; height: 8px; left: 16px; }
+.booking.app .swaprow { margin: -6px 0 !important; }
+.booking.app #bk-swap { border-radius: 999px; min-height: 34px; }
+.booking.app .stoprow { align-items: end; }
+.booking.app .stoprow .btn { min-height: 52px; border-radius: var(--ar); }
+.booking.app .linkbtn { font-weight: 600; text-decoration: none; min-height: 36px; }
+/* Sticky main button on step 1. */
+.booking.app .bkcta { position: sticky; bottom: 0; z-index: 5; margin: 0 -22px -22px; padding: 14px 22px 18px; background: linear-gradient(to bottom, transparent, var(--surface) 22%); border-radius: 0 0 20px 20px; }
+.booking.app .btn.big { min-height: 56px; border-radius: 999px; font-size: 17px; font-weight: 700; }
+/* Vehicle list: photo, name and size, price on the right. */
+.booking.app .vehicles { grid-template-columns: 1fr; gap: 10px; }
+.booking.app .vcard { display: grid; grid-template-columns: 112px minmax(0, 1fr) auto; column-gap: 14px; row-gap: 2px; align-items: center; padding: 10px 14px 10px 10px; border-radius: 16px; min-height: 84px; transition: border-color .15s, background .15s; }
+.booking.app .vcard .vpic { grid-column: 1; grid-row: 1 / span 4; margin: 0; border-radius: 10px; align-self: center; }
+.booking.app .vcard > b, .booking.app .vcard > span:not(.vprice):not(.vpic) { grid-column: 2; }
+.booking.app .vcard > b { font-size: 16px; align-self: end; }
+.booking.app .vcard > span:not(.vprice):not(.vpic):not(.vmodel) { align-self: start; }
+.booking.app .vcard .vprice { grid-column: 3; grid-row: 1 / span 4; align-self: center; font-size: 17px; font-weight: 700; text-align: right; white-space: nowrap; }
+.booking.app .vcard .vprice:empty { display: block; }
+.booking.app .vcard[aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--brand); border-color: var(--brand); }
+@media (max-width: 420px) { .booking.app .vcard { grid-template-columns: 88px minmax(0, 1fr) auto; column-gap: 10px; } .booking.app .vcard .vprice { font-size: 15px; } }
+/* Sections as cards. */
+.booking.app .fs { border-radius: 16px; padding: 14px 16px; }
+.booking.app .bkstep-sum { border-radius: 16px; padding: 14px 16px; }
+.booking.app .bkstep-sum .btn { border-radius: 999px; }
+.booking.app .switch { min-height: 44px; }
+.booking.app .check.smsok { padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; }
+.booking.app .bk-stepnav .btn { border-radius: 999px; min-height: 50px; }
+.booking.app .quote { border-radius: 20px; box-shadow: var(--shadow); padding: 22px; }
+.booking.app .quote .total { font-size: 36px; }
+.booking.app .cardbox { border-radius: 14px; }
+/* Phone: price bar fixed at the bottom of step 2. */
+.bkbar { display: none; }
+@media (max-width: 860px) {
+  .booking.app .bkbar:not([hidden]) { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: var(--surface); border-top: 1px solid var(--line); box-shadow: 0 -6px 20px rgba(0,0,0,.12); }
+  .bkbar-price { display: flex; flex-direction: column; line-height: 1.15; }
+  .bkbar-price b { font-size: 22px; font-variant-numeric: tabular-nums; }
+  .bkbar .btn { min-height: 50px; border-radius: 999px; padding: 0 22px; font-size: 16px; font-weight: 700; }
+  .booking.app:not(.step1) { padding-bottom: 76px; }
+}
+@media (max-width: 640px) {
+  .booking.app > .panel { padding: 18px 16px; border-radius: 18px; }
+  .booking.app .bkcta { margin: 0 -16px -18px; padding: 12px 16px 16px; }
+}
+.booking.app .paxrow { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+/* Saved places as one scrolling row of chips (readable in light and dark pages). */
+.booking.app .placechips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: -4px 0 0; padding-bottom: 2px; }
+.booking.app .placechips::-webkit-scrollbar { display: none; }
+.booking.app .placechips > span { flex: none; }
+.booking.app .placechips .chip { flex: none; background: var(--surface); color: var(--ink); border-color: var(--line); min-height: 36px; padding: 6px 14px; }
+/* Signed-in customers on a phone have the tab bar at the bottom: keep the buttons above it. */
+@media (max-width: 640px) {
+  body:has(.topbar.fewtabs .tabs button) .booking.app .bkcta { bottom: calc(54px + env(safe-area-inset-bottom, 0px)); }
+  body:has(.topbar.fewtabs .tabs button) .booking.app .bkbar:not([hidden]) { bottom: calc(54px + env(safe-area-inset-bottom, 0px)); }
+}

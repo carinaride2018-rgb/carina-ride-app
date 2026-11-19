@@ -2010,27 +2010,27 @@
     const twoStep = !dispatch;
     let step = twoStep ? 1 : 2;
     host.innerHTML = `
-      <div class="booking${twoStep ? ' step1' : ''}">
+      <div class="booking${twoStep ? ' step1 app' : ''}">
         <form class="panel stack" id="bk-form" novalidate>
-          ${twoStep ? `<div class="bkstep-head" id="bk-head1"><span class="stepno">1</span><div><h2>Get a quote</h2><p class="small muted">Where and when. You'll see the price before you add any details.</p></div></div>` : ''}
+          ${twoStep ? `<div class="bkstep-head" id="bk-head1"><span class="stepno">1</span><div><span class="bkstepof">Step 1 of 2</span><h2>Get a quote</h2><p class="small muted">Where and when. You'll see the price before you add any details.</p></div><div class="bkprog" aria-hidden="true"><i class="on"></i><i></i></div></div>` : ''}
           <div class="stack bkstep" id="bk-step1">
-          <div class="row"><div class="seg" role="group" aria-label="Type of booking">
+          <div class="row segrow"><div class="seg" role="group" aria-label="Type of booking">
             <button type="button" data-service="transfer" aria-pressed="${state.service !== 'hourly'}">Transfer</button>
             <button type="button" data-service="hourly" aria-pressed="${state.service === 'hourly'}">By the hour</button>
           </div><div class="seg" role="group" aria-label="One way or round trip" data-hide="hourly">
             <button type="button" data-trip="one" aria-pressed="${!state.retOn}">One way</button>
             <button type="button" data-trip="round" aria-pressed="${!!state.retOn}">Round trip</button>
           </div><span class="small faint" id="bk-service-hint"></span></div>
-          <div class="grid3">
+          <div class="grid3 whenrow">
             <label class="field"><span>Pickup date</span><input id="bk-date" name="date" type="date" value="${esc(state.date)}" required></label>
             <label class="field"><span>Pickup time${TZ ? ` <small class="faint">(${esc(tzLabel())})</small>` : ''}</span><input id="bk-time" name="time" type="time" step="300" value="${esc(state.time)}" required>${opts.mode !== 'dispatch' && opts.info.minNoticeHours ? `<span class="hint">Book at least ${opts.info.minNoticeHours} hours ahead</span>` : ''}</label>
             <label class="field" data-show="hourly"><span>Hours</span><input id="bk-hours" name="hours" type="number" min="1" max="24" value="${esc(state.hours)}"><span class="hint">Minimum ${opts.info.rates.minHours} hours</span></label>
           </div>
-          <label class="field"><span>Pickup address</span><input id="bk-pickup" name="pickup" autocomplete="off" placeholder="Hotel, airport or street address" value="${esc(state.pickup)}" required></label>${placeChips('bk-pickup')}
+          <div class="routebox"><label class="field rpick"><span>Pickup address</span><input id="bk-pickup" name="pickup" autocomplete="off" placeholder="Hotel, airport or street address" value="${esc(state.pickup)}" required></label>${placeChips('bk-pickup')}
           <div class="stack stops" data-hide="hourly" style="gap:8px"><div id="bk-stops"></div>
             <div><button class="linkbtn" type="button" id="bk-addstop">+ Add a stop on the way</button></div></div>
-          <div class="row" style="justify-content:flex-end;margin:-4px 0"><button class="btn sm" type="button" id="bk-swap" title="Swap pickup and drop-off" aria-label="Swap pickup and drop-off addresses">&#8645; Swap pickup and drop-off</button></div>
-          <label class="field"><span id="bk-drop-label">Drop-off address</span><input id="bk-dropoff" name="dropoff" autocomplete="off" placeholder="Where are you going?" value="${esc(state.dropoff)}"></label>${placeChips('bk-dropoff')}
+          <div class="row swaprow" style="justify-content:flex-end;margin:-4px 0"><button class="btn sm" type="button" id="bk-swap" title="Swap pickup and drop-off" aria-label="Swap pickup and drop-off addresses">&#8645; Swap pickup and drop-off</button></div>
+          <label class="field rdrop"><span id="bk-drop-label">Drop-off address</span><input id="bk-dropoff" name="dropoff" autocomplete="off" placeholder="Where are you going?" value="${esc(state.dropoff)}"></label>${placeChips('bk-dropoff')}</div>
           <fieldset class="fs flightbox" id="bk-flightf"><legend><span aria-hidden="true">&#9992;</span> Flight information</legend>
             <div class="grid2" id="bk-flightmain">
               <label class="field"><span id="bk-flight-label">Flight number <span class="faint">(required)</span></span><input id="bk-flight" name="flight" class="mono" placeholder="AS 330 or Alaska 330" value="${esc(state.flight)}" autocomplete="off"></label>
@@ -2047,10 +2047,10 @@
             </div><p class="small faint" id="bk-ret-hint" hidden></p></div>
           <div class="stack morerides" data-hide="hourly" style="gap:10px"><div id="bk-more" class="stack" style="gap:10px"></div>
             <div><button class="linkbtn" type="button" id="bk-addride">+ Add another ride</button> <span class="small faint">Same confirmation, multiple bookings.</span></div></div>
-          ${twoStep ? `<div id="bk-err1"></div><button class="btn brand big" type="button" id="bk-next">Get my quote</button>` : ''}
+          ${twoStep ? `<div id="bk-err1"></div><div class="bkcta"><button class="btn brand big" type="button" id="bk-next">Get my quote</button></div>` : ''}
           </div>
           ${twoStep ? `<div class="bkstep-sum" id="bk-sum" hidden><div class="stack" style="gap:2px"><span class="label">Your ride</span><span id="bk-sumtext"></span></div><button class="btn sm" type="button" id="bk-back">Change</button></div>
-          <div class="bkstep-head" id="bk-head2" hidden><span class="stepno">2</span><div><h2>Your details and payment</h2><p class="small muted">${esc(step2Note())}</p></div></div>` : ''}
+          <div class="bkstep-head" id="bk-head2" hidden><span class="stepno">2</span><div><span class="bkstepof">Step 2 of 2</span><h2>Your details and payment</h2><p class="small muted">${esc(step2Note())}</p></div><div class="bkprog" aria-hidden="true"><i class="on"></i><i class="on"></i></div></div>` : ''}
           <div class="stack bkstep" id="bk-step2"${twoStep ? ' hidden' : ''}>
           <fieldset class="fs landfs" id="bk-land" hidden><legend><label class="switch"><input type="checkbox" id="bk-land-on" name="landOn" ${state.landOn ? 'checked' : ''}><span id="bk-land-title">${dispatch ? 'Add a pickup when they land' : 'Add a ride when you land'}</span></label></legend>
             <p class="small muted" id="bk-land-info"></p>
@@ -2061,7 +2061,7 @@
           <div class="field"><span>Vehicle</span>
             <div class="vehicles">${vt.map((v) => `<button type="button" class="vcard" data-vehicle="${esc(v.type)}" aria-pressed="${state.vehicleType === v.type}">${carPic(v.type, v.photo)}<b>${esc(v.type)}</b><span>${v.capacity} passengers${v.bags != null ? ` · ${v.bags} checked bag${v.bags === 1 ? '' : 's'}${v.carry ? ` · ${v.carry} carry-on${v.carry === 1 ? '' : 's'}` : ''}` : ''}</span>${v.models ? `<span class="vmodel">${esc(v.models)}</span>` : ''}<span class="vprice" data-vprice="${esc(v.type)}"></span></button>`).join('') || '<p class="faint small">No vehicles yet. Add vehicles in the dispatch office first.</p>'}</div>
           </div>
-          <div class="grid3">
+          <div class="grid3 paxrow">
             <label class="field"><span>Passengers</span><select id="bk-pax" name="passengers">${numOpts(Math.max(Number(state.passengers) || 1, ...vt.map((x) => x.capacity || 1), 1, opts.mode === 'dispatch' ? 60 : 1), 1, state.passengers)}</select></label>
             <label class="field"><span>Checked bags</span><select id="bk-bags" name="bags">${numOpts(Math.max(Number(state.bags) || 0, ...vt.map((x) => x.bags || 0), 0, noBagInfo ? 30 : 0), 0, state.bags)}</select></label>
             <label class="field"><span>Carry-ons</span><select id="bk-carry" name="carryOns">${numOpts(Math.max(Number(state.carryOns) || 0, ...vt.map((x) => x.carry || 0), 0, noBagInfo ? 15 : 0), 0, state.carryOns)}</select></label>
@@ -2120,7 +2120,8 @@
           </div>
           <label class="field"><span>Notes for the chauffeur</span><textarea id="bk-notes" name="notes" placeholder="Accessibility needs, a special occasion, anything else">${esc(state.notes)}</textarea></label>
           <div id="bk-err"></div>
-          ${twoStep ? `<div class="bk-stepnav"><button class="btn" type="button" id="bk-prev">&larr; Previous</button><button class="btn brand" type="button" id="bk-tonext">Next: review and pay &rarr;</button></div>` : ''}
+          ${twoStep ? `<div class="bk-stepnav"><button class="btn" type="button" id="bk-prev">&larr; Previous</button><button class="btn brand" type="button" id="bk-tonext">Next: review and pay &rarr;</button></div>
+          <div class="bkbar" id="bk-bar" hidden><div class="bkbar-price"><span class="small muted">Total</span><b id="bk-bartotal"></b></div><button class="btn brand" type="button" id="bk-barbtn">Review and pay</button></div>` : ''}
           </div>
         </form>
         <aside class="panel stack quote" id="bk-aside" aria-live="polite"${twoStep ? ' hidden' : ''}>
@@ -2384,6 +2385,7 @@
           const sbtn = $('#bk-submit', host); if (sbtn && !opts.submitLabel) sbtn.textContent = mr.length ? `Book these ${mr.length + 1} rides` : 'Book this ride';
           const moreTot = mq.reduce((s2, x) => s2 + (x && !x.error ? x.total : 0), 0);
           const grand = q.total + (rq ? rq.total : 0) + (lpOn ? lp.price || 0 : 0) + moreTot;
+          const bt = $('#bk-bartotal', host); if (bt) bt.textContent = money(grand);
           const landLines = (x) => `<div class="qline"><span>${dispatch ? 'Pickup' : 'Ride'} when ${dispatch ? 'they land' : 'you land'} in ${esc(x.dest.city)}${x.estimate ? ' (estimate)' : ''}</span><span class="num">${x.price == null ? '' : money(x.fare)}</span></div>`
             + (x.price == null ? `<div class="small faint">Enter where to go in ${esc(x.dest.city)} to see this price.</div>` : x.gratuity ? `<div class="qline"><span>Chauffeur gratuity, ride in ${esc(x.dest.city)}</span><span class="num">${money(x.gratuity)}</span></div>` : '');
           // Several rides: each ride's price on its own line, the total at the bottom.
@@ -2533,6 +2535,7 @@
       $('#bk-step2', host).hidden = n !== 2; $('#bk-head2', host).hidden = n !== 2;
       $('#bk-sum', host).hidden = n !== 2; $('#bk-aside', host).hidden = n !== 2;
       $('.booking', host).classList.toggle('step1', n === 1);
+      barOn = n === 2; drawBar();
       sync();
       if (n === 2) {
         const b = booking(), stops = (b.stopList || []).length;
@@ -2541,7 +2544,13 @@
       }
       host.style.scrollMarginTop = '90px'; host.scrollIntoView({ block: 'start', behavior: 'smooth' });
     }
+    // Phone: a bar at the bottom of step 2 keeps the price and the next button in reach,
+    // until the payment box itself is on the screen.
+    let barOn = false, asideSeen = false;
+    function drawBar() { const bar = $('#bk-bar', host); if (bar) bar.hidden = !barOn || asideSeen; }
     if (twoStep) {
+      if (window.IntersectionObserver) new IntersectionObserver((es) => { asideSeen = es.some((x) => x.isIntersecting); drawBar(); }).observe($('#bk-aside', host));
+      $('#bk-barbtn', host).onclick = () => $('#bk-tonext', host).click();
       $('#bk-next', host).onclick = (e) => busy(e.currentTarget, async () => {
         sync(); const err = $('#bk-err1', host); err.innerHTML = ''; $$('.must-fix', host).forEach((f) => f.classList.remove('must-fix'));
         const addrOk = [checkAddr($('#bk-pickup', host), true), checkAddr($('#bk-dropoff', host), state.service !== 'hourly')].every(Boolean);
