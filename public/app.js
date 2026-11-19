@@ -3711,16 +3711,37 @@
       p.temp ? `${C.TEMPS[p.temp]} cabin` : '', p.music ? C.MUSIC[p.music] : '', p.quiet ? 'Quiet ride' : '',
     ].filter(Boolean);
   }
-  // Full-screen greeting sign the chauffeur holds up at arrivals.
+  // Full-screen greeting sign the chauffeur holds up at arrivals. "Rotate"
+  // turns it sideways (wide sign on an upright phone) and back; the name is
+  // sized to fill the sign. The choice is remembered on this phone.
   function nameSign(t) {
     if (!t) return;
     const el = document.createElement('div');
     el.className = 'namesign'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Name sign');
-    el.innerHTML = `<div class="ns-name">${esc(t.signName || t.passengerName || 'Welcome')}</div><div class="ns-co">${esc(session.company.name)}</div><div class="ns-hint">Tap anywhere to close</div>`;
-    const close = () => { el.remove(); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); };
-    el.onclick = close;
+    el.innerHTML = `<div class="ns-card"><div class="ns-name">${esc(t.signName || t.passengerName || 'Welcome')}</div><div class="ns-co">${esc(session.company.name)}</div></div>
+      <div class="ns-bar"><button type="button" class="ns-btn" data-ns="rotate">&#8635; Rotate</button><button type="button" class="ns-btn" data-ns="close">Close</button></div>`;
+    let side = false; try { side = localStorage.getItem('nsSide') === '1'; } catch (e) {}
+    const card = $('.ns-card', el), name = $('.ns-name', el);
+    const fit = () => {
+      const w = window.innerWidth, h = window.innerHeight - 80; // room for the buttons
+      el.classList.toggle('ns-side', side);
+      card.style.width = (side ? h : w) + 'px'; card.style.height = (side ? w : h) + 'px';
+      const maxW = (side ? h : w) - 48, maxH = (side ? w : h) * 0.62;
+      let lo = 20, hi = 400;
+      while (hi - lo > 2) { const mid = (lo + hi) >> 1; name.style.fontSize = mid + 'px'; if (name.scrollWidth <= maxW && name.offsetHeight <= maxH) lo = mid; else hi = mid; }
+      name.style.fontSize = lo + 'px';
+    };
+    const close = () => { window.removeEventListener('resize', fit); el.remove(); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); };
+    el.onclick = (e) => {
+      const b = e.target.closest('[data-ns]'); if (!b) return;
+      if (b.dataset.ns === 'close') return close();
+      side = !side; try { localStorage.setItem('nsSide', side ? '1' : '0'); } catch (e2) {}
+      fit();
+    };
+    window.addEventListener('resize', fit);
     document.body.appendChild(el);
-    if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+    fit();
+    if (el.requestFullscreen) el.requestFullscreen().then(fit).catch(() => {});
   }
   // After booking: keep the new card on the session, or send the customer to
   // Stripe to save one when the ride still needs it.

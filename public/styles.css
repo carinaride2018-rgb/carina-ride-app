@@ -561,10 +561,13 @@ a.quotecard:hover { border-color: var(--brand); }
 .stoprow .grow { flex: 1 1 220px; }
 .stoprow .swait { flex: 0 0 110px; }
 .moreride { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--bg); }
-.namesign { position: fixed; inset: 0; z-index: 1000; background: #fff; color: #111; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 24px; text-align: center; cursor: pointer; }
-.namesign .ns-name { font-size: clamp(44px, 13vw, 140px); font-weight: 800; line-height: 1.05; letter-spacing: -0.02em; word-break: break-word; }
+.namesign { position: fixed; inset: 0; z-index: 1000; background: #fff; color: #111; overflow: hidden; }
+.namesign .ns-card { position: absolute; left: 50%; top: calc(50% - 40px); transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 24px; box-sizing: border-box; text-align: center; }
+.namesign.ns-side .ns-card { transform: translate(-50%, -50%) rotate(90deg); }
+.namesign .ns-name { font-weight: 800; line-height: 1.05; letter-spacing: -0.02em; overflow-wrap: normal; max-width: 100%; }
 .namesign .ns-co { font-size: clamp(18px, 4vw, 32px); font-weight: 600; color: #444; }
-.namesign .ns-hint { position: absolute; bottom: 18px; font-size: 13px; color: #888; }
+.namesign .ns-bar { position: absolute; left: 0; right: 0; bottom: 16px; display: flex; justify-content: center; gap: 12px; }
+.namesign .ns-btn { min-height: 44px; padding: 0 20px; border-radius: 22px; border: 1px solid #ccc; background: #f4f4f4; color: #333; font: 600 15px var(--font-ui, sans-serif); cursor: pointer; }
 .policy div { line-height: 1.4; }
 .switch > input[type="checkbox"] { width: 40px; height: 22px; min-height: 0; padding: 0; border: 0; flex-shrink: 0; }
 .waittimer { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 14px; border: 2px solid var(--line, #e3e5ea); border-radius: 12px; }
