@@ -3711,6 +3711,24 @@
       p.temp ? `${C.TEMPS[p.temp]} cabin` : '', p.music ? C.MUSIC[p.music] : '', p.quiet ? 'Quiet ride' : '',
     ].filter(Boolean);
   }
+  // Most common strong color in a logo image (skips white, black, grey and
+  // see-through pixels); '' when none is found.
+  function logoAccent(img) {
+    try {
+      const n = 48, cv = document.createElement('canvas'); cv.width = n; cv.height = n;
+      const g = cv.getContext('2d'); g.drawImage(img, 0, 0, n, n);
+      const d = g.getImageData(0, 0, n, n).data, bins = {};
+      for (let i = 0; i < d.length; i += 4) {
+        const r = d[i], gr = d[i + 1], b = d[i + 2], a = d[i + 3];
+        const mx = Math.max(r, gr, b), mn = Math.min(r, gr, b);
+        if (a < 200 || mx < 60 || mx - mn < 70) continue;
+        const k = (r >> 5) + ',' + (gr >> 5) + ',' + (b >> 5);
+        const e = bins[k] || (bins[k] = { n: 0, r: 0, g: 0, b: 0 }); e.n++; e.r += r; e.g += gr; e.b += b;
+      }
+      const top = Object.values(bins).sort((x, y) => y.n - x.n)[0];
+      return top && top.n > 8 ? `rgb(${Math.round(top.r / top.n)},${Math.round(top.g / top.n)},${Math.round(top.b / top.n)})` : '';
+    } catch (e) { return ''; }
+  }
   // Full-screen greeting sign the chauffeur holds up at arrivals. "Rotate"
   // turns it sideways (wide sign on an upright phone) and back; the name is
   // sized to fill the sign. The choice is remembered on this phone.
@@ -3718,15 +3736,19 @@
     if (!t) return;
     const el = document.createElement('div');
     el.className = 'namesign'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'Name sign');
-    el.innerHTML = `<div class="ns-card"><div class="ns-name">${esc(t.signName || t.passengerName || 'Welcome')}</div><div class="ns-co">${esc(session.company.name)}</div></div>
+    const co = session.company || {};
+    const src = co.logo || co.banner || '';
+    const brand = src ? `<img class="ns-banner" src="${esc(src)}" alt="${esc(co.name)}">` : `<div class="ns-co">${esc(co.name || '')}</div>`;
+    el.innerHTML = `<div class="ns-card"><div class="ns-head">${brand}<div class="ns-rule"></div></div><div class="ns-name">${esc(t.signName || t.passengerName || 'Welcome')}</div></div>
       <div class="ns-bar"><button type="button" class="ns-btn" data-ns="rotate">&#8635; Rotate</button><button type="button" class="ns-btn" data-ns="close">Close</button></div>`;
+    el.style.setProperty('--ns-accent', co.color || '#111');
     let side = false; try { side = localStorage.getItem('nsSide') === '1'; } catch (e) {}
     const card = $('.ns-card', el), name = $('.ns-name', el);
     const fit = () => {
       const w = window.innerWidth, h = window.innerHeight - 80; // room for the buttons
       el.classList.toggle('ns-side', side);
       card.style.width = (side ? h : w) + 'px'; card.style.height = (side ? w : h) + 'px';
-      const maxW = (side ? h : w) - 48, maxH = (side ? w : h) * 0.62;
+      const maxW = (side ? h : w) - 48, maxH = (side ? w : h) * 0.55;
       let lo = 20, hi = 400;
       while (hi - lo > 2) { const mid = (lo + hi) >> 1; name.style.fontSize = mid + 'px'; if (name.scrollWidth <= maxW && name.offsetHeight <= maxH) lo = mid; else hi = mid; }
       name.style.fontSize = lo + 'px';
@@ -3741,6 +3763,10 @@
     window.addEventListener('resize', fit);
     document.body.appendChild(el);
     fit();
+    const img = $('.ns-banner', el);
+    // Accent color taken from the logo itself (its strongest color), so the sign matches the brand.
+    const tint = () => { const c = logoAccent(img); if (c) el.style.setProperty('--ns-accent', c); fit(); };
+    if (img) { if (img.complete) tint(); else img.onload = tint; }
     if (el.requestFullscreen) el.requestFullscreen().then(fit).catch(() => {});
   }
   // After booking: keep the new card on the session, or send the customer to
