@@ -232,7 +232,8 @@ function createProviders(rawEnv, opts) {
     routesFile = file;
     try {
       const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
-      for (const [k, v] of Object.entries(saved)) if (v && (v.miles != null || v.lat != null) && Date.now() - v.at < ROUTE_TTL) routes.set(k, v);
+      // Saved distances from before "roads only" may run over a ferry: fetch those again.
+      for (const [k, v] of Object.entries(saved)) if (v && ((v.miles != null && v.land) || v.lat != null) && Date.now() - v.at < ROUTE_TTL) routes.set(k, v);
     } catch (e) { /* first start */ }
   }
   function saveRoutes() {
@@ -251,16 +252,21 @@ function createProviders(rawEnv, opts) {
     const v = routes.get(k);
     if (v && (v.miles != null || Date.now() - v.fail < 10 * 60e3)) return;
     try {
-      const r = await request('POST', `${url('GOOGLE_ROUTES', 'https://routes.googleapis.com')}/directions/v2:computeRoutes`, {
+      // Prices use the drive by road. A ferry crossing is short in miles but costs
+      // time and a fare, so ask for the road route; only where no road exists
+      // (an island with no bridge) take the route with the ferry.
+      const ask = (roadsOnly) => request('POST', `${url('GOOGLE_ROUTES', 'https://routes.googleapis.com')}/directions/v2:computeRoutes`, {
         headers: { 'X-Goog-Api-Key': env.GOOGLE_MAPS_API_KEY, 'X-Goog-FieldMask': 'routes.distanceMeters,routes.duration' },
-        body: { origin: { address: a }, destination: { address: b }, travelMode: 'DRIVE', routingPreference: 'TRAFFIC_UNAWARE', units: 'IMPERIAL' },
+        body: { origin: { address: a }, destination: { address: b }, travelMode: 'DRIVE', routingPreference: 'TRAFFIC_UNAWARE', units: 'IMPERIAL', ...(roadsOnly ? { routeModifiers: { avoidFerries: true } } : {}) },
         timeoutMs: 6000,
       });
-      const best = r && r.routes && r.routes[0];
-      if (!best || best.distanceMeters == null) throw new Error('No driving route found');
+      const first = (r) => { const x = r && r.routes && r.routes[0]; return x && x.distanceMeters != null ? x : null; };
+      let best = first(await ask(true).catch(() => null));
+      if (!best) best = first(await ask(false));
+      if (!best) throw new Error('No driving route found');
       const miles = Math.round(best.distanceMeters / 1609.344 * 100) / 100;
       const minutes = Math.max(1, Math.round(parseInt(String(best.duration || '0'), 10) / 60));
-      routes.set(k, { miles, minutes, at: Date.now() });
+      routes.set(k, { miles, minutes, land: 1, at: Date.now() });
       routesDirty = true;
     } catch (e) {
       routes.set(k, { fail: Date.now() });
