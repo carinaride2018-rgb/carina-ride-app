@@ -3938,6 +3938,10 @@
       // The office can change any ride, past ones included (Dawit 2026-11-08).
       const closed = ['completed', 'cancelled'].includes(t.status);
       const before = t.pickupAt, spBefore = JSON.stringify(specialOf(t));
+      if ('passengerEmail' in p) {
+        p.passengerEmail = str(p.passengerEmail, 120).trim().toLowerCase();
+        if (p.passengerEmail && !emailOk(p.passengerEmail)) fail('Enter a valid passenger email, or leave it blank.');
+      }
       if (t.invoiceId && 'waiveExtras' in p && !!p.waiveExtras !== !!t.waiveExtras) fail('This trip is on an invoice. Void the invoice first to change the price or account. Other details can change.');
       if (t.invoiceId && ['priceOverride', 'adjustment', 'waitMin', 'tolls', 'milesOverride', 'accountId'].some((k) => k in p)) fail('This trip is on an invoice. Void the invoice first to change the price or account. Other details can change.');
       const beforeAcct = t.accountId || null;
@@ -4065,15 +4069,27 @@
       return tripView(t);
     });
     // Sends the booking confirmation again: email, and a text when the passenger agreed to texts.
+    // Send the confirmation again: to the passenger, to another person (an
+    // assistant, the person who pays), or both. Extra emails are one-time: the
+    // passenger's email on the reservation stays the same.
     def('dispatch.resendConfirmation', STAFF, true, (ctx, a) => {
       const t = ownTrip(ctx, a.id);
       if (t.status === 'cancelled') fail('This ride is cancelled.');
-      if (!t.passengerEmail && !t.passengerPhone) fail('Add a passenger email or mobile first.');
+      const also = [...new Set(str(a.also, 400).split(/[,;\s]+/).map((x) => x.trim().toLowerCase()).filter(Boolean))];
+      const bad = also.filter((x) => !emailOk(x));
+      if (bad.length) fail(`${bad[0]} is not a valid email.`);
+      if (also.length > 5) fail('Send to 5 other emails at most.');
+      const toPassenger = a.toPassenger !== false;
+      if (!also.length && !t.passengerEmail && !t.passengerPhone) fail('Add a passenger email or mobile first, or type another email to send it to.');
+      if (!also.length && !toPassenger) fail('Tick the passenger or type an email to send it to.');
       const sent = [];
       const put = (recipient, channel, body, kind) => { db.messages.unshift({ id: id('msg'), companyId: t.companyId, tripId: t.id, ref: t.ref, at: now().toISOString(), recipient, channel, body, ...(kind ? { kind } : {}) }); sent.push(recipient); };
-      if (t.passengerEmail) put(t.passengerEmail, 'email', msgText(t, 'confirm_email') + confirmFooter(t), 'confirm');
-      if (t.passengerPhone && t.smsOk !== false) put(t.passengerPhone, 'sms', msgText(t, 'confirm_sms'));
-      if (!sent.length) fail("This passenger didn't agree to texts and has no email. Add an email first.");
+      if (toPassenger) {
+        if (t.passengerEmail) put(t.passengerEmail, 'email', msgText(t, 'confirm_email') + confirmFooter(t), 'confirm');
+        if (t.passengerPhone && t.smsOk !== false) put(t.passengerPhone, 'sms', msgText(t, 'confirm_sms'));
+      }
+      for (const e of also) if (!(toPassenger && e === t.passengerEmail)) put(e, 'email', msgText(t, 'confirm_email') + confirmFooter(t), 'confirm');
+      if (!sent.length) fail("This passenger didn't agree to texts and has no email. Add an email first, or type another email to send it to.");
       log(t, 'confirm_resent', ctx.user.name, `Confirmation sent again to ${sent.join(' and ')}`);
       return { sent, trip: tripView(t) };
     });

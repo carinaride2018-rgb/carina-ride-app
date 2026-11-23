@@ -4388,6 +4388,7 @@
               <label class="field"><span>Phone</span><input id="te-phone" name="passengerPhone" value="${esc(t.passengerPhone)}" ${lock}></label>
               <label class="field"><span>Flight</span><input id="te-flight" name="flight" class="mono" value="${esc(t.flight)}" ${lock}></label>
             </div>
+            <label class="field"><span>Passenger email</span><input id="te-email" name="passengerEmail" type="email" autocomplete="off" value="${esc(t.passengerEmail || '')}" placeholder="name@example.com" ${lock}><span class="hint">Confirmations, reminders and receipts for this reservation go here. To send the confirmation to someone else too, use Resend confirmation.</span></label>
             <div class="grid3">
               <label class="field"><span>Car seats (infant to 5)</span><input id="te-child" name="childSeats" type="number" min="0" max="3" value="${t.childSeats || 0}" ${lock}></label>
               <label class="field"><span>Booster seats (6 to 8)</span><input id="te-booster" name="boosterSeats" type="number" min="0" max="3" value="${t.boosterSeats || 0}" ${lock}></label>
@@ -4483,7 +4484,7 @@
               <button class="btn primary" type="button" id="te-setstatus" style="font-weight:800;width:100%">Update status</button>
               ${['accepted', 'en_route', 'arrived'].includes(t.status) && !t.farmout ? '<button class="btn sm danger" type="button" id="te-noshow">Passenger no-show</button>' : ''}
               <button class="btn sm" type="button" id="te-sheet">Print trip sheet</button>
-              ${t.status !== 'cancelled' && (t.passengerEmail || t.passengerPhone) ? '<button class="btn sm" type="button" id="te-confirm">Resend confirmation</button>' : ''}
+              ${t.status !== 'cancelled' ? '<button class="btn sm" type="button" id="te-confirm">Resend confirmation</button>' : ''}
               ${t.status === 'completed' || t.payment.status === 'paid' ? '<button class="btn sm" type="button" id="te-receipt">Receipt</button>' : ''}
               ${t.driver && t.driver.phone && t.driverId ? '<div class="grid2"><button class="btn sm" type="button" id="te-calldrv">Call driver</button><button class="btn sm" type="button" id="te-textdrv">Text driver</button></div>' : ''}
               ${t.passengerPhone ? '<div class="grid2"><button class="btn sm" type="button" id="te-callpax">Call passenger</button><button class="btn sm" type="button" id="te-text">Text passenger</button></div>' : ''}
@@ -4590,9 +4591,22 @@
       const tpc = $('#te-callpax', m); if (tpc) tpc.onclick = () => { m._onClose = null; officeCall(tpc, { tripId: t.id, fallback: t.passengerPhone }, (t.passengerName || 'the passenger').split(' ')[0]); };
       const tch = $('#te-chat', m); if (tch) tch.onclick = () => openModal({ title: `${t.ref} · passenger and driver`, body: `<div class="ib-msgs">${t.chat.map((x) => `<div class="bub ${x.from === 'driver' ? 'out' : 'in'}"><div class="bt">${esc(x.body)}</div><div class="bm">${x.from === 'driver' ? 'Driver' : 'Passenger'} ${esc(x.name || '')} · ${esc(fmtDT(x.at))}</div></div>`).join('')}</div>`, onClose: () => tripModal(id, done) });
       const mp = $('#te-msgpartner', m); if (mp) mp.onclick = () => { netState.sub = 'messages'; netState.partner = mp.dataset.partner; m._onClose = null; closeModal(); go2('network'); };
-      const rc = $('#te-confirm', m); if (rc) rc.onclick = (e) => busy(e.currentTarget, async () => {
-        try { const r = await api('dispatch.resendConfirmation', { id }); toast(`Confirmation sent to ${r.sent.join(' and ')}.`); reopen(); } catch (err) { toast(err.message, true); }
-      });
+      // Resend confirmation: to the passenger, to another person, or both.
+      const rc = $('#te-confirm', m); if (rc) rc.onclick = () => {
+        const canText = !!t.passengerPhone && t.smsOk !== false;
+        m._onClose = null;
+        const cm2 = openModal({ title: `Send confirmation ${t.ref}`, onClose: () => tripModal(id, done),
+          body: `<form id="cf-form" class="stack" novalidate>
+            <label class="check"><input type="checkbox" name="toPassenger" ${t.passengerEmail || canText ? 'checked' : 'disabled'}><span>Passenger: ${esc([t.passengerEmail, canText ? t.passengerPhone : ''].filter(Boolean).join(' and ') || 'no email or mobile on this reservation')}</span></label>
+            <label class="field"><span>Also email the confirmation to (optional)</span><input name="also" type="text" inputmode="email" autocomplete="off" placeholder="assistant@example.com"><span class="hint">Another person, for example an assistant or the person who pays. For more than one, put a comma between the emails. The passenger's email on the reservation stays the same.</span></label>
+            <div id="cf-err"></div></form>`,
+          footer: '<button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" id="cf-go">Send confirmation</button>' });
+        $('[data-close]', cm2).onclick = closeModal;
+        $('#cf-go', cm2).onclick = (e) => busy(e.currentTarget, async () => {
+          const fd = formData($('#cf-form', cm2));
+          try { const r = await api('dispatch.resendConfirmation', { id, toPassenger: !!fd.toPassenger, also: fd.also }); toast(`Confirmation sent to ${r.sent.join(' and ')}.`); closeModal(); } catch (err) { showErr($('#cf-err', cm2), err); }
+        });
+      };
       $$('[data-grp]', m).forEach((b) => { b.onclick = () => { m._onClose = null; closeModal(); tripModal(b.dataset.grp, done); }; });
       const rcb = $('#te-receipt', m); if (rcb) rcb.onclick = () => { m._onClose = null; receiptModal(t, 'dispatch.sendReceipt', () => tripModal(id, done)); };
       const rt = $('#te-return', m); if (rt) rt.onclick = () => returnModal(t, (r) => { m._onClose = null; closeModal(); toast(`Return trip ${r.ref} booked. We sent ${r.passengerName || 'the passenger'} a confirmation.${r.landingTrip ? ` The pickup where they land is ${r.landingTrip.ref}.` : ''}`); tripModal(r.id, done); });
