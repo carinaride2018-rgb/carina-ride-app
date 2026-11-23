@@ -661,7 +661,11 @@
 
     // Automatic surcharges on the fare
     let surcharges = 0;
-    const add = (label, pct) => { if (!pct || isFlat || lock) return; /* a flat or locked price stays the same */ const a = round2(fare * pct / 100); surcharges += a; lines.push({ label, amount: a, kind: 'surcharge' }); };
+    // The office can waive the extra charges on one reservation (Dawit 2026-11-22):
+    // late night, weekend, peak date, busy time and pickup place fees show as
+    // waived lines at $0, so the customer sees what was taken off.
+    const waive = !!b.waiveExtras && b.waiveExtras !== 'false';
+    const add = (label, pct) => { if (!pct || isFlat || lock) return; /* a flat or locked price stays the same */ if (waive) { lines.push({ label: `${label}, waived`, amount: 0, kind: 'surcharge', waived: true }); return; } const a = round2(fare * pct / 100); surcharges += a; lines.push({ label, amount: a, kind: 'surcharge' }); };
     if (b.pickupAt && !isNaN(new Date(b.pickupAt))) {
       const lp = localParts(b.pickupAt, company.timezone);
       const night = p.nightStart > p.nightEnd ? (lp.hour >= p.nightStart || lp.hour < p.nightEnd) : (lp.hour >= p.nightStart && lp.hour < p.nightEnd);
@@ -1974,6 +1978,8 @@
       const t = r.returnOf && db.trips.find((x) => x.id === r.returnOf);
       if (!t || !t.price || r.service === 'hourly' || t.vehicleType !== r.vehicleType) return priced;
       if (r.priceOverride != null && r.priceOverride !== '') return priced;
+      // Extra charges waived on one ride of the pair only: that ride prices on its own.
+      if (!!r.waiveExtras !== !!t.waiveExtras) return priced;
       const o = t.price, custom = t.priceOverride != null && t.priceOverride !== '';
       const base = custom ? round2(num(o.total, 0) + num(o.credit, 0)) : round2(num(o.subtotal, 0) + num(o.gratuity, 0) + num(o.tax, 0));
       const lines = custom ? [{ label: `Same price as ${t.ref}`, amount: base, kind: 'fare' }] : clone((o.lines || []).filter((l) => !['extra', 'adjustment', 'credit', 'override'].includes(l.kind)));
@@ -3932,6 +3938,7 @@
       // The office can change any ride, past ones included (Dawit 2026-11-08).
       const closed = ['completed', 'cancelled'].includes(t.status);
       const before = t.pickupAt, spBefore = JSON.stringify(specialOf(t));
+      if (t.invoiceId && 'waiveExtras' in p && !!p.waiveExtras !== !!t.waiveExtras) fail('This trip is on an invoice. Void the invoice first to change the price or account. Other details can change.');
       if (t.invoiceId && ['priceOverride', 'adjustment', 'waitMin', 'tolls', 'milesOverride', 'accountId'].some((k) => k in p)) fail('This trip is on an invoice. Void the invoice first to change the price or account. Other details can change.');
       const beforeAcct = t.accountId || null;
       // Force save: the office changes a ride at the last minute and skips the
@@ -3951,6 +3958,11 @@
       if ('priceOverride' in p) t.priceOverride = p.priceOverride === '' || p.priceOverride == null ? null : Math.max(0, round2(num(p.priceOverride, 0)));
       if ('waitMin' in p) t.waitMin = Math.max(0, Math.round(num(p.waitMin, 0)));
       if ('tolls' in p) t.tolls = Math.max(0, round2(num(p.tolls, 0)));
+      if ('waiveExtras' in p) {
+        const w = !!p.waiveExtras && p.waiveExtras !== 'false';
+        if (w !== !!t.waiveExtras) log(t, 'edited', ctx.user.name, w ? 'Extra charges waived' : 'Extra charges back on');
+        t.waiveExtras = w;
+      }
       if ('adjustment' in p) {
         const amt = round2(num(p.adjustment && p.adjustment.amount, 0));
         t.adjustment = amt ? { amount: amt, reason: str(p.adjustment.reason, 80) } : null;

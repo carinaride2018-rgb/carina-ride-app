@@ -1749,7 +1749,7 @@
   // The fare shows as one "Ride fare" line everywhere, office included (Dawit:
   // no "mi at $/mi + base" formula on quotes). Rates are under Rates & brand.
   function quoteLines(q, simple = true) {
-    return q.lines.map((l) => `<div class="qline ${l.kind === 'discount' || l.kind === 'credit' ? 'disc' : ''}"><span>${esc(!simple ? l.label : l.kind === 'fare' ? (l.flat ? l.label.replace(/ \(.*\)$/, '') : 'Ride fare') : l.stop != null ? l.label.replace(/ \(.*\)$/, '') : l.label)}</span><span class="num">${l.amount == null ? '' : (l.amount < 0 ? '−' + money(-l.amount) : money(l.amount))}</span></div>`).join('');
+    return q.lines.map((l) => `<div class="qline ${l.kind === 'discount' || l.kind === 'credit' ? 'disc' : ''}"><span>${esc(!simple ? l.label : l.kind === 'fare' ? (l.flat ? l.label.replace(/ \(.*\)$/, '') : 'Ride fare') : l.stop != null ? l.label.replace(/ \(.*\)$/, '') : l.label)}</span><span class="num">${l.waived ? 'Waived' : l.amount == null ? '' : (l.amount < 0 ? '−' + money(-l.amount) : money(l.amount))}</span></div>`).join('');
   }
   // Address autofill. Suggestions come from places.suggest (simulated today,
   // Google Places later). Picking one fills the field and fires 'input'.
@@ -4417,6 +4417,7 @@
                 <label class="field"><span>Add or take off ($)</span><input id="te-adj" name="adjAmount" type="number" step="0.01" placeholder="-20 or 35" ${priceLock} value="${t.adjustment ? t.adjustment.amount : ''}"></label>
                 <label class="field" style="grid-column:span 2"><span>Reason</span><input id="te-adjr" name="adjReason" ${priceLock} placeholder="Goodwill credit, extra luggage…" value="${esc(t.adjustment ? t.adjustment.reason : '')}"></label>
               </div>
+              <label class="switch"><input type="checkbox" id="te-waive" name="waiveExtras" ${t.waiveExtras ? 'checked' : ''} ${priceLock}><span>Waive extra charges on this reservation <span class="faint">(late night, weekend, holiday, busy time and pickup place fees)</span></span></label>
               <label class="field custprice"><span>Custom price ($)</span><input id="te-price" name="priceOverride" type="number" min="0" step="0.01" placeholder="Leave blank to use your rates" ${priceLock} value="${t.priceOverride == null ? '' : t.priceOverride}"></label>
               ${t.farmIn ? `<p class="small muted">The price was agreed with ${esc(t.farmIn.fromName)} when you accepted the trip.</p>` : ''}
             </fieldset>
@@ -4534,7 +4535,7 @@
         // Older trips only have a stop count; keep it until stops are typed in.
         if (!String(f2.stopList || '').trim() && t.stops && !(t.stopList || []).length) { delete f2.stopList; delete f2.stopWaits; }
         // An invoiced trip keeps its price and account; time, places and passenger can still change.
-        if (t.invoiceId) { for (const k of ['priceOverride', 'adjustment', 'waitMin', 'tolls', 'milesOverride', 'accountId']) delete f2[k]; }
+        if (t.invoiceId) { for (const k of ['priceOverride', 'adjustment', 'waitMin', 'tolls', 'milesOverride', 'accountId', 'waiveExtras']) delete f2[k]; }
         await busy($('button[type=submit]', e.target), async () => {
           try { const r = await api('dispatch.updateTrip', { id, patch: f2, force: useForce }); toast(`${useForce ? 'Force saved' : 'Trip saved'}. Total ${money(r.price.total)}.`); reopen(); } catch (err) { showErr($('#te-err', m), err); }
         });
