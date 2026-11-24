@@ -1032,7 +1032,7 @@
 
     function log(trip, status, by, note) { trip.history.push({ at: now().toISOString(), status, by, ...(note ? { note } : {}) }); }
     function fmtLocal(iso, c, withDay) {
-      try { return new Date(iso).toLocaleString('en-US', { timeZone: c.timezone || 'America/New_York', ...(withDay ? { weekday: 'short', month: 'short', day: 'numeric' } : {}), hour: 'numeric', minute: '2-digit' }); }
+      try { return new Date(iso).toLocaleString('en-US', { timeZone: c.timezone || 'America/New_York', ...(withDay ? { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' } : {}), hour: 'numeric', minute: '2-digit' }); }
       catch (e) { return iso; }
     }
 

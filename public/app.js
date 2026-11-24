@@ -50,10 +50,10 @@
   // it completed.
   const UPCOMING_GRACE_H = 6;
   const stillUpcoming = (t) => new Date(t.pickupAt).getTime() >= Date.now() - (['en_route', 'arrived', 'on_board'].includes(t.status) ? 24 : UPCOMING_GRACE_H) * 3600e3;
-  const fmtDate = (iso) => new Date(iso).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', timeZone: TZ });
+  const fmtDate = (iso) => new Date(iso).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: TZ });
   const fmtDT = (iso) => `${fmtDate(iso)}, ${fmtTime(iso)}`;
   // "2026-10-19", "2026-10-21" -> "Mon, Oct 19 – Wed, Oct 21" (local calendar days)
-  const fmtDay = (d) => new Date(d + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  const fmtDay = (d) => new Date(d + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
   const fmtDays = (from, to) => (to && to !== from ? `${fmtDay(from)} – ${fmtDay(to)}` : fmtDay(from));
   const initials = (n) => String(n || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('');
   // Chauffeur photo: the picture when there is one, otherwise their initials.
