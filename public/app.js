@@ -6144,6 +6144,8 @@
           <div class="grid2"><label class="field"><span>Business reward</span><select name="reward" id="af-reward"><option value="discount" ${a.reward !== 'credit' ? 'selected' : ''}>Discount on business rides</option><option value="credit" ${a.reward === 'credit' ? 'selected' : ''}>Credit for the booker’s personal rides</option></select></label>
             <label class="field"><span>Reward (%)</span><input name="discountPct" type="number" min="0" max="50" step="0.5" value="${a.discountPct || 0}"><span class="hint" id="af-rhint"></span></label></div>
           <label class="switch"><input type="checkbox" name="requirePo" ${a.requirePo ? 'checked' : ''}><span>Require a PO number on every booking</span></label>
+          <label class="switch"><input type="checkbox" name="autoInvoice" ${a.autoInvoice ? 'checked' : ''}><span>Send the invoice by itself at the end of each month</span></label><span class="hint">On the 2nd at 8 AM, one invoice for last month’s completed trips goes to the billing email, with a printable PDF.</span>
+          <label class="switch"><input type="checkbox" name="directDeposit" ${a.directDeposit ? 'checked' : ''}><span>Pays by direct deposit (no pay-online link on invoices)</span></label>
           <label class="switch"><input type="checkbox" name="active" ${a.active !== false ? 'checked' : ''}><span>Active (bookers can bill this account)</span></label>
           <label class="field"><span>Notes</span><textarea name="notes">${esc(a.notes || '')}</textarea></label>
           <div id="af-err"></div></form>`,

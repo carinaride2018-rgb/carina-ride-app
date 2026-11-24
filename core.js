@@ -6303,11 +6303,14 @@
       const disc = num(a.discountPct, 0);
       if (!(disc >= 0 && disc <= 50)) fail('Discount must be between 0 and 50%.');
       const terms = Number(a.terms);
-      const fields = { name, contact: str(a.contact, 80), billingEmail: email, phone: str(a.phone, 30), address: str(a.address, 200), taxId: str(a.taxId, 30), terms: ACCOUNT_TERMS.includes(terms) ? terms : 30, discountPct: round2(disc), reward: a.reward === 'credit' ? 'credit' : 'discount', requirePo: !!a.requirePo && a.requirePo !== 'false', notes: str(a.notes, 400), active: a.active !== false && a.active !== 'false' };
+      const fields = { name, contact: str(a.contact, 80), billingEmail: email, phone: str(a.phone, 30), address: str(a.address, 200), taxId: str(a.taxId, 30), terms: ACCOUNT_TERMS.includes(terms) ? terms : 30, discountPct: round2(disc), reward: a.reward === 'credit' ? 'credit' : 'discount', requirePo: !!a.requirePo && a.requirePo !== 'false', autoInvoice: !!a.autoInvoice && a.autoInvoice !== 'false', directDeposit: !!a.directDeposit && a.directDeposit !== 'false', notes: str(a.notes, 400), active: a.active !== false && a.active !== 'false' };
       let acc;
       const was = a.id ? ownAccount(ctx, a.id).reward : null;
       // Credit counts from when it's switched on, not for rides already done.
       if (fields.reward === 'credit' && was !== 'credit') fields.rewardSince = now().toISOString();
+      // Switched on now: start with this month, not with old rides.
+      const wasAuto = a.id ? !!ownAccount(ctx, a.id).autoInvoice : false;
+      if (fields.autoInvoice && !wasAuto) fields.autoInvoiced = prevMonth(localParts(now().toISOString(), ctx.company.timezone).date).key;
       if (a.id) { acc = ownAccount(ctx, a.id); Object.assign(acc, fields); }
       else { acc = { id: id('acct'), companyId: ctx.company.id, createdAt: now().toISOString(), ...fields }; db.accounts.push(acc); }
       return accountSummary(acc);
@@ -6390,8 +6393,15 @@
     def('dispatch.createInvoice', STAFF, true, (ctx, a) => {
       const acc = ownAccount(ctx, a.accountId);
       const through = dateOk(a.through) ? a.through : localParts(now().toISOString(), ctx.company.timezone).date;
+      const inv = makeInvoice(ctx.company, acc, through, ctx.user.name, a.send !== false);
+      if (!inv) fail(`No completed trips to invoice for ${acc.name} up to that date.`);
+      return invView(inv);
+    });
+    // One invoice for an account's completed, unbilled trips up to a date. Null when there are none.
+    function makeInvoice(company, acc, through, by, send) {
+      const ctx = { company, user: { name: by } };
       const trips = unbilled(acc).filter((t) => localParts(t.pickupAt, ctx.company.timezone).date <= through).sort((x, y) => x.pickupAt.localeCompare(y.pickupAt));
-      if (!trips.length) fail(`No completed trips to invoice for ${acc.name} up to that date.`);
+      if (!trips.length) return null;
       ctx.company.nextInvoice = (ctx.company.nextInvoice || 0) + 1;
       const issued = now();
       const lines = trips.map((t) => ({ tripId: t.id, ref: t.ref, date: t.pickupAt, passenger: t.passengerName, route: t.dropoff ? `${t.pickup} to ${t.dropoff}` : `${t.pickup} (${t.hours} h)`, vehicle: t.vehicleType, po: t.poNumber || '', costCenter: t.costCenter || '', amount: t.price.total }));
@@ -6402,9 +6412,29 @@
       };
       db.clientInvoices.push(inv);
       for (const t of trips) { t.invoiceId = inv.id; t.payment = { status: 'unpaid', method: 'account', paidAt: null }; }
-      if (a.send !== false) sendInvoice(ctx.company, acc, inv);
-      return invView(inv);
-    });
+      if (send) sendInvoice(ctx.company, acc, inv);
+      return inv;
+    }
+    // Month-end invoices (Dawit 2026-11-24): an account with "autoInvoice" on gets
+    // one invoice for last month's completed trips, emailed on the 2nd at 8 AM, so a late ride on the last day is not cut off.
+    const prevMonth = (date) => { const [y, m] = date.split('-').map(Number); const d = new Date(Date.UTC(y, m - 1, 0)); return { key: d.toISOString().slice(0, 7), last: d.toISOString().slice(0, 10) }; };
+    function autoInvoiceTick() {
+      let changed = false;
+      for (const c of db.companies) {
+        if (c.status !== 'active') continue;
+        const lp = localParts(now().toISOString(), c.timezone);
+        const dom = Number(lp.date.slice(8));
+        if (dom < 2 || (dom === 2 && lp.hour < 8)) continue;
+        const pm = prevMonth(lp.date);
+        for (const acc of db.accounts) {
+          if (acc.companyId !== c.id || !acc.autoInvoice || acc.active === false || (acc.autoInvoiced || '') >= pm.key) continue;
+          acc.autoInvoiced = pm.key;
+          makeInvoice(c, acc, pm.last, 'Month-end invoice', true);
+          changed = true;
+        }
+      }
+      return changed;
+    }
     // The pay-online link for an invoice (#inv.<token>): no login needed.
     const invPayUrl = (c, inv) => { if (!inv.payToken) inv.payToken = randomId(12); return `${linkBase(c)}#inv.${inv.payToken}`; };
     function sendInvoice(c, acc, inv) {
@@ -6412,8 +6442,8 @@
       if (!to) return false;
       const who = (inv.billTo && inv.billTo.name) || (acc && acc.name) || '';
       const due = inv.terms ? fmtLocal(inv.dueAt, c, true).replace(/,? \d+:\d+.*$/, '') : 'On receipt';
-      const rides = inv.lines.map((l) => `${l.ref}: ${fmtLocal(l.date, c, true)}, ${l.route}: $${money(l.amount)}`);
-      const pay = inv.status === 'open' && cardsOn(c) ? ['', inv.group ? PAY_WARNING : 'Pay this invoice online.', `Payment link: ${invPayUrl(c, inv)}`] : [];
+      const rides = inv.lines.map((l) => `${l.ref}: ${fmtLocal(l.date, c, true)}, ${l.passenger ? `${l.passenger}, ` : ''}${l.route}${l.po ? `, PO ${l.po}` : ''}: $${money(l.amount)}`);
+      const pay = acc && acc.directDeposit ? (inv.status === 'open' ? ['', 'Payment: direct deposit.'] : []) : inv.status === 'open' && cardsOn(c) ? ['', inv.group ? PAY_WARNING : 'Pay this invoice online.', `Payment link: ${invPayUrl(c, inv)}`] : [];
       db.messages.unshift({ id: id('msg'), companyId: c.id, tripId: null, ref: inv.number, at: now().toISOString(), recipient: to, channel: 'email', kind: 'invoice',
         body: [`${c.name}:`, `Bill to: ${who}`, `Rides: ${inv.lines.length}`, `Total: $${money(inv.total)}`, `Due: ${due}`, '', ...rides, ...pay, '', `${c.phone ? `Questions? Call ${c.phone}.` : ''}`, `Sincerely, ${c.name} Team`].join('\n').replace(/\n{3,}/g, '\n\n') });
       inv.sentTo = to; inv.sentAt = now().toISOString();
@@ -8724,6 +8754,7 @@
         if (payDeadlineTick()) changed = true;
         for (const c of db.companies) if (c.status === 'active' && sweepDispatch(c, true)) changed = true;
         if (billingTick()) changed = true;
+        if (autoInvoiceTick()) changed = true;
         if (purgeDeleted()) changed = true;
         if (marketingTick()) changed = true;
         if (changed) { syncFarmouts(); syncCredits(); meterTexts(); save(db); }
