@@ -5085,6 +5085,7 @@
           <div class="seg" id="t-when">${[['today', 'Today'], ['week', 'This week'], ['month', 'This month'], ['upcoming', 'Upcoming'], ['past', 'Past'], ['all', 'All']].map(([k, l]) => `<button type="button" data-when="${k}" aria-pressed="${k === 'upcoming'}">${l}</button>`).join('')}</div>
           <button class="btn donebtn" type="button" data-when="completed" id="t-done" aria-pressed="false">&#10003; Completed trips</button>
           <select class="input" style="width:auto" id="t-status"><option value="">All statuses</option><option value="active">In progress</option>${Object.entries(C.STATUS_LABELS).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select>
+          <button class="btn sm" type="button" id="t-closepast">Complete past rides</button>
           <button class="btn sm" type="button" id="t-delall" hidden>Delete all cancelled</button></div>
         <div class="note row" id="t-selbar" hidden style="margin-bottom:12px;justify-content:space-between;flex-wrap:wrap;gap:8px"><span id="t-seltext"></span><span class="row" style="gap:8px"><button class="btn sm" type="button" id="t-selclear">Clear</button><button class="btn primary sm" type="button" id="t-mkinv">Make one invoice</button></span></div>
         <div id="t-list"></div>`;
@@ -5188,6 +5189,25 @@
         const nCancelled = cancelledCount;
         const da = $('#t-delall', v); da.hidden = !nCancelled;
         da.onclick = () => delTrips({ all: true }, 'Delete all cancelled trips? They disappear from the trips list.');
+        const cp = $('#t-closepast', v);
+        if (cp) cp.onclick = async () => {
+          let info, drivers;
+          try { [info, drivers] = await Promise.all([api('dispatch.closePast', { dry: true }), api('dispatch.drivers')]); } catch (e) { toast(e.message, true); return; }
+          if (!info.count) { toast('No past rides are open. Every ride before now is completed or cancelled.'); return; }
+          const m = openModal({ title: 'Complete past rides', body: `
+            <p><strong>${info.count}</strong> ride${info.count === 1 ? '' : 's'} with a pickup time more than 2 hours ago ${info.count === 1 ? 'is' : 'are'} still open.</p>
+            <p class="small muted">They move to Completed trips. Nothing is sent: no text to the driver, no receipt, no review request, and no card is charged.${info.skipped ? ` ${info.skipped} ride${info.skipped === 1 ? ' is' : 's are'} with a partner and stay${info.skipped === 1 ? 's' : ''} as ${info.skipped === 1 ? 'it is' : 'they are'}.` : ''}</p>
+            <form id="cp-form" class="stack"><fieldset><legend>Who drove? Rides are shared evenly, in date order</legend>
+              ${drivers.map((d) => `<label class="check"><input type="checkbox" name="d" value="${esc(d.id)}"><span>${esc(d.name)}${d.active === false ? ' (not active)' : ''}</span></label>`).join('')}</fieldset>
+              <label class="check"><input type="checkbox" name="keep" checked><span>Keep the driver on rides that already have one</span></label></form>`,
+            footer: '<button class="btn" type="button" id="cp-cancel">Cancel</button><button class="btn primary" type="button" id="cp-go">Complete them</button>' });
+          $('#cp-cancel', m).onclick = closeModal;
+          $('#cp-go', m).onclick = async () => {
+            const f = $('#cp-form', m); const ids = $$('[name=d]:checked', f).map((x) => x.value);
+            if (!ids.length) { toast('Choose at least one driver.', true); return; }
+            try { const r = await api('dispatch.closePast', { driverIds: ids, keepAssigned: f.elements.keep.checked }); closeModal(); toast(`Completed ${r.closed} ride${r.closed === 1 ? '' : 's'}: ${Object.entries(r.perDriver).map(([n, c]) => `${n} ${c}`).join(', ')}.`); last = ''; refresh(); } catch (e) { toast(e.message, true); }
+          };
+        };
         const mb = $('#t-more', v); if (mb) mb.onclick = () => { shown += 50; refresh(); };
         $$('#t-list [data-when]', v).forEach((b) => { b.onclick = () => setWhen(b.dataset.when); });
       }

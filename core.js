@@ -2532,7 +2532,7 @@
     };
     const PERM_OF = {};
     for (const [perm, names] of Object.entries({
-      bookings: ['dispatch.createTrip', 'dispatch.deleteTrips', 'dispatch.updateTrip', 'dispatch.resendConfirmation', 'dispatch.sendReceipt', 'dispatch.setStatus', 'dispatch.cancelSeries', 'dispatch.noShow', 'dispatch.noShowNo', 'dispatch.importTrips', 'dispatch.applyFlight', 'dispatch.sendCardLink', 'dispatch.inboxSend', 'dispatch.saveQuote', 'dispatch.sendQuote', 'dispatch.quoteAction'],
+      bookings: ['dispatch.createTrip', 'dispatch.deleteTrips', 'dispatch.closePast', 'dispatch.updateTrip', 'dispatch.resendConfirmation', 'dispatch.sendReceipt', 'dispatch.setStatus', 'dispatch.cancelSeries', 'dispatch.noShow', 'dispatch.noShowNo', 'dispatch.importTrips', 'dispatch.applyFlight', 'dispatch.sendCardLink', 'dispatch.inboxSend', 'dispatch.saveQuote', 'dispatch.sendQuote', 'dispatch.quoteAction'],
       assign: ['dispatch.assign', 'dispatch.autoAssign', 'network.offer', 'network.respond', 'network.cancelOffer', 'network.handBack'],
       payments: ['dispatch.chargeCard', 'dispatch.markPaid', 'network.settle'],
       customers: ['dispatch.saveCustomer', 'dispatch.deleteCustomer', 'dispatch.sendCustomerLogin', 'dispatch.saveAccount', 'dispatch.accountBooker', 'dispatch.bizRequests', 'dispatch.reviewBiz', 'dispatch.createInvoice', 'dispatch.invoiceAction', 'dispatch.invoices', 'dispatch.invoice'],
@@ -3780,6 +3780,37 @@
     // message to the passenger), with no fee: a card charge is refunded and the
     // driver no longer sees it. The trip stays in the records, so reports, cancel
     // fees and refunds still add up.
+    // Housekeeping: rides whose pickup time has passed but were never closed in
+    // the app. Marks them completed and writes down who drove, shared evenly
+    // between the chosen drivers. Sends nothing: no driver offer, no receipt,
+    // no review request, and it runs no card (Dawit 2026-11-25).
+    def('dispatch.closePast', STAFF, true, (ctx, a) => {
+      const cutoff = now().getTime() - 2 * 3600e3;
+      const withPartner = (t) => { try { notWithPartner(t); notPendingAff(t); return false; } catch (e) { return true; } };
+      const all = db.trips.filter((t) => t.companyId === ctx.company.id && !t.officeDeleted && !['completed', 'cancelled'].includes(t.status) && new Date(t.pickupAt).getTime() < cutoff);
+      const list = all.filter((t) => !withPartner(t)).sort((x, y) => (x.pickupAt < y.pickupAt ? -1 : 1));
+      const skipped = all.length - list.length;
+      if (a.dry) return { count: list.length, skipped, noDriver: list.filter((t) => !t.driverId).length };
+      const ids = [...new Set((Array.isArray(a.driverIds) ? a.driverIds : []).map((x) => str(x, 40)))];
+      const drivers = ids.map((i) => db.users.find((u) => u.id === i && u.companyId === ctx.company.id && u.role === 'driver'));
+      if (drivers.some((d) => !d)) fail('Driver not found.', 404);
+      const keep = !!a.keepAssigned;
+      if (!drivers.length && list.some((t) => !t.driverId || !keep)) fail('Choose at least one driver.');
+      const per = {};
+      let k = 0;
+      for (const t of list) {
+        const cur = t.driverId && db.users.find((u) => u.id === t.driverId);
+        const d = keep && cur ? cur : drivers[k++ % drivers.length];
+        const own = findVehicle(d.vehicleId);
+        t.driverId = d.id;
+        if (!t.vehicleId || !(keep && cur)) t.vehicleId = (own && own.type === t.vehicleType ? own.id : (db.vehicles.find((v) => v.companyId === ctx.company.id && v.type === t.vehicleType && v.status === 'active') || {}).id) || t.vehicleId || null;
+        t.offer = null; t.needsDriver = null;
+        t.status = 'completed';
+        log(t, 'completed', ctx.user.name, `Closed by the office after the ride. Driver: ${d.name}. No messages sent`);
+        per[d.name] = (per[d.name] || 0) + 1;
+      }
+      return { closed: list.length, skipped, perDriver: per };
+    });
     def('dispatch.deleteTrips', STAFF, true, (ctx, a) => {
       const ids = a.all ? null : new Set((Array.isArray(a.ids) ? a.ids : [a.id]).map((x) => str(x, 40)));
       const list = db.trips.filter((t) => t.companyId === ctx.company.id && !t.officeDeleted && (!ids || ids.has(t.id)) && (ids || t.status === 'cancelled'));
