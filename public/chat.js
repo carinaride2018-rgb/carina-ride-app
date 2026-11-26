@@ -2,7 +2,7 @@
  * Website chat for a limo company on LimoRelay.
  * On the company's own website, add before </body>:
  *   <script src="https://<booking address>/chat.js" data-company="<company slug>" async></script>
- * The assistant answers questions and gives prices. It does not book rides.
+ * The assistant answers questions and gives prices. It books rides when the company allows it.
  */
 (function () {
   'use strict';

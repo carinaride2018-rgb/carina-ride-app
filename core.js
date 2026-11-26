@@ -8358,7 +8358,7 @@
         'I left something in the car', 'I want to give feedback about my driver',
       ] },
     ];
-    const DEFAULT_PHONE = { on: false, number: '', transferTo: '', greeting: '', notes: '', phrases: '', canCancel: true, onPage: true, chat: false };
+    const DEFAULT_PHONE = { on: false, number: '', transferTo: '', greeting: '', notes: '', phrases: '', canCancel: true, onPage: true, chat: false, chatBook: false };
     const phcfg = (c) => ({ ...DEFAULT_PHONE, ...(c.phoneAgent || {}) });
     const callsOf = () => db.calls || (db.calls = []);
     // The agent acts as an office login named "Phone agent" (it is not stored as a user).
@@ -8440,6 +8440,10 @@
           const past = k && !u && db.trips.filter((x) => x.companyId === c.id && phoneKey(x.passengerPhone) === k && /@/.test(x.passengerEmail || '')).sort((x, y) => String(y.createdAt || '').localeCompare(String(x.createdAt || '')))[0];
           if (u || past) b.passengerEmail = u ? u.email : past.passengerEmail;
         }
+        if (call.chat) {
+          b.passengerPhone = str(a.passengerPhone, 30);
+          if ((call.booked || 0) >= CHAT_BOOK_PER_CHAT || chatBooksToday(c) >= CHAT_BOOK_PER_DAY) fail(`No more bookings can be made in this chat. Ask them to book on the booking page${c.phone ? ` or call ${c.phone}` : ''}.`);
+        }
         if (!b.passengerName) fail("Ask for the passenger's name.");
         if (!phoneKey(b.passengerPhone)) fail("Ask for the passenger's mobile number.");
         if (!a.vehicleType) fail('Ask which vehicle they want.');
@@ -8447,7 +8451,8 @@
         const r = await asAgent(c, 'dispatch.createTrip', { booking: b });
         const t = db.trips.find((x) => x.id === r.id);
         t.byAgent = true;
-        log(t, 'note', 'Phone agent', `Booked on a call from ${call.from || 'a hidden number'}`);
+        log(t, 'note', call.chat ? 'Website chat' : 'Phone agent', call.chat ? 'Booked in the website chat' : `Booked on a call from ${call.from || 'a hidden number'}`);
+        if (call.chat) { call.booked = (call.booked || 0) + 1; if (!call.callerName) call.callerName = t.passengerName; }
         let cardLink = false;
         if (onFile(t) && !t.card && (t.passengerPhone || t.passengerEmail)) { asAgent(c, 'dispatch.sendCardLink', { id: t.id }); cardLink = true; }
         call.refs = [...new Set([...(call.refs || []), t.ref])];
@@ -8555,6 +8560,9 @@
       return { sent: true, message: 'The office has the message and will reply by phone, text or email.' };
     };
     const CHAT_TOOLS = ['get_quote', 'leave_message'];
+    // Bookings made in the chat: the visitor's phone is not verified, so they are capped.
+    const CHAT_BOOK_PER_CHAT = 2, CHAT_BOOK_PER_DAY = 30;
+    const chatBooksToday = (c) => { const day = now().toISOString().slice(0, 10); return callsOf().filter((x) => x.chat && x.companyId === c.id && String(x.at).slice(0, 10) === day).reduce((n, x) => n + (x.booked || 0), 0); };
     const chatCompany = (slug, host) => db.companies.find((x) => x.status === 'active' && x.phoneAgent && x.phoneAgent.chat && ((slug && x.slug === str(slug, 80)) || (host && x.domain && x.domain === str(host, 120).toLowerCase())));
     function voiceContext(c, call) {
       const pol = pcfg(c), r = c.rates, cfg = phcfg(c);
@@ -8596,7 +8604,7 @@
       const transferTo = str(s.transferTo, 30);
       if (transferTo && !phoneKey(transferTo)) fail('Enter a phone number to transfer calls to, or leave it blank.');
       if (s.on && !key) fail('Enter the phone number the agent answers before switching it on.');
-      ctx.company.phoneAgent = { on: !!s.on, number, transferTo, greeting: str(s.greeting, 300), notes: str(s.notes, 3000), phrases: str(s.phrases, 2000), notesSeeded: true, canCancel: s.canCancel !== false, onPage: s.onPage !== false, chat: !!s.chat && s.chat !== 'false' };
+      ctx.company.phoneAgent = { on: !!s.on, number, transferTo, greeting: str(s.greeting, 300), notes: str(s.notes, 3000), phrases: str(s.phrases, 2000), notesSeeded: true, canCancel: s.canCancel !== false, onPage: s.onPage !== false, chat: !!s.chat && s.chat !== 'false', chatBook: !!s.chatBook && s.chatBook !== 'false' };
       return phcfg(ctx.company);
     });
     // Server side (phoneagent.js); never reachable from the browser API.
@@ -8632,7 +8640,7 @@
         callsOf().unshift(call);
         if (db.calls.length > 2000) db.calls.length = 2000;
         save(db);
-        return { callId: call.id, company: { id: c.id, name: c.name, phone: c.phone || '' }, bookUrl: linkBase(c), context: voiceContext(c, call) };
+        return { callId: call.id, company: { id: c.id, name: c.name, phone: c.phone || '' }, bookUrl: linkBase(c), canBook: !!phcfg(c).chatBook, context: voiceContext(c, call) };
       },
       // Which websites may show a company's chat (its own domain and the pages on the same site name).
       async chatInfo({ slug, host }) {
@@ -8646,7 +8654,7 @@
         const call = callsOf().find((x) => x.id === callId);
         const c = call && findCompany(call.companyId);
         if (!c || !AGENT_TOOLS[name]) return { error: 'Unknown tool.' };
-        if (call.chat && !CHAT_TOOLS.includes(name)) return { error: 'Not available in the website chat.' };
+        if (call.chat && !CHAT_TOOLS.includes(name) && !(name === 'book_ride' && phcfg(c).chatBook)) return { error: 'Not available in the website chat.' };
         if (!call.chat && name === 'leave_message') return { error: 'Unknown tool.' };
         try {
           const out = await AGENT_TOOLS[name](c, call, input || {});
