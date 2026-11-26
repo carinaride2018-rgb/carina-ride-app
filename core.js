@@ -982,7 +982,7 @@
     const coPayMode = (c) => (payMode === 'demo' ? 'demo' : c && gwKind(c) !== 'stripe' && gwReady(c) ? 'stripe' : payMode);
     const cardsOn = (c) => payOpts(c).card !== false && (payMode === 'demo' || gwReady(c));
     const cashOn = (c) => !!payOpts(c).cash;
-    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, payDeadline: !!c.payDeadline, watchReminders: (c.watchReminders || []).map((w) => ({ name: w.name, phone: w.phone, minutes: w.minutes })), name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), cash: cashOn(c), cardChoice: payOpts(c).card !== false, payMode: coPayMode(c), payVia: payMode === 'demo' ? '' : GATEWAYS[gwKind(c)], logo: c.logo || '', banner: c.banner || '', aiPhone: c.phoneAgent && c.phoneAgent.on && c.phoneAgent.number && c.phoneAgent.onPage !== false ? c.phoneAgent.number : '', domain: c.domain || '', adsTag: c.adsTag || '', pageStyle: c.pageStyle === 'dark' ? 'dark' : 'light', ...(c.house ? { house: true } : {}) });
+    const pubCompany = (c) => c && ({ id: c.id, slug: c.slug, payDeadline: !!c.payDeadline, watchReminders: (c.watchReminders || []).map((w) => ({ name: w.name, phone: w.phone, minutes: w.minutes })), name: c.name, tagline: c.tagline, color: c.color, phone: c.phone, email: c.email, status: c.status, timezone: c.timezone, cards: cardsOn(c), cash: cashOn(c), cardChoice: payOpts(c).card !== false, payMode: coPayMode(c), payVia: payMode === 'demo' ? '' : GATEWAYS[gwKind(c)], logo: c.logo || '', banner: c.banner || '', aiPhone: c.phoneAgent && c.phoneAgent.on && c.phoneAgent.number && c.phoneAgent.onPage !== false ? c.phoneAgent.number : '', domain: c.domain || '', chat: !!(c.phoneAgent && c.phoneAgent.chat && live.voiceAgent), adsTag: c.adsTag || '', pageStyle: c.pageStyle === 'dark' ? 'dark' : 'light', ...(c.house ? { house: true } : {}) });
 
     async function hashPw(pw, salt) { return hash(String(pw), salt); }
     async function setPassword(u, pw) { u.salt = randomId(8); u.passHash = await hashPw(pw, u.salt); }
@@ -8358,7 +8358,7 @@
         'I left something in the car', 'I want to give feedback about my driver',
       ] },
     ];
-    const DEFAULT_PHONE = { on: false, number: '', transferTo: '', greeting: '', notes: '', phrases: '', canCancel: true, onPage: true };
+    const DEFAULT_PHONE = { on: false, number: '', transferTo: '', greeting: '', notes: '', phrases: '', canCancel: true, onPage: true, chat: false };
     const phcfg = (c) => ({ ...DEFAULT_PHONE, ...(c.phoneAgent || {}) });
     const callsOf = () => db.calls || (db.calls = []);
     // The agent acts as an office login named "Phone agent" (it is not stored as a user).
@@ -8417,7 +8417,9 @@
         if (!types.length) return { error: `No single vehicle seats ${b.passengers}. Offer to have the office call back about a group booking.` };
         const pick = a.vehicleType ? types.filter((x) => x.type === a.vehicleType) : types;
         if (!pick.length) return { error: `${a.vehicleType} does not seat ${b.passengers}. Options: ${types.map((x) => x.type).join(', ')}.` };
-        cleanBooking(c, { ...b, vehicleType: pick[0].type }, {});
+        // A website visitor asking for a price may not know the flight yet: the price does not depend on it.
+        if (call.chat) { try { cleanBooking(c, { ...b, vehicleType: pick[0].type }, {}); } catch (e) { if (!(e instanceof ApiError) || !/flight/i.test(e.message)) throw e; b.flight = ''; b.returnFlight = ''; cleanBooking(c, { ...b, vehicleType: pick[0].type, flight: 'AA 100', ...(b.returnAt ? { returnFlight: 'AA 100' } : {}) }, {}); } }
+        else cleanBooking(c, { ...b, vehicleType: pick[0].type }, {});
         const quotes = pick.map((x) => {
           const q = quoteFor(c, { ...b, vehicleType: x.type }, null);
           const o = { vehicleType: x.type, models: x.models, seats: x.capacity, bags: x.bags, total: q.total, gratuityIncluded: q.gratuity, miles: q.miles || null };
@@ -8542,6 +8544,18 @@
         return { sent: true, message: 'The office has the request and will confirm by text or call.' };
       },
     };
+    // Website chat (Dawit 2026-11-25): the visitor leaves a message for the office.
+    AGENT_TOOLS.leave_message = (c, call, a) => {
+      const what = str(a.details, 600), name = str(a.name, 80), phone = str(a.phone, 30), email = str(a.email, 120).toLowerCase();
+      if (!what) fail('Say what the visitor needs.');
+      if (!phoneKey(phone) && !emailOk(email)) fail('Ask for a phone number or an email address so the office can reply.');
+      inboxOf().unshift({ id: id('sms'), companyId: c.id, key: phoneKey(phone) || 'chat-' + call.id, phone, dir: 'in', body: `[Website chat] ${name ? name + ': ' : ''}${what}${email ? ` (email ${email})` : ''}`, at: now().toISOString(), read: false, tripId: null, ref: '', call: call.id });
+      if (name) call.callerName = name;
+      call.outcome = 'message';
+      return { sent: true, message: 'The office has the message and will reply by phone, text or email.' };
+    };
+    const CHAT_TOOLS = ['get_quote', 'leave_message'];
+    const chatCompany = (slug, host) => db.companies.find((x) => x.status === 'active' && x.phoneAgent && x.phoneAgent.chat && ((slug && x.slug === str(slug, 80)) || (host && x.domain && x.domain === str(host, 120).toLowerCase())));
     function voiceContext(c, call) {
       const pol = pcfg(c), r = c.rates, cfg = phcfg(c);
       const types = vehicleTypesFor(c).map((x) => `${x.type}: up to ${x.capacity} passengers, ${x.bags || '?'} bags (${x.models})`);
@@ -8560,6 +8574,7 @@
         ...(c.terms ? [`Company terms (for questions about policy):\n${str(c.terms, 1500)}`] : []),
         `Minimum notice for a booking: ${dcfg(c).minNoticeHours || 0} hours. Free cancellation until ${pol.cancelHours} hours before pickup; after that the fee is ${pol.cancelFeePct}% of the fare. Payment: ${cardsOn(c) ? `card, by a secure link we text after booking. ${chargeNote(c)}.` : 'the office arranges payment.'} Chauffeurs never take payment.`,
         `Caller's number: ${call.key ? call.from : 'hidden'}. ${mine.length ? `Their upcoming rides: ${mine.map((t) => `${t.ref} on ${sayTime(t.pickupAt, c)} from ${t.pickup} (${STATUS_LABELS[t.status]})`).join('; ')}.` : 'No upcoming rides booked from this number.'}`,
+        ...(call.chat ? [`This is a written chat on the website, not a phone call. Booking page: ${linkBase(c)} . ${cfg.on && cfg.number ? `Phone line for bookings, changes and cancellations, answered day and night: ${cfg.number}.` : ''}`] : []),
         ...(cfg.notes ? [`Notes from the office (follow these):\n${str(cfg.notes, 3000)}`] : []),
         `Things callers say, and what they mean (callers use many other words too; go by the meaning):\n${CALLER_PHRASES.map((g) => `${g.group}: ${g.phrases.map((x) => `"${x}"`).join(', ')}. ${g.means}`).join('\n')}${cfg.phrases ? `\nMore phrases from the office: ${str(cfg.phrases, 2000).split(/\n+/).map((x) => x.trim()).filter(Boolean).map((x) => `"${x}"`).join(', ')}.` : ''}`,
       ].join('\n\n');
@@ -8581,7 +8596,7 @@
       const transferTo = str(s.transferTo, 30);
       if (transferTo && !phoneKey(transferTo)) fail('Enter a phone number to transfer calls to, or leave it blank.');
       if (s.on && !key) fail('Enter the phone number the agent answers before switching it on.');
-      ctx.company.phoneAgent = { on: !!s.on, number, transferTo, greeting: str(s.greeting, 300), notes: str(s.notes, 3000), phrases: str(s.phrases, 2000), notesSeeded: true, canCancel: s.canCancel !== false, onPage: s.onPage !== false };
+      ctx.company.phoneAgent = { on: !!s.on, number, transferTo, greeting: str(s.greeting, 300), notes: str(s.notes, 3000), phrases: str(s.phrases, 2000), notesSeeded: true, canCancel: s.canCancel !== false, onPage: s.onPage !== false, chat: !!s.chat && s.chat !== 'false' };
       return phcfg(ctx.company);
     });
     // Server side (phoneagent.js); never reachable from the browser API.
@@ -8608,12 +8623,31 @@
           transferTo: cfg.transferTo || c.phone || '', context: voiceContext(c, call),
         };
       },
+      // A visitor opened the chat on the booking page or the company's website.
+      async chatStart({ slug, host, sid }) {
+        await ensure();
+        const c = chatCompany(slug, host);
+        if (!c) return null;
+        const call = { id: id('call'), companyId: c.id, sid: 'chat-' + str(sid, 60), chat: true, from: 'Website chat', key: '', at: now().toISOString(), endedAt: null, seconds: 0, outcome: '', refs: [], transcript: [] };
+        callsOf().unshift(call);
+        if (db.calls.length > 2000) db.calls.length = 2000;
+        save(db);
+        return { callId: call.id, company: { id: c.id, name: c.name, phone: c.phone || '' }, bookUrl: linkBase(c), context: voiceContext(c, call) };
+      },
+      // Which websites may show a company's chat (its own domain and the pages on the same site name).
+      async chatInfo({ slug, host }) {
+        await ensure();
+        const c = chatCompany(slug, host);
+        return c ? { slug: c.slug, name: c.name, domain: c.domain || '', color: c.color || '' } : null;
+      },
       // Runs one of the agent's tools. Errors come back as { error } for the agent to explain.
       async tool(callId, name, input) {
         await ensure();
         const call = callsOf().find((x) => x.id === callId);
         const c = call && findCompany(call.companyId);
         if (!c || !AGENT_TOOLS[name]) return { error: 'Unknown tool.' };
+        if (call.chat && !CHAT_TOOLS.includes(name)) return { error: 'Not available in the website chat.' };
+        if (!call.chat && name === 'leave_message') return { error: 'Unknown tool.' };
         try {
           const out = await AGENT_TOOLS[name](c, call, input || {});
           sweepDispatch(c, true); syncFarmouts(); syncCredits(); meterTexts(); save(db);

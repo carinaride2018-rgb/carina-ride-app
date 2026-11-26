@@ -2670,6 +2670,8 @@
     const v = shell({});
     session = keep;
     document.documentElement.style.setProperty('--brand', info.company.color);
+    // Website chat (the phone agent, in writing): only when the company switched it on.
+    if (info.company.chat && !document.getElementById('lr-chat-js')) { const sc = document.createElement('script'); sc.id = 'lr-chat-js'; sc.src = '/chat.js'; sc.dataset.company = info.company.slug; sc.dataset.spa = '1'; sc.dataset.color = info.company.color || '#565252'; document.body.appendChild(sc); }
     v.innerHTML = `
       ${info.company.banner ? `<img class="bh-banner" src="${esc(info.company.banner)}" alt="${esc(info.company.name)}">` : ''}
       <div class="brandhead slim${info.company.banner ? ' withbanner' : ''}">${info.company.banner ? '' : info.company.logo ? `<div class="bh-logowrap">${coLogo(info.company, 'bh-logo')}</div>` : '<div></div>'}
@@ -5511,6 +5513,7 @@
             <label class="stack small">More things your callers say (one per line). The agent already knows the suggestions below.<textarea class="input" name="phrases" rows="3" maxlength="2000" placeholder="Can you pick us up at the Westin?&#10;Do you go to Snoqualmie Casino?" ${dis}>${esc(s.phrases || '')}</textarea></label>
             <label class="switch"><input type="checkbox" name="canCancel" ${s.canCancel ? 'checked' : ''} ${dis}><span>Let the agent cancel rides (late cancellations keep your fee)</span></label>
             <label class="switch"><input type="checkbox" name="onPage" ${s.onPage !== false ? 'checked' : ''} ${dis}><span>Show the agent's number at the top of your booking page (while the agent is on)</span></label>
+            <label class="switch"><input type="checkbox" name="chat" ${s.chat ? 'checked' : ''} ${dis}><span>Website chat: the agent answers questions and gives prices in a chat box on your booking page and your website</span></label><span class="small faint">The chat does not book, change or cancel rides. It sends visitors to your booking page. Messages it takes land in the Inbox, and chats show under Recent calls. For your own website, add this line before &lt;/body&gt;: <span class="mono">&lt;script src="${esc((session.company.domain ? 'https://' + session.company.domain : location.origin))}/chat.js" data-company="${esc(session.company.slug)}" async&gt;&lt;/script&gt;</span></span>
             ${isAdmin ? '<div><button class="btn primary sm" type="submit">Save</button></div>' : '<span class="small faint">Only the company admin can change this.</span>'}
           </form>
           <details class="panel" style="margin-bottom:16px"><summary><b>What callers can say</b> <span class="small muted">(${(d.phrases || []).reduce((n, g) => n + g.phrases.length, 0)} suggestions the agent understands)</span></summary>

@@ -744,9 +744,52 @@ async function testSms(token, args) {
   return { to, status: st.status, code: st.code, error: st.code ? (SMS_CODES[st.code] || st.message || `Twilio error ${st.code}`) : '' };
 }
 
+// ---- Website chat (phoneagent.js): the booking page and the company's own website post visitor messages here.
+const chatHits = new Map();
+function chatLimited(ip) {
+  const nowMs = Date.now();
+  const list = (chatHits.get(ip) || []).filter((t) => nowMs - t < 10 * 60000);
+  list.push(nowMs); chatHits.set(ip, list);
+  if (chatHits.size > 5000) for (const [k, v] of chatHits) if (!v.length || nowMs - v[v.length - 1] > 10 * 60000) chatHits.delete(k);
+  return list.length > 30;
+}
+// example.com for www.example.com and reserve.example.com: pages on the same site name may show the chat.
+const siteName = (h) => { const p = String(h || '').toLowerCase().replace(/:\d+$/, '').split('.'); return p.slice(p.length > 2 && /^(co|com|org|net|gov|ac|edu)$/.test(p[p.length - 2]) ? -3 : -2).join('.'); };
+async function chatRoute(req, res, url, raw) {
+  const origin = String(req.headers.origin || '');
+  let oHost = ''; try { oHost = origin ? new URL(origin).hostname : ''; } catch (e) { oHost = ''; }
+  const reqHost = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim().toLowerCase().replace(/:\d+$/, '');
+  const slug = String(url.searchParams.get('c') || '').slice(0, 80);
+  const reply = (status, body, cors) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...SECURITY_HEADERS, ...(cors ? { 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Max-Age': '600', Vary: 'Origin' } : {}) }); res.end(status === 204 ? '' : JSON.stringify(body)); };
+  let info = null;
+  try { info = await core.voice.chatInfo({ slug, host: slug ? '' : reqHost }); } catch (e) { console.error('chat', e); return reply(500, { ok: false, error: 'Something went wrong.' }, false); }
+  // A page on another website may only talk to a company whose own site name it shares.
+  const sameSite = !origin || oHost === reqHost;
+  const allowed = sameSite || (!!info && !!info.domain && siteName(oHost) === siteName(info.domain));
+  const cors = !!origin && allowed;
+  if (req.method === 'OPTIONS') return reply(allowed ? 204 : 403, { ok: false }, cors);
+  if (req.method !== 'POST') return reply(405, { ok: false, error: 'Use POST.' }, cors);
+  if (!allowed) return reply(403, { ok: false, error: 'This website cannot use the chat.' }, false);
+  if (!info || !phone.on) return reply(200, { ok: true, off: true }, cors);
+  if (chatLimited(clientIp(req))) return reply(429, { ok: false, error: 'Too many messages. Please wait a few minutes, or call us.' }, cors);
+  let body = {};
+  try { body = raw ? JSON.parse(raw) : {}; } catch (e) { return reply(400, { ok: false, error: 'Bad request.' }, cors); }
+  try {
+    const out = await phone.chat({ slug: info.slug, session: body.session, text: body.text });
+    reply(200, { ok: !out.error, ...out, name: info.name }, cors);
+    flushOutbox();
+  } catch (e) { console.error('website chat', e); reply(500, { ok: false, error: 'Something went wrong. Please try again.' }, cors); }
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   if (url.pathname === '/healthz') return send(res, 200, { ok: true });
+  if (url.pathname === '/chat/turn') {
+    const chunks = []; let size = 0;
+    req.on('data', (c) => { size += c.length; if (size > 2e4) req.destroy(); else chunks.push(c); });
+    req.on('end', () => chatRoute(req, res, url, Buffer.concat(chunks).toString('utf8')));
+    return;
+  }
   if (url.pathname.startsWith('/co-icon/')) {
     const slug = url.pathname.slice(9).replace(/\.svg$/, '');
     coIconSvg(slug).then((svg) => { if (!svg) return send(res, 404, 'Not found', 'text/plain'); res.writeHead(200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=86400', ...SECURITY_HEADERS }); res.end(svg); }).catch(() => send(res, 500, 'Error', 'text/plain'));
