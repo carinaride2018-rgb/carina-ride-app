@@ -24,6 +24,7 @@ const { gateway, squareOAuth, onSquareTokens } = require('./gateways.js');
 const { createWebPush } = require('./webpush.js');
 const { createNativePush, isNative } = require('./nativepush.js');
 const { createPhoneAgent } = require('./phoneagent.js');
+const { accept: wsAccept } = require('./ws.js');
 const { createHighLevel } = require('./highlevel.js');
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -634,6 +635,7 @@ async function twilioRoute(req, res, url, raw) {
       if (url.pathname === '/twilio/voice/turn') { const out = await phone.turn(params); send(res, 200, out, 'text/xml; charset=utf-8'); flushOutbox(); runCharges(); return; }
       if (url.pathname === '/twilio/voice/wait') { const out = await phone.wait(params); send(res, 200, out, 'text/xml; charset=utf-8'); flushOutbox(); runCharges(); return; }
       if (url.pathname === '/twilio/voice/after') { const out = await phone.after(params); send(res, 200, out, 'text/xml; charset=utf-8'); flushOutbox(); runCharges(); return; }
+      if (url.pathname === '/twilio/voice/relayend') { const out = await phone.relayEnd(params); send(res, 200, out, 'text/xml; charset=utf-8'); flushOutbox(); return; }
       if (url.pathname === '/twilio/voice/status') { await phone.status(params); return send(res, 204, '', 'text/plain'); }
     } catch (e) {
       console.error('phone agent', e);
@@ -866,6 +868,24 @@ if (live.on.flights || live.on.maps) {
   }, 60000).unref();
 }
 flushOutbox();
+
+// Fast phone voice: Twilio ConversationRelay opens a WebSocket to <PUBLIC_URL>twilio/relay.
+// Twilio signs the handshake like a webhook (the wss:// address, no form fields).
+server.on('upgrade', (req, socket, head) => {
+  const url = new URL(req.url, 'http://x');
+  if (url.pathname !== '/twilio/relay') { socket.destroy(); return; }
+  const sig = req.headers['x-twilio-signature'];
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+  const path = url.pathname.slice(1) + url.search;
+  const signed = !live.on.sms ? true : live.verifyTwilio(sig, base.replace(/^http/, 'ws') + path, {}) || (!!host && live.verifyTwilio(sig, `wss://${host}/${path}`, {}));
+  if (live.on.sms ? !signed : BLANK) {
+    console.error(`phone agent: refused the fast voice connection because the Twilio signature did not match (${sig ? 'signed' : 'no signature'}).`);
+    socket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
+    return;
+  }
+  const ws = wsAccept(req, socket, head);
+  if (ws) phone.relay(ws);
+});
 
 process.on('SIGTERM', () => server.close(() => process.exit(0)));
 
