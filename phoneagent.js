@@ -6,9 +6,18 @@
  * core.js (quote, book, find rides, cancel, pass a change to the office) and
  * answers. Twilio reads the answer out (<Say>) and listens again.
  *
+ * Fast voice (the company's "Fast voice" switch): the call runs on Twilio
+ * ConversationRelay instead. Twilio streams the caller's words to us over a
+ * WebSocket (/twilio/relay), we stream Claude's answer back word by word, and
+ * Twilio speaks it as it arrives. The caller can interrupt at any time.
+ * Twilio charges about $0.07 a minute extra for this. If the fast voice fails
+ * on a call, that call carries on with the standard voice.
+ *
  *   ANTHROPIC_API_KEY     switches the agent on (without it, calls go straight to the office)
  *   PHONE_AGENT_MODEL     optional, default claude-sonnet-5-5 (quick answers on a live call; claude-opus-5-5 is slower)
  *   PHONE_AGENT_VOICE     optional Twilio voice, default Google.en-US-Chirp3-HD-Aoede (a natural, human-sounding voice)
+ *   PHONE_AGENT_FAST_TTS  optional fast-voice speech provider: ElevenLabs (default), Google or Amazon
+ *   PHONE_AGENT_FAST_VOICE optional fast-voice voice id (blank = the provider's standard US English voice)
  *
  * In Twilio, set the number's "A call comes in" webhook to <PUBLIC_URL>twilio/voice
  * and "Call status changes" to <PUBLIC_URL>twilio/voice/status (both HTTP POST).
@@ -21,11 +30,13 @@
 const RULES = `You are the phone agent for a chauffeured car and limousine company. You speak with callers on a live phone call.
 
 How to talk:
-- Your words are read aloud by a text-to-speech voice. Use short, plain sentences. One or two sentences per turn, then let the caller speak.
+- Your words are read aloud by a text-to-speech voice. Use short, plain sentences. One or two sentences per turn (about 25 words), then let the caller speak. Only a price quote or a booking summary may be longer.
 - Never use lists, symbols, emoji, or markdown. Say prices like "one hundred twelve dollars and fifty cents" only if digits would be unclear; "$112.50" is fine.
 - Ask one question at a time. Confirm key details back to the caller before booking.
 - Sound like a real person, not a machine: a warm, relaxed, professional dispatcher at a luxury car service. Use contractions (I'll, you're, that's). Start replies with a short, natural acknowledgment when it fits ("Sure.", "Got it.", "Of course.", "Perfect."), but vary it and don't overdo it.
-- Never say you are reading data, using a tool, or checking a system. Say "Let me check that for you" at most once, then give the answer.
+- Before you use a tool that looks something up or makes a change (prices, rides, booking, changes, cancelling), first say a few natural words so the caller is never left in silence, for example "Let me pull up the prices for you." or "One sec, I'll find your ride." Then call the tool. Never mention tools, systems or data.
+- When several vehicles fit, name the two or three best fits with their prices and ask which one they like. Do not read out a long list.
+- The caller can talk over you. If they do, stop and answer what they just said. Don't repeat what you already said unless they ask.
 - Use the caller's first name now and then once you know it. Don't repeat their whole request back unless you are confirming a booking.
 - Say times the way people do: "six p.m. tomorrow", "Friday, November seventh at nine thirty in the morning".
 
@@ -232,52 +243,127 @@ function createPhoneAgent({ env, core, publicUrl, log, warm }) {
 
   // Set when the API refused the extra options once: later calls send a plain request.
   let plain = false;
-  async function claude(s) {
-    try { return await send(s, plain); }
+  // onText(token) streams the answer as Claude writes it (fast voice); signal stops it.
+  async function claude(s, onText, signal) {
+    try { return await send(s, plain, onText, signal); }
     catch (e) {
       // A 400 can mean an option this account or model does not accept: retry without them.
       if (e.status !== 400 || plain) throw e;
       log('phone agent: retrying without extra options:', e.message);
-      const r = await send(s, true);
+      const r = await send(s, true, onText, signal);
       plain = true;
       return r;
     }
   }
-  async function send(s, simple) {
+  async function send(s, simple, onText, signal) {
     const body = {
       model, max_tokens: 2048,
       system: [{ type: 'text', text: s.rules || RULES }, { type: 'text', text: `Company details:\n\n${s.context}` }],
       tools: s.tools || TOOLS,
       messages: s.messages,
-      ...(simple ? {} : { output_config: { effort: 'low' }, fallbacks: 'default', cache_control: { type: 'ephemeral' } }),
+      // No extended thinking on a live call: the first word comes sooner. Sonnet 5.5 turns
+      // thinking off with "between_tools"; other models keep their default.
+      ...(simple ? {} : { output_config: { effort: 'low' }, fallbacks: 'default', cache_control: { type: 'ephemeral' }, ...(/^claude-sonnet-5-5/.test(model) ? { thinking: { type: 'between_tools' } } : {}) }),
+      ...(onText ? { stream: true } : {}),
     };
     const headers = { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' };
     if (!simple) headers['anthropic-beta'] = 'server-side-fallback-2026-07-01';
+    const timeout = AbortSignal.timeout(25000);
     let res;
-    try { res = await fetch(`${apiUrl}/v1/messages`, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(25000) }); }
-    catch (err) { throw new Error(err.name === 'TimeoutError' ? 'Claude took longer than 25 seconds' : `Could not reach Claude: ${err.message}`); }
-    const data = await res.json().catch(() => null);
-    if (!res.ok) { const e = new Error(`Claude API ${res.status}: ${(data && data.error && data.error.message) || res.statusText}`); e.status = res.status; throw e; }
-    return data;
+    try { res = await fetch(`${apiUrl}/v1/messages`, { method: 'POST', headers, body: JSON.stringify(body), signal: signal ? AbortSignal.any([signal, timeout]) : timeout }); }
+    catch (err) {
+      if (signal && signal.aborted) return { content: [], stop_reason: 'aborted' };
+      throw new Error(err.name === 'TimeoutError' ? 'Claude took longer than 25 seconds' : `Could not reach Claude: ${err.message}`);
+    }
+    if (!res.ok || !onText) {
+      const data = await res.json().catch(() => null);
+      if (!res.ok) { const e = new Error(`Claude API ${res.status}: ${(data && data.error && data.error.message) || res.statusText}`); e.status = res.status; throw e; }
+      return data;
+    }
+    return readStream(res, onText, signal);
+  }
+  // Reads Claude's server-sent events into one message, passing text to onText as it arrives.
+  async function readStream(res, onText, signal) {
+    const blocks = [];
+    let stop = null, rest = '';
+    const dec = new TextDecoder();
+    const reader = res.body.getReader();
+    const handle = (ev) => {
+      if (ev.type === 'content_block_start') {
+        const b = { ...ev.content_block };
+        if (b.type === 'tool_use') { b._json = ''; }
+        blocks[ev.index] = b;
+      } else if (ev.type === 'content_block_delta') {
+        const b = blocks[ev.index], d = ev.delta || {};
+        if (!b) return;
+        if (d.type === 'text_delta') { b.text = (b.text || '') + d.text; if (d.text) onText(d.text); }
+        else if (d.type === 'input_json_delta') b._json += d.partial_json || '';
+        else if (d.type === 'thinking_delta') b.thinking = (b.thinking || '') + d.thinking;
+        else if (d.type === 'signature_delta') b.signature = (b.signature || '') + d.signature;
+        else if (d.type === 'citations_delta') (b.citations = b.citations || []).push(d.citation);
+      } else if (ev.type === 'content_block_stop') {
+        const b = blocks[ev.index];
+        if (b && b.type === 'tool_use') { try { b.input = b._json ? JSON.parse(b._json) : {}; } catch (e) { b.input = {}; b._bad = true; } delete b._json; }
+        if (b) b._done = true;
+      } else if (ev.type === 'message_delta') {
+        if (ev.delta && ev.delta.stop_reason) stop = ev.delta.stop_reason;
+      } else if (ev.type === 'error') {
+        const e = new Error(`Claude API stream: ${(ev.error && ev.error.message) || 'error'}`);
+        e.status = ev.error && ev.error.type === 'overloaded_error' ? 529 : 500;
+        throw e;
+      }
+    };
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        rest += dec.decode(value, { stream: true });
+        let i;
+        while ((i = rest.indexOf('\n\n')) >= 0) {
+          const chunk = rest.slice(0, i); rest = rest.slice(i + 2);
+          const data = chunk.split('\n').filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trimStart()).join('\n');
+          if (data) handle(JSON.parse(data));
+        }
+      }
+    } catch (err) {
+      if (!(signal && signal.aborted)) throw err.status ? err : new Error(err.name === 'TimeoutError' ? 'Claude took longer than 25 seconds' : `Claude stream broke: ${err.message}`);
+      // The caller talked over the agent: keep only the words already written.
+      return { content: blocks.filter((b) => b && b.type === 'text' && b.text).map((b) => ({ type: 'text', text: b.text })), stop_reason: 'aborted' };
+    }
+    const content = blocks.filter(Boolean).map((b) => { const { _done, _bad, ...rest2 } = b; return rest2; });
+    return { content, stop_reason: stop };
   }
 
+  // What the agent says while a tool runs, when Claude did not say something first.
+  const TOOL_FILLER = { get_quote: 'Let me pull up the prices.', find_rides: 'One sec, let me find your ride.', book_ride: 'Okay, booking that now.', change_ride: 'Let me check that change.', cancel_ride: 'One moment.', help_find_driver: "Okay, I'm letting your chauffeur know right now.", request_change: 'Got it, let me write that down.', leave_message: 'Got it, let me write that down.' };
+  const toolFiller = (uses) => { for (const u of uses) if (TOOL_FILLER[u.name]) return TOOL_FILLER[u.name]; return ''; };
+
   // One caller turn: ask Claude, run its tools, repeat until it speaks.
-  // Returns { text, action: 'listen' | 'transfer' | 'hangup' }.
-  async function think(s, heard) {
+  // Returns { text, action: 'listen' | 'transfer' | 'hangup', aborted? }.
+  // opts.onText streams the words (fast voice). opts.onTool(text, uses) runs before
+  // tools: it returns true when it already spoke that text. opts.signal stops the turn.
+  async function think(s, heard, opts = {}) {
     s.mark = s.messages.length;
     s.messages.push({ role: 'user', content: heard });
     const started = Date.now();
     let spoken = [];
     for (let i = 0; i < 6; i++) {
       const t0 = Date.now();
-      const r = await claude(s);
-      log(`phone agent: Claude answered in ${Date.now() - t0} ms (${model}, step ${i + 1})`);
+      const r = await claude(s, opts.onText, opts.signal);
+      log(`phone agent: Claude answered in ${Date.now() - t0} ms (${model}, step ${i + 1}${opts.onText ? ', streamed' : ''})`);
+      if (r.stop_reason === 'aborted') {
+        if (r.content.length) s.messages.push({ role: 'assistant', content: r.content });
+        const text = r.content.map((b) => b.text).join(' ').trim();
+        if (text) spoken.push(text);
+        return { text: spoken.join(' '), action: 'listen', aborted: true };
+      }
       s.messages.push({ role: 'assistant', content: r.content });
       const text = r.content.filter((b) => b.type === 'text').map((b) => b.text).join(' ').trim();
       if (text) spoken.push(text);
       if (r.stop_reason === 'refusal') return { text: spoken.join(' '), action: 'transfer' };
       const uses = r.content.filter((b) => b.type === 'tool_use');
       if (r.stop_reason !== 'tool_use' || !uses.length) return { text: spoken.join(' '), action: 'listen' };
+      if (opts.onTool && opts.onTool(text, uses) && text) spoken.pop();
       const results = [];
       let action = null;
       for (const u of uses) {
@@ -296,6 +382,8 @@ function createPhoneAgent({ env, core, publicUrl, log, warm }) {
       }
       s.messages.push({ role: 'user', content: results });
       if (action) return { text: spoken.join(' '), action };
+      // The caller talked while the tool ran: the next turn picks up from here.
+      if (opts.signal && opts.signal.aborted) return { text: spoken.join(' '), action: 'listen', aborted: true };
       // The caller hears "one moment" while this runs; stop tool loops that run long.
       if (Date.now() - started > 30000) return { text: spoken.join(' ') || 'One moment please.', action: 'listen' };
     }
@@ -305,8 +393,8 @@ function createPhoneAgent({ env, core, publicUrl, log, warm }) {
   const FILLERS = ['One moment.', 'Sure, one moment.', 'Let me check that.', 'Okay, one second.'];
   const within = (promise, ms) => Promise.race([promise, new Promise((ok) => setTimeout(() => ok(null), ms))]);
   const hold = () => `<Redirect method="POST">${x(publicUrl)}twilio/voice/wait</Redirect>`;
-  async function run(s, heard) {
-    try { const r = await think(s, heard); s.misses = 0; return r; }
+  async function run(s, heard, opts) {
+    try { const r = await think(s, heard, opts); s.misses = 0; return r; }
     catch (e) {
       log('phone agent', e.message);
       // Shown to the office in the call's transcript, so problems can be fixed.
@@ -314,7 +402,7 @@ function createPhoneAgent({ env, core, publicUrl, log, warm }) {
       s.misses = (s.misses || 0) + 1;
       if (s.misses >= 2) { s.outcome = 'transferred'; return { text: 'Sorry, I am having trouble. Let me connect you with our office.', action: 'transfer' }; }
       s.messages.length = s.mark;
-      return { text: 'Sorry, could you say that again?', action: 'listen' };
+      return { text: 'Sorry, could you say that again?', action: 'listen', failed: true };
     }
   }
   // Speaks an answer, then listens, transfers or hangs up.
@@ -387,9 +475,140 @@ function createPhoneAgent({ env, core, publicUrl, log, warm }) {
     } finally { s.busy = false; }
   }
 
+  // ---- Fast voice: Twilio ConversationRelay over a WebSocket ----
+  // Twilio does the listening and the speaking; we stream Claude's words to it.
+  const wsUrl = String(publicUrl).replace(/^http/, 'ws') + 'twilio/relay';
+  const fastTts = ['ElevenLabs', 'Google', 'Amazon'].find((p) => p.toLowerCase() === String(env.PHONE_AGENT_FAST_TTS || '').trim().toLowerCase()) || 'ElevenLabs';
+  const fastVoice = String(env.PHONE_AGENT_FAST_VOICE || '').trim().replace(/[^\w.-]/g, '');
+  const relayTwiml = (s, greeting) => twiml(`<Connect action="${x(publicUrl)}twilio/voice/relayend" method="POST"><ConversationRelay url="${x(wsUrl)}" welcomeGreeting="${x(greeting)}" welcomeGreetingInterruptible="any" interruptible="any" language="en-US" ttsProvider="${fastTts}"${fastVoice ? ` voice="${x(fastVoice)}"` : ''} transcriptionProvider="Deepgram" speechModel="nova-3-general" hints="${x(HINTS)}" turnDetection="true"><Parameter name="callId" value="${x(s.callId)}"/></ConversationRelay></Connect>`);
+  // About how long the caller needs to hear a sentence, so we hang up or transfer after it.
+  const speakMs = (text) => Math.min(9000, 700 + String(text || '').length * 62);
+
+  function relaySend(s, msg) { if (s.ws && s.ws.open) s.ws.send(JSON.stringify(msg)); }
+  // Says a whole sentence (one talk cycle).
+  function relaySay(s, text) { if (text) { relaySend(s, { type: 'text', token: text, last: true }); s.saidAt = Date.now(); s.saidLen = text.length; } }
+  function relayEnd(s, action, text, delay) {
+    clearTimeout(s.quiet);
+    const go = () => relaySend(s, { type: 'end', handoffData: JSON.stringify({ action }) });
+    if (delay) setTimeout(go, delay); else go();
+  }
+  // No answer from the caller: ask once, then say goodbye.
+  function armQuiet(s) {
+    clearTimeout(s.quiet);
+    s.quiet = setTimeout(() => {
+      if (s.busy || !s.ws || !s.ws.open) return;
+      s.silences = (s.silences || 0) + 1;
+      if (s.silences === 1) { relaySay(s, 'Are you still there?'); armQuiet(s); return; }
+      const bye = 'I did not hear anything, so I will hang up now. Please call again any time. Goodbye.';
+      relaySay(s, bye);
+      core.voice.say(s.callId, 'agent', bye).catch(() => {});
+      s.hangup = true;
+      relayEnd(s, 'hangup', bye, speakMs(bye));
+    }, speakMs('x'.repeat(s.saidLen || 0)) + 9000);
+    s.quiet.unref && s.quiet.unref();
+  }
+
+  // One caller turn on the fast voice. Turns run one after another.
+  async function relayTurn(s, heard) {
+    s.lastAt = Date.now();
+    s.silences = 0;
+    await core.voice.say(s.callId, 'caller', heard);
+    if (s.cutNote) { heard = `${s.cutNote}\n${heard}`; s.cutNote = ''; }
+    const ctrl = new AbortController();
+    s.turn = ctrl;
+    s.busy = true;
+    const said = [];
+    let utter = '';
+    const flush = () => { if (utter) { relaySend(s, { type: 'text', token: '', last: true }); said.push(utter.trim()); s.saidAt = Date.now(); s.saidLen = utter.length; utter = ''; } };
+    const onText = (t) => { if (ctrl.signal.aborted) return; relaySend(s, { type: 'text', token: t, last: false }); utter += t; };
+    // Before a lookup: finish the sentence so Twilio speaks it now, or fill the pause.
+    const onTool = (text, uses) => {
+      flush();
+      if (!text && !ctrl.signal.aborted) { const f = toolFiller(uses); if (f) { relaySay(s, f); said.push(f); } }
+      return false;
+    };
+    let r;
+    try { r = await run(s, heard, { onText, onTool, signal: ctrl.signal }); }
+    finally { s.busy = false; if (s.turn === ctrl) s.turn = null; }
+    if (r.failed || (!said.length && !utter && r.text && !r.aborted)) { utter = ''; relaySay(s, r.text); said.push(r.text); }
+    flush();
+    const text = said.join(' ').trim();
+    if (text) await core.voice.say(s.callId, 'agent', r.aborted ? `${text} (interrupted)` : text);
+    if (r.aborted) return;
+    if (r.action === 'transfer' && (s.noTransfer || !s.transferTo)) {
+      const sorry = 'Nobody at the office is free right now. I can take a message so they call you back. What should I tell them?';
+      relaySay(s, sorry);
+      await core.voice.say(s.callId, 'agent', sorry);
+      s.outcome = ''; s.noTransfer = true;
+      return armQuiet(s);
+    }
+    if (r.action === 'transfer') {
+      let last = text;
+      if (!text) { last = 'Let me connect you with our office.'; relaySay(s, last); }
+      s.outcome = 'transferred';
+      return relayEnd(s, 'transfer', last, speakMs(last));
+    }
+    if (r.action === 'hangup') {
+      let last = text;
+      if (!text) { last = 'Thank you for calling. Goodbye.'; relaySay(s, last); }
+      s.hangup = true;
+      return relayEnd(s, 'hangup', last, speakMs(last));
+    }
+    armQuiet(s);
+  }
+
+  // A WebSocket from Twilio ConversationRelay (already checked as signed by Twilio).
+  function relay(ws) {
+    let s = null;
+    ws.onmessage = async (raw) => {
+      let m; try { m = JSON.parse(raw); } catch (e) { return; }
+      if (m.type === 'setup') {
+        s = calls.get(m.callSid);
+        if (!s) {
+          // Lost the call (server restart): pick it up again from the setup details.
+          const info = await core.voice.start({ to: m.to, from: m.from, sid: m.callSid });
+          if (!info || !on) { ws.send(JSON.stringify({ type: 'end', handoffData: JSON.stringify({ action: 'transfer' }) })); return; }
+          s = { sid: m.callSid, callId: info.callId, context: info.context, transferTo: info.transferTo, from: m.from, messages: [], lastAt: Date.now(), silences: 0, misses: 0, outcome: '', relay: true };
+          calls.set(m.callSid, s);
+        }
+        if (s.ws && s.ws !== ws && s.ws.open) s.ws.close();
+        s.ws = ws; s.relay = true; s.chain = s.chain || Promise.resolve();
+        s.saidLen = 120;
+        armQuiet(s);
+        return;
+      }
+      if (!s) return;
+      s.lastAt = Date.now();
+      if (m.type === 'prompt') {
+        if (m.last === false) return;
+        const heard = String(m.voicePrompt || '').trim();
+        if (!heard || s.hangup) return;
+        clearTimeout(s.quiet);
+        // The caller spoke again before the answer was done: answer the new words.
+        if (s.turn) s.turn.abort();
+        s.chain = s.chain.then(() => relayTurn(s, heard)).catch((e) => { log('phone agent (fast voice)', e); relaySay(s, 'Sorry, could you say that again?'); });
+        return;
+      }
+      if (m.type === 'interrupt') {
+        clearTimeout(s.quiet);
+        if (s.turn) s.turn.abort();
+        const u = String(m.utteranceUntilInterrupt || '').trim();
+        // Tell Claude where it was cut off, without changing what is already written.
+        s.cutNote = u ? `(The caller talked over you. They only heard you say: "${u.slice(0, 300)}")` : '(The caller talked over you before hearing your last answer.)';
+        return;
+      }
+      if (m.type === 'error') {
+        log('phone agent (fast voice) Twilio error:', m.description);
+        core.voice.say(s.callId, 'system', `Fast voice: ${String(m.description || 'error').slice(0, 300)}`).catch(() => {});
+      }
+    };
+    ws.onclose = () => { if (s) { clearTimeout(s.quiet); if (s.turn) s.turn.abort(); if (s.ws === ws) s.ws = null; } };
+  }
+
   return {
     on,
     chat,
+    relay,
     // A call came in.
     async answer(p) {
       const bounce = bouncedFrom(p.From || p.Caller);
@@ -402,17 +621,18 @@ function createPhoneAgent({ env, core, publicUrl, log, warm }) {
         if (bounce || (info.transferTo && digits(info.transferTo) === digits(p.From || p.Caller))) return twiml(`${say('Sorry, nobody is free right now. Please call back in a few minutes, or book online. Goodbye.')}<Hangup/>`);
         return twiml(dial(info.transferTo));
       }
-      const s = { sid: p.CallSid, callId: info.callId, context: info.context, transferTo: info.transferTo, from, messages: [], lastAt: Date.now(), silences: 0, misses: 0, outcome: '', noTransfer: !!bounce };
+      const s = { sid: p.CallSid, callId: info.callId, context: info.context, transferTo: info.transferTo, from, messages: [], lastAt: Date.now(), silences: 0, misses: 0, outcome: '', noTransfer: !!bounce, relay: !!info.fastVoice && /^https:/.test(publicUrl) };
       calls.set(p.CallSid, s);
+      const open = (text) => s.relay ? relayTwiml(s, text) : twiml(listen(text) + listen(''));
       if (bounce) {
         sentToOffice.delete(digits(bounce.caller));
         const hello = 'Sorry, the team could not pick up just now. I can take a message so they call you back, or I can keep helping you myself. What would you like?';
         s.messages.push({ role: 'user', content: '(This caller was just sent to the office, but nobody answered and the call came back to you. Do not transfer again.)' }, { role: 'assistant', content: hello });
         await core.voice.say(info.callId, 'agent', hello);
-        return twiml(listen(hello) + listen(''));
+        return open(hello);
       }
       await core.voice.say(info.callId, 'agent', info.greeting);
-      return twiml(listen(info.greeting) + listen(''));
+      return open(info.greeting);
     },
     // The caller said something (or nothing).
     async turn(p) {
@@ -431,12 +651,23 @@ function createPhoneAgent({ env, core, publicUrl, log, warm }) {
       }
       s.silences = 0;
       await core.voice.say(s.callId, 'caller', heard);
-      // Twilio gives up on a webhook after about 15 seconds. If the answer is not
-      // ready in 2.5 seconds, say "one moment" and come back for it (/wait).
-      s.pending = run(s, heard);
-      const r = await within(s.pending, 2500);
-      if (r) { s.pending = null; return reply(s, r); }
+      // Twilio gives up on a webhook after about 15 seconds. When Claude needs a
+      // lookup, say its own first words right away ("Let me pull up the prices")
+      // and come back for the answer (/wait). If nothing is ready in 1.8 seconds,
+      // say "one moment" instead.
+      let state = 'waiting', early;
+      const spokeFirst = new Promise((ok) => { early = ok; });
+      const onTool = (text, uses) => {
+        if (state === 'waiting') { state = 'done'; early(text || toolFiller(uses) || 'One moment.'); return true; }
+        // The caller already heard "one moment": skip a short "let me check" on top of it.
+        if (state === 'filler') { state = 'done'; return !!text && text.length < 60; }
+        return false;
+      };
+      s.pending = run(s, heard, { onTool });
+      const first = await Promise.race([s.pending.then((r) => ({ r })), spokeFirst.then((t) => ({ t })), new Promise((ok) => setTimeout(() => { if (state === 'waiting') state = 'filler'; ok({}); }, 1800))]);
+      if (first.r) { state = 'done'; s.pending = null; return reply(s, first.r); }
       s.waits = 0;
+      if (first.t) { core.voice.say(s.callId, 'agent', first.t).catch(() => {}); return twiml(say(first.t) + hold()); }
       return twiml(say(FILLERS[Math.floor(Math.random() * FILLERS.length)]) + hold());
     },
     // Twilio came back for an answer that was still being worked out.
@@ -468,7 +699,35 @@ function createPhoneAgent({ env, core, publicUrl, log, warm }) {
       const back = 'Sorry, the team could not pick up just now. I can take a message so they call you back, or I can keep helping you myself. What would you like?';
       s.messages.push({ role: 'user', content: '(The office did not answer. The caller is back with you. Do not transfer again.)' }, { role: 'assistant', content: back });
       await core.voice.say(s.callId, 'agent', back);
-      return twiml(listen(back) + listen(''));
+      return s.relay ? relayTwiml(s, back) : twiml(listen(back) + listen(''));
+    },
+    // The fast voice part of the call ended: transfer, hang up, or (if it failed) go on with the standard voice.
+    async relayEnd(p) {
+      const s = calls.get(p.CallSid);
+      let h = {}; try { h = JSON.parse(p.HandoffData || '{}') || {}; } catch (e) { h = {}; }
+      if (p.CallStatus === 'completed' || p.SessionStatus === 'completed') return twiml('<Hangup/>');
+      if (!s) {
+        const info = await core.voice.start({ to: p.To || p.Called, from: p.From || p.Caller, sid: p.CallSid });
+        return twiml(say('Sorry, let me connect you with our office.') + dial(info ? info.transferTo : ''));
+      }
+      s.lastAt = Date.now();
+      if (h.action === 'hangup') {
+        calls.delete(p.CallSid);
+        await core.voice.end(s.callId, {});
+        return twiml('<Hangup/>');
+      }
+      if (h.action === 'transfer' && s.transferTo && !s.noTransfer) {
+        s.transferredAt = Date.now();
+        const k = digits(s.from);
+        if (k) sentToOffice.set(k, { caller: s.from, office: digits(s.transferTo), at: Date.now() });
+        s.outcome = 'transferred';
+        return twiml(dialBack(s.transferTo));
+      }
+      // The fast voice failed (for example Twilio's AI terms are not accepted yet): carry on with the standard voice.
+      log('phone agent: fast voice ended', p.SessionStatus, p.ErrorCode, p.ErrorMessage);
+      core.voice.say(s.callId, 'system', `Fast voice stopped${p.ErrorCode ? ` (Twilio error ${p.ErrorCode}: ${String(p.ErrorMessage || '').slice(0, 200)})` : ''}. The call went on with the standard voice.`).catch(() => {});
+      s.relay = false;
+      return twiml(listen('Sorry about that. I am still here. How can I help?') + listen(''));
     },
     // Twilio's "Call status changes" callback: the call ended.
     async status(p) {

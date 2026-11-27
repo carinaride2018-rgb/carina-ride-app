@@ -8389,7 +8389,7 @@
         'I left something in the car', 'I want to give feedback about my driver',
       ] },
     ];
-    const DEFAULT_PHONE = { on: false, number: '', transferTo: '', greeting: '', notes: '', phrases: '', canCancel: true, onPage: true, chat: false, chatBook: false };
+    const DEFAULT_PHONE = { on: false, number: '', transferTo: '', greeting: '', notes: '', phrases: '', canCancel: true, onPage: true, chat: false, chatBook: false, fastVoice: false };
     const phcfg = (c) => ({ ...DEFAULT_PHONE, ...(c.phoneAgent || {}) });
     const callsOf = () => db.calls || (db.calls = []);
     // The agent acts as an office login named "Phone agent" (it is not stored as a user).
@@ -8635,7 +8635,7 @@
       const transferTo = str(s.transferTo, 30);
       if (transferTo && !phoneKey(transferTo)) fail('Enter a phone number to transfer calls to, or leave it blank.');
       if (s.on && !key) fail('Enter the phone number the agent answers before switching it on.');
-      ctx.company.phoneAgent = { on: !!s.on, number, transferTo, greeting: str(s.greeting, 300), notes: str(s.notes, 3000), phrases: str(s.phrases, 2000), notesSeeded: true, canCancel: s.canCancel !== false, onPage: s.onPage !== false, chat: !!s.chat && s.chat !== 'false', chatBook: !!s.chatBook && s.chatBook !== 'false' };
+      ctx.company.phoneAgent = { on: !!s.on, number, transferTo, greeting: str(s.greeting, 300), notes: str(s.notes, 3000), phrases: str(s.phrases, 2000), notesSeeded: true, canCancel: s.canCancel !== false, onPage: s.onPage !== false, chat: !!s.chat && s.chat !== 'false', chatBook: !!s.chatBook && s.chatBook !== 'false', fastVoice: !!s.fastVoice && s.fastVoice !== 'false' };
       return phcfg(ctx.company);
     });
     // Server side (phoneagent.js); never reachable from the browser API.
@@ -8659,7 +8659,7 @@
         return {
           callId: call.id, company: { id: c.id, name: c.name, phone: c.phone || '' },
           greeting: cfg.greeting || `Thank you for calling ${c.name}. This is the virtual assistant. How can I help you today?`,
-          transferTo: cfg.transferTo || c.phone || '', context: voiceContext(c, call),
+          transferTo: cfg.transferTo || c.phone || '', context: voiceContext(c, call), fastVoice: !!cfg.fastVoice,
         };
       },
       // A visitor opened the chat on the booking page or the company's website.

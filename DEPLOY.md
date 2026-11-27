@@ -55,7 +55,9 @@ An AI assistant answers a company's phone. It gives prices from the company's ra
 
 5. Optional, agent as backup for your main line: in your main phone system (carrier or Grasshopper-style virtual phone), forward unanswered calls to the Twilio number. Put the Twilio number last, after your own phones, turn off call announce/screening for it, and pass the caller's number as caller ID. If the agent sends a caller to the office and nobody answers there, the agent notices when the call comes back and takes a message instead of transferring again.
 
-Cost: Twilio voice (about 1–2 cents a minute) plus Claude usage per call.
+6. Optional, **Fast voice** (answers in under a second, a more natural voice, and the caller can talk over the agent): in the Twilio console go to Voice > Settings > Privacy & Security and accept the predictive and generative AI features terms. Then tick **Fast voice** under Phone agent and save. Nothing else changes in Twilio: the call opens a WebSocket to `wss://<your domain>/twilio/relay` by itself. Optional settings: `PHONE_AGENT_FAST_TTS` (`ElevenLabs` default, `Google` or `Amazon`) and `PHONE_AGENT_FAST_VOICE` (a voice id from that provider). If the fast voice fails on a call (for example the terms are not accepted yet), that call goes on with the standard voice and the call log shows the Twilio error.
+
+Cost: Twilio voice (about 1–2 cents a minute) plus Claude usage per call. Fast voice adds Twilio ConversationRelay, about 7 cents a minute.
 
 ### Email: Resend
 
