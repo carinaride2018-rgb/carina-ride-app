@@ -177,13 +177,13 @@ function pageHead(html, h) {
     .replace('<meta charset="utf-8">', `<meta charset="utf-8">${h.go ? `\n  <script>if(!location.hash)history.replaceState(null,'',${JSON.stringify(h.go)});</script>` : ''}`)
     .replace('<div id="app"></div>', `<div id="app"></div>${h.noscript ? `\n  <noscript>${h.noscript}</noscript>` : ''}`);
 }
-const HOME_DESC = 'Limo booking and dispatch software with a network of chauffeur companies that send each other rides. Booking page, dispatch board, driver and passenger apps included. Free for 30 days.';
+const HOME_DESC = 'Limo booking and dispatch software with a network of chauffeur companies that send each other rides. Booking page, dispatch board, driver and passenger apps included. Free for every company.';
 function homeHead(html) {
   return pageHead(html, {
     site: 'LimoRelay', url: base, title: 'LimoRelay: limo booking and dispatch software for chauffeur companies', desc: HOME_DESC, image: `${base}icons/icon-512.png`,
     ld: { '@context': 'https://schema.org', '@type': 'SoftwareApplication', name: 'LimoRelay', url: base, applicationCategory: 'BusinessApplication', operatingSystem: 'Web, iOS, Android', description: HOME_DESC,
-      offers: { '@type': 'AggregateOffer', priceCurrency: 'USD', lowPrice: '49', highPrice: '199', offerCount: '3' } },
-    noscript: '<h1>LimoRelay: limo booking and dispatch software</h1><p>Online booking page, dispatch board, driver app and passenger app for limo and chauffeur companies, plus a network of member companies that send each other rides. Plans from $49 a month, free for 30 days.</p>',
+      offers: { '@type': 'Offer', priceCurrency: 'USD', price: '0' } },
+    noscript: '<h1>LimoRelay: limo booking and dispatch software</h1><p>Online booking page, dispatch board, driver app and passenger app for limo and chauffeur companies, plus a network of member companies that send each other rides. Free for every company: pay only for the texts you send.</p>',
   });
 }
 // A company's own tab and app icons (public/icons/co/<slug>/), used on its booking pages.

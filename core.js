@@ -28,17 +28,16 @@
   // What the driver's single "next" button moves a trip to.
   const DRIVER_FLOW = { accepted: 'en_route', en_route: 'arrived', arrived: 'on_board', on_board: 'completed' };
   const ACTIVE = ['assigned', 'accepted', 'en_route', 'arrived', 'on_board'];
-  // Every plan includes dispatch, the driver app and the passenger app; they
-  // differ only in price and texts. Founding is for the first 100 companies,
-  // with the price locked for 2 years. No plan has a setup fee (Dawit, 2026-10-22).
-  // Paying a year up front costs 10 months. New companies can start with a
-  // 30-day free trial.
+  // LimoRelay is free for every company (Dawit, 2026-11-28): one Free plan with
+  // dispatch, the driver app and the passenger app. No monthly fee, no setup
+  // fee and no trial. Texts: a monthly allowance, then paid text packs.
   // Platform contact address: shown on the home page and used as reply-to on emails that come from LimoRelay itself.
   const PLATFORM_EMAIL = 'info@limorelay.com';
+  // Optional paid help: LimoRelay loads the company's cars, rates and
+  // customers for them. One time, never required (Dawit, 2026-11-28).
+  const SETUP_HELP_PRICE = 199;
   const PLANS = {
-    founding: { label: 'Founding', monthly: 49, setup: 0, texts: 500, lockMonths: 24, limit: 100, note: 'First 100 companies, price locked for 2 years' },
-    standard: { label: 'Standard', monthly: 99, setup: 0, texts: 1000, note: 'Everything included' },
-    fleet: { label: 'Fleet', monthly: 199, setup: 0, texts: 3000, note: 'For busy fleets' },
+    free: { label: 'Free', monthly: 0, setup: 0, texts: 500, note: 'Everything included, free' },
   };
   const YEARLY_MONTHS = 10; // a yearly plan costs 10 months: 2 months free
   const TRIAL_DAYS = 30;
@@ -66,7 +65,9 @@
   const DEFAULT_FLIGHT = { autoAdjust: true, minDelay: 10 };
   // Texts each company gets per month, and the packs it can buy when it runs
   // out. The platform owner can change these (db.textPlan). Emails are unlimited.
-  const DEFAULT_TEXTS = { included: 500, packSize: 500, packPrice: 15, warnPct: 80, plans: { founding: 500, standard: 1000, fleet: 3000 } };
+  // Pay as you go (Dawit, 2026-11-28): each company pays for the texts it uses,
+  // perText each, billed on the 1st for the month before. Packs are the old way.
+  const DEFAULT_TEXTS = { included: 0, packSize: 500, packPrice: 15, warnPct: 80, payAsYouGo: true, perText: 0.05, plans: { free: 0 } };
   // Messages to passengers: confirmation, 24-hour reminder, review request.
   // Passenger texts and emails a company can reword. {words} in braces are
   // filled in per trip; the *_line ones are whole sentences or empty.
@@ -887,9 +888,22 @@
       d.smsOptOut = d.smsOptOut || {};
       if (d.sample === undefined) d.sample = d.users.some((u) => u.email === 'owner@demo.com');
       for (const m of d.messages || []) if (m.metered === undefined) m.metered = true;
-      // The single $45 Membership became Founding / Standard / Fleet (v37).
-      // Members keep the Founding price, locked from when they joined.
-      for (const c of d.companies) if (!PLANS[c.plan]) { c.plan = 'founding'; c.monthlyFee = PLANS.founding.monthly; c.setupFee = 0; c.billing = c.billing || 'monthly'; c.priceLockedUntil = addMonths(c.createdAt || new Date().toISOString(), PLANS.founding.lockMonths).slice(0, 10); }
+      // Every plan became the one Free plan (Dawit, 2026-11-28): no monthly fee,
+      // no trial. Done once, so a fee the owner sets later for one company stays.
+      // Unpaid plan fees on open invoices are dropped; text packs stay billed.
+      if (!d.allFreeAt) {
+        d.allFreeAt = new Date().toISOString();
+        for (const c of d.companies) { c.plan = 'free'; c.monthlyFee = 0; c.setupFee = 0; c.billing = 'monthly'; c.priceLockedUntil = null; c.trialEnds = null; c.paidThrough = null; }
+        const planLine = (i) => / plan, /.test(i.label || '') && !/ texts/.test(i.label || '');
+        d.invoices = (d.invoices || []).filter((inv) => {
+          if (inv.status !== 'open') return true;
+          inv.items = (inv.items || []).filter((i) => !planLine(i));
+          inv.total = Math.round(inv.items.reduce((sum, i) => sum + (i.amount || 0), 0) * 100) / 100;
+          return inv.items.length > 0 && inv.total > 0;
+        });
+        if (d.textPlan) { d.textPlan.plans = { free: 0 }; d.textPlan.included = 0; d.textPlan.payAsYouGo = true; d.textPlan.perText = 0.05; }
+      }
+      for (const c of d.companies) if (!PLANS[c.plan]) { c.plan = 'free'; c.setupFee = 0; c.billing = c.billing || 'monthly'; }
       for (const c of d.companies) { c.network = c.network || defaultNetwork(c); seedPlaces(c); }
       // The airport flat rate is gone (v91): upcoming trips still priced with it,
       // and not yet charged or invoiced, are priced again with today's rates.
@@ -5173,8 +5187,8 @@
       if (!c.texts) c.texts = { month: m, used: 0, fromPacks: 0, credits: 0, held: 0, autoTopUp: false, packs: [], past: [], warned: '' };
       const x = c.texts;
       if (x.month !== m) {
-        x.past = [{ month: x.month, used: x.used, held: x.held || 0 }, ...(x.past || [])].slice(0, 12);
-        Object.assign(x, { month: m, used: 0, fromPacks: 0, held: 0, warned: '' });
+        x.past = [{ month: x.month, used: x.used, held: x.held || 0, billable: x.billable || 0 }, ...(x.past || [])].slice(0, 12);
+        Object.assign(x, { month: m, used: 0, fromPacks: 0, held: 0, billable: 0, warned: '' });
       }
       return x;
     }
@@ -5191,6 +5205,11 @@
       if (textsLeft(c) < n && x.autoTopUp) {
         const p = buyTexts(c, Math.max(1, Math.ceil((n - textsLeft(c)) / textPlan().packSize)), 'Automatic top-up', true);
         companyEmail(c, `${c.name}: you ran out of texts this month, so we added ${p.texts} more for $${money(p.price)}. It goes on your next monthly invoice. Turn automatic top-up off in Texts & emails.`);
+      }
+      if (textPlan().payAsYouGo) {
+        // Never runs out: texts past the free ones and bought credits are billed.
+        for (let i = 0; i < n; i++) { if (x.used - x.fromPacks < inc) x.used++; else if (x.credits > 0) { x.credits--; x.fromPacks++; x.used++; } else { x.used++; x.billable = (x.billable || 0) + 1; } }
+        return true;
       }
       if (textsLeft(c) < n) return false;
       for (let i = 0; i < n; i++) { if (x.used - x.fromPacks < inc) x.used++; else { x.credits--; x.fromPacks++; x.used++; } }
@@ -5236,6 +5255,7 @@
       }
       for (const c of touched) {
         const x = texts(c), inc = textsIncluded(c), left = textsLeft(c), tp = textPlan();
+        if (tp.payAsYouGo) continue;
         const buy = `Buy more in Texts & emails: ${tp.packSize} texts for $${money(tp.packPrice)}.`;
         if (left <= 0 && !x.warned.includes('out')) {
           x.warned += ' out';
@@ -5253,6 +5273,7 @@
         pct: inc ? Math.min(100, Math.round(((x.used - x.fromPacks) / inc) * 100)) : 100,
         low: left > 0 && left <= inc * (100 - tp.warnPct) / 100, out: left <= 0,
         autoTopUp: !!x.autoTopUp, packSize: tp.packSize, packPrice: tp.packPrice, packs: (x.packs || []).slice(0, 12), past: x.past || [],
+        ...(tp.payAsYouGo ? { payAsYouGo: true, perText: tp.perText, billable: x.billable || 0, cost: round2((x.billable || 0) * tp.perText), low: false, out: false } : {}),
       };
     }
     def('dispatch.texts', STAFF, false, (ctx) => ({ ...textStatus(ctx.company), planInfo: planInfo(ctx.company) }));
@@ -7038,18 +7059,13 @@
 
     // Platform owner
     function monthKey(d) { return d.toISOString().slice(0, 7); }
-    const foundingLeft = (except) => PLANS.founding.limit - db.companies.filter((c) => c.plan === 'founding' && c !== except && c.status !== 'pending').length;
     const inTrial = (c, at) => !!(c.trialEnds && (at || now().toISOString().slice(0, 10)) < c.trialEnds);
-    // What a company pays: its plan's price (the Founding price stays locked),
-    // or 10 months once a year on yearly billing.
+    // Every company is on the Free plan. The owner can still set a fee for one
+    // company by hand (Edit company), billed monthly or yearly.
     function setPlan(c, plan, billing) {
       if (!PLANS[plan]) fail('Unknown plan.');
-      if (plan === 'founding' && c.plan !== 'founding' && foundingLeft(c) <= 0) fail(`All ${PLANS.founding.limit} Founding places are taken. Choose Standard or Fleet.`);
       if (billing && !['monthly', 'yearly'].includes(billing)) fail('Choose monthly or yearly billing.');
-      if (plan !== c.plan) {
-        c.plan = plan; c.monthlyFee = PLANS[plan].monthly; c.setupFee = PLANS[plan].setup;
-        c.priceLockedUntil = plan === 'founding' ? addMonths(now().toISOString(), PLANS.founding.lockMonths).slice(0, 10) : null;
-      }
+      if (plan !== c.plan) { c.plan = plan; c.monthlyFee = PLANS[plan].monthly; c.setupFee = PLANS[plan].setup; c.priceLockedUntil = null; }
       if (billing) c.billing = billing;
     }
     function planInfo(c) {
@@ -7162,7 +7178,7 @@
     const plat = () => db.platform || (db.platform = { approveSignups: false });
     const SIGNUP_TZ = ['America/Los_Angeles', 'America/Denver', 'America/Phoenix', 'America/Chicago', 'America/New_York', 'America/Anchorage', 'Pacific/Honolulu'];
     function makeCompany(f) {
-      const plan = PLANS[f.plan] ? f.plan : 'standard';
+      const plan = PLANS[f.plan] ? f.plan : 'free';
       const prefix = (f.name.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase() || 'TRP').padEnd(3, 'X');
       return {
         id: id('co'), slug: f.slug, name: f.name, tagline: str(f.tagline, 120), color: /^#[0-9a-f]{6}$/i.test(f.color || '') ? f.color : '#3d4f7c',
@@ -7170,7 +7186,7 @@
         monthlyFee: f.monthlyFee != null && f.monthlyFee !== '' ? round2(num(f.monthlyFee, PLANS[plan].monthly)) : PLANS[plan].monthly,
         setupFee: 0,
         billing: f.billing === 'yearly' ? 'yearly' : 'monthly', trialEnds: f.trial ? new Date(now().getTime() + TRIAL_DAYS * 864e5).toISOString().slice(0, 10) : null,
-        priceLockedUntil: plan === 'founding' ? addMonths(now().toISOString(), PLANS.founding.lockMonths).slice(0, 10) : null,
+        priceLockedUntil: null,
         setupBilled: false, refPrefix: prefix, timezone: str(f.timezone, 40) || 'America/Los_Angeles', nextRef: 1000, network: defaultNetwork(null),
         rates: clone(DEFAULT_RATES), pricing: clone(DEFAULT_PRICING), flight: clone(DEFAULT_FLIGHT), createdAt: now().toISOString(),
       };
@@ -7178,7 +7194,7 @@
     const siteUrl = () => (opts.publicUrl || 'https://limorelay.com/').replace(/#.*$/, '');
     const loginTaken = (email) => db.users.some((u) => u.email === email && u.role !== 'customer');
     // Companies sign themselves up from the home page. They can't sign in
-    // until the platform owner approves them; the free trial starts then.
+    // until the platform owner approves them; it's free.
     def('public.companySignup', 'public', true, async (ctx, a) => {
       const company = str(a.company, 80), name = str(a.name, 80), email = str(a.email, 120).toLowerCase();
       const phone = str(a.phone, 30), city = str(a.city, 80), fleet = str(a.fleet, 20), note = str(a.note, 600);
@@ -7193,7 +7209,6 @@
       if (city.length < 2) fail('Enter your city.');
       if (!['1-3', '4-10', '11-25', '26+'].includes(fleet)) fail('Choose how many vehicles are in your fleet.');
       if (!SIGNUP_TZ.includes(a.timezone)) fail('Choose your time zone.');
-      if (!PLANS[a.plan]) fail('Choose a membership.');
       if (note.length < 3) fail('Tell us a little about your company.');
       if (!a.terms) fail('Please agree to the Terms to continue.');
       if (loginTaken(email)) fail('That email already has a login. Sign in, or use Forgot password.');
@@ -7201,14 +7216,14 @@
       if (!slug || slug.length < 3) fail('Choose a booking link name of at least 3 letters.');
       if (db.companies.some((c) => c.slug === slug)) fail('That booking link name is taken. Choose another.');
       if (db.companies.filter((c) => c.status === 'pending' && new Date(c.createdAt).getTime() > now().getTime() - 3600e3).length >= 20) fail('Too many sign-ups right now. Please try again later.', 429);
-      const plan = PLANS[a.plan] ? a.plan : foundingLeft() > 0 ? 'founding' : 'standard';
-      if (plan === 'founding' && foundingLeft() <= 0) fail(`All ${PLANS.founding.limit} Founding places are taken. Choose Standard or Fleet.`);
-      // Unless the owner approves sign-ups by hand, the company starts its free
-      // trial right away and is signed in to a setup guide.
+      const plan = 'free';
+      // Unless the owner approves sign-ups by hand, the company starts right
+      // away and is signed in to a setup guide.
       const instant = !plat().approveSignups;
       const tz = SIGNUP_TZ.includes(a.timezone) ? a.timezone : 'America/Los_Angeles';
-      const c = makeCompany({ name: company, slug, plan, phone, email, status: instant ? 'active' : 'pending', timezone: tz, trial: instant });
+      const c = makeCompany({ name: company, slug, plan, phone, email, status: instant ? 'active' : 'pending', timezone: tz });
       c.signup = { city, fleet, note, at: c.createdAt };
+      if (a.setupHelp) c.setupHelp = { askedAt: c.createdAt, price: SETUP_HELP_PRICE, invoiceId: null };
       c.setup = {};
       if (instant) c.approvedAt = c.createdAt;
       db.companies.push(c);
@@ -7216,18 +7231,18 @@
       await setPassword(u, pw);
       db.users.push(u);
       if (instant) {
-        mailUser(u, null, 'approved', `Welcome aboard, ${name.split(' ')[0]}! ${company} is on LimoRelay and your 30-day free trial has started, no card needed. Sign in at ${siteUrl()} with ${email}. The setup guide on your Board walks you through adding cars, prices and your first booking. Questions? Reply to this email or write to ${PLATFORM_EMAIL}.`);
+        mailUser(u, null, 'approved', `Welcome aboard, ${name.split(' ')[0]}! ${company} is on LimoRelay. It's free, with no card needed. Sign in at ${siteUrl()} with ${email}. The setup guide on your Board walks you through adding cars, prices and your first booking. Questions? Reply to this email or write to ${PLATFORM_EMAIL}.`);
         const owner = db.users.find((x) => x.role === 'owner' && x.active !== false);
         if (owner && owner.email) db.messages.unshift({ id: id('msg'), companyId: null, tripId: null, ref: '', at: c.createdAt, recipient: owner.email, channel: 'email', kind: 'signup', metered: true, replyTo: email,
-          body: `New company on LimoRelay: ${company}${city ? ', ' + city : ''}. ${name}, ${email}, ${phone}${fleet ? '. Fleet: ' + fleet + ' vehicles' : ''}. Plan: ${PLANS[plan].label}. Their free trial has started.${note ? ' Note: ' + note : ''}` });
+          body: `New company on LimoRelay: ${company}${city ? ', ' + city : ''}. ${name}, ${email}, ${phone}${fleet ? '. Fleet: ' + fleet + ' vehicles' : ''}. They can start right away.${c.setupHelp ? ` They want setup help ($${SETUP_HELP_PRICE}): load their cars, rates and customers.` : ''}${note ? ' Note: ' + note : ''}` });
         const token = randomId(24);
         db.sessions[token] = { userId: u.id, at: now().toISOString() };
         return { ok: true, started: true, email, token, user: pubUser(u), company: pubCompany(c) };
       }
-      mailUser(u, null, 'signup', `Welcome aboard, ${name.split(' ')[0]}! We've received the sign-up for ${company} on LimoRelay. We welcome every new member personally and will email you at ${email} as soon as you're approved, within 3 to 7 business days. Your 30-day free trial starts then, with no card needed. Questions? Reply to this email or write to ${PLATFORM_EMAIL}.`);
+      mailUser(u, null, 'signup', `Welcome aboard, ${name.split(' ')[0]}! We've received the sign-up for ${company} on LimoRelay. We welcome every new member personally and will email you at ${email} as soon as you're approved, within 3 to 7 business days. LimoRelay is free, with no card needed. Questions? Reply to this email or write to ${PLATFORM_EMAIL}.`);
       const owner = db.users.find((x) => x.role === 'owner' && x.active !== false);
       if (owner && owner.email) db.messages.unshift({ id: id('msg'), companyId: null, tripId: null, ref: '', at: c.createdAt, recipient: owner.email, channel: 'email', kind: 'signup', metered: true, replyTo: email,
-        body: `New company sign-up waiting for your approval: ${company}${city ? ', ' + city : ''}. ${name}, ${email}, ${phone}${fleet ? '. Fleet: ' + fleet + ' vehicles' : ''}. Plan: ${PLANS[plan].label}.${note ? ' Note: ' + note : ''} Approve or decline it at ${siteUrl()} under Companies.` });
+        body: `New company sign-up waiting for your approval: ${company}${city ? ', ' + city : ''}. ${name}, ${email}, ${phone}${fleet ? '. Fleet: ' + fleet + ' vehicles' : ''}.${c.setupHelp ? ` They want setup help ($${SETUP_HELP_PRICE}).` : ''}${note ? ' Note: ' + note : ''} Approve or decline it at ${siteUrl()} under Companies.` });
       return { ok: true, company, email };
     });
     def('public.signupInfo', 'public', false, () => ({ instant: !plat().approveSignups }));
@@ -7238,11 +7253,9 @@
       if (!c || c.status !== 'pending') fail('That sign-up was not found or was already reviewed.', 404);
       const admins = db.users.filter((u) => u.companyId === c.id);
       if (a.approve) {
-        if (c.plan === 'founding' && foundingLeft(c) <= 0) setPlan(c, 'standard');
         c.status = 'active';
-        c.trialEnds = new Date(now().getTime() + TRIAL_DAYS * 864e5).toISOString().slice(0, 10);
         c.approvedAt = now().toISOString();
-        for (const u of admins) mailUser(u, null, 'approved', `Good news, ${u.name.split(' ')[0]}: ${c.name} is approved on LimoRelay. Your 30-day free trial has started. Sign in at ${siteUrl()} with ${u.email} and the password you chose, then add your drivers, cars and rates. Your booking page is ${siteUrl()}#book.${c.slug}. Questions? Reply to this email or write to ${PLATFORM_EMAIL}.`);
+        for (const u of admins) mailUser(u, null, 'approved', `Good news, ${u.name.split(' ')[0]}: ${c.name} is approved on LimoRelay. It's free, with no card needed. Sign in at ${siteUrl()} with ${u.email} and the password you chose, then add your drivers, cars and rates. Your booking page is ${siteUrl()}#book.${c.slug}. Questions? Reply to this email or write to ${PLATFORM_EMAIL}.`);
         return { ...pubCompany(c), approved: true };
       }
       for (const u of admins) mailUser(u, null, 'declined', `Hello ${u.name.split(' ')[0]}, thank you for signing up ${c.name} for LimoRelay. We weren't able to approve this account. If you think this is a mistake, reply to this email or write to ${PLATFORM_EMAIL}.`);
@@ -7279,19 +7292,19 @@
       else fail('Unknown action.');
       return clone(db.leads);
     });
-    def('owner.plans', ['owner'], false, () => ({ plans: clone(PLANS), yearlyMonths: YEARLY_MONTHS, trialDays: TRIAL_DAYS, foundingLeft: foundingLeft(), texts: textPlan().plans }));
+    def('owner.plans', ['owner'], false, () => ({ plans: clone(PLANS), yearlyMonths: YEARLY_MONTHS, trialDays: TRIAL_DAYS, texts: textPlan().plans }));
     def('owner.companies', ['owner'], false, () => {
       const m = monthKey(now());
       return db.companies.map((c) => {
         const trips = db.trips.filter((t) => t.companyId === c.id && t.pickupAt.slice(0, 7) === m);
         const admin = db.users.find((u) => u.companyId === c.id && u.role === 'admin');
         return {
-          ...pubCompany(c), ...planInfo(c), createdAt: c.createdAt, signup: c.signup ? clone(c.signup) : null, adminPhone: admin ? admin.phone || '' : '', masterName: masterOf(c) ? masterOf(c).name : '', pinSet: !!c.paymentPin,
+          ...pubCompany(c), ...planInfo(c), setupHelp: c.setupHelp ? clone(c.setupHelp) : null, createdAt: c.createdAt, signup: c.signup ? clone(c.signup) : null, adminPhone: admin ? admin.phone || '' : '', masterName: masterOf(c) ? masterOf(c).name : '', pinSet: !!c.paymentPin,
           adminEmail: admin ? admin.email : '', adminName: admin ? admin.name : '', adminId: admin ? admin.id : '', drivers: db.users.filter((u) => u.companyId === c.id && u.role === 'driver' && u.active !== false).length,
           vehicles: db.vehicles.filter((v) => v.companyId === c.id && v.status !== 'retired').length,
           tripsMonth: trips.filter((t) => t.status !== 'cancelled').length,
           bookedMonth: round2(trips.filter((t) => t.status !== 'cancelled').reduce((s, t) => s + t.price.total, 0)),
-          texts: (({ used, included, credits, left, low, out, held, fromPacks }) => ({ used, included, credits, left, low, out, held, fromPacks, custom: c.textsIncluded != null }))(textStatus(c)),
+          texts: (({ used, included, credits, left, low, out, held, fromPacks, payAsYouGo, billable, cost }) => ({ used, included, credits, left, low, out, held, fromPacks, payAsYouGo: !!payAsYouGo, billable: billable || 0, cost: cost || 0, custom: c.textsIncluded != null }))(textStatus(c)),
         };
       });
     });
@@ -7301,8 +7314,7 @@
       const slug = slugify(a.slug || name);
       if (!slug || slug.length < 3) fail('Choose a booking link name of at least 3 letters.');
       if (db.companies.some((c) => c.slug === slug)) fail('That booking link name is taken. Choose another.');
-      const plan = PLANS[a.plan] ? a.plan : 'standard';
-      if (plan === 'founding' && foundingLeft() <= 0) fail(`All ${PLANS.founding.limit} Founding places are taken. Choose Standard or Fleet.`);
+      const plan = PLANS[a.plan] ? a.plan : 'free';
       const billing = a.billing === 'yearly' ? 'yearly' : 'monthly';
       const adminEmail = str(a.adminEmail, 120).toLowerCase();
       if (!str(a.adminName, 80)) fail("Enter the company admin's name.");
@@ -7322,6 +7334,11 @@
       if (!c) fail('Company not found.', 404);
       if (a.plan || a.billing) setPlan(c, a.plan || c.plan, a.billing);
       if (a.endTrial) c.trialEnds = null;
+      // Setup help: the owner adds or removes it until it is invoiced.
+      if (a.setupHelp !== undefined && !(c.setupHelp && c.setupHelp.invoiceId)) {
+        const price = a.setupHelpPrice != null && a.setupHelpPrice !== '' ? Math.max(0, round2(num(a.setupHelpPrice, SETUP_HELP_PRICE))) : (c.setupHelp ? c.setupHelp.price : SETUP_HELP_PRICE);
+        c.setupHelp = a.setupHelp ? { askedAt: (c.setupHelp && c.setupHelp.askedAt) || now().toISOString(), price, invoiceId: null } : null;
+      }
       // A forgotten payment PIN: only the platform owner can clear it.
       if (a.resetPin) { delete c.paymentPin; delete c.pinFails; delete c.pinLockUntil; for (const s of Object.values(db.sessions)) delete s.payUnlockedUntil; }
       // The company's details and its admin login, edited by the platform owner.
@@ -7394,7 +7411,7 @@
         if (loginTaken(adminEmail)) fail('That email already has a login. Use another email for LimoRelay dispatch.');
         const slug = slugify(a.slug || 'nationwide');
         if (db.companies.some((x) => x.slug === slug)) fail('That booking link name is taken. Choose another.');
-        c = makeCompany({ name: str(a.name, 80) || 'LimoRelay', slug, plan: 'standard', monthlyFee: 0, email: adminEmail, phone: str(a.phone, 30), tagline: 'Chauffeured cars in cities across the US', color: '#14161b', timezone: 'America/Los_Angeles', status: 'active' });
+        c = makeCompany({ name: str(a.name, 80) || 'LimoRelay', slug, plan: 'free', monthlyFee: 0, email: adminEmail, phone: str(a.phone, 30), tagline: 'Chauffeured cars in cities across the US', color: '#14161b', timezone: 'America/Los_Angeles', status: 'active' });
         c.house = true; c.setup = {}; c.refPrefix = 'LRN';
         c.network.joined = true; c.network.cities = [];
         c.dispatch = { ...DEFAULT_DISPATCH, autoAssign: false };
@@ -7412,7 +7429,10 @@
       const cur = textPlan();
       const plans = { ...cur.plans };
       for (const k of Object.keys(PLANS)) if (a.plans && a.plans[k] !== undefined && a.plans[k] !== '') { const v = Math.round(num(a.plans[k], NaN)); if (!(v >= 0 && v <= 100000)) fail(`${PLANS[k].label} texts per month must be between 0 and 100000.`); plans[k] = v; }
-      db.textPlan = { plans, included: a.included !== undefined ? Math.round(n('included', 0, 100000, 'Texts per month')) : cur.included, packSize: Math.round(n('packSize', 50, 100000, 'Pack size')), packPrice: round2(n('packPrice', 0, 10000, 'Pack price')), warnPct: Math.round(n('warnPct', 50, 99, 'Warning point')) };
+      const keep = (k) => (a[k] === undefined || a[k] === '' ? cur[k] : a[k]);
+      a = { ...a, packSize: keep('packSize'), packPrice: keep('packPrice'), warnPct: keep('warnPct'), perText: keep('perText') };
+      db.textPlan = { plans, included: a.included !== undefined ? Math.round(n('included', 0, 100000, 'Texts per month')) : cur.included, packSize: Math.round(n('packSize', 50, 100000, 'Pack size')), packPrice: round2(n('packPrice', 0, 10000, 'Pack price')), warnPct: Math.round(n('warnPct', 50, 99, 'Warning point')),
+        payAsYouGo: a.payAsYouGo === undefined ? cur.payAsYouGo : !!a.payAsYouGo, perText: Math.round(n('perText', 0, 10, 'Price per text') * 10000) / 10000 };
       return textPlan();
     });
     def('owner.invoices', ['owner'], false, () => db.invoices.slice().sort((x, y) => y.createdAt.localeCompare(x.createdAt)).map((i) => ({ ...clone(i), companyName: (findCompany(i.companyId) || {}).name })));
@@ -7440,10 +7460,11 @@
       for (const c of db.companies) {
         if (c.status !== 'active' || c.house) continue;
         if (db.invoices.some((i) => i.companyId === c.id && i.period === period)) continue;
-        // Free trial: nothing is billed until it ends.
+        // Old free trials: nothing is billed until it ends.
         if (inTrial(c, trialAt || `${period}-28`)) continue;
         const items = [];
-        if (c.billing === 'yearly') {
+        if (!(c.monthlyFee > 0)) { /* Free plan: only text packs are billed. */ }
+        else if (c.billing === 'yearly') {
           // One invoice covers 12 months for the price of 10.
           if (!(c.paidThrough && c.paidThrough >= period)) {
             const through = addMonths(`${period}-15T12:00:00Z`, 11).slice(0, 7);
@@ -7455,12 +7476,21 @@
           items.push({ label: `${PLANS[c.plan].label} plan, ${period}`, amount: c.monthlyFee });
           c.setupBilled = true;
         }
+        // Texts used in earlier months, past the free ones (pay as you go).
+        const tp = textPlan(), tx = texts(c);
+        const used = (tx.past || []).filter((m) => m.billable > 0 && !m.invoiceId && m.month < period);
+        for (const m of used.slice().reverse()) items.push({ label: `${m.billable.toLocaleString('en-US')} text${m.billable === 1 ? '' : 's'} used in ${m.month} at $${tp.perText} each`, amount: round2(m.billable * tp.perText) });
+        const help = c.setupHelp && !c.setupHelp.invoiceId && c.setupHelp.price > 0 ? c.setupHelp : null;
+        if (help) items.push({ label: 'Setup help, one time: we loaded your cars, rates and customers', amount: help.price });
         const packs = ((c.texts && c.texts.packs) || []).filter((p) => !p.invoiceId && !p.free && p.price > 0);
         for (const p of packs.slice().reverse()) items.push({ label: `${p.texts} extra texts, bought ${p.at.slice(0, 10)}${p.auto ? ' (automatic)' : ''}`, amount: p.price });
         const total = round2(items.reduce((sum, i) => sum + i.amount, 0));
-        if (!items.length || total <= 0) continue;
+        // Under 50 cents (the smallest card charge) waits and goes on a later invoice.
+        if (!items.length || total < 0.5) continue;
         const inv = { id: id('inv'), number: `INV-${period.replace('-', '')}-${String(db.seq.inv).padStart(3, '0')}`, companyId: c.id, period, items, total, status: 'open', createdAt: now().toISOString(), paidAt: null };
         for (const p of packs) p.invoiceId = inv.id;
+        for (const m of used) m.invoiceId = inv.id;
+        if (help) help.invoiceId = inv.id;
         db.invoices.push(inv); made.push(inv);
         chargeInvoice(inv, c);
         if (inv.status === 'open' && !(inv.charge && inv.charge.status === 'failed')) {
@@ -7585,6 +7615,7 @@
         if (days > 3 || days < 0) continue;
         c.trialReminded = c.trialEnds;
         const fee = c.billing === 'yearly' ? `$${money(c.monthlyFee * YEARLY_MONTHS)} a year` : `$${money(c.monthlyFee)} a month`;
+        if (!(c.monthlyFee > 0)) continue;
         billingMail(c, 'billing', `your free LimoRelay trial for ${c.name} ends on ${c.trialEnds}. To keep going without a break, add a card under My account, Membership, at ${siteUrl()}#account. Your ${PLANS[c.plan].label} plan is ${fee}.`);
         changed = true;
       }
@@ -7661,7 +7692,7 @@
 
       await mkUser({ role: 'owner', companyId: null, name: 'Platform Owner', email: 'owner@demo.com', phone: '' });
 
-      const cap = mkCo({ slug: 'carina', name: 'Carina Ride', tagline: 'Chauffeured cars across Seattle, the Eastside and all three airports', color: '#7a2433', phone: '(206) 555-0147', email: 'book@carina.demo', plan: 'founding', monthlyFee: 49, setupFee: 0, billing: 'monthly', priceLockedUntil: at(60 * 24 * 655).slice(0, 10), refPrefix: 'CR', timezone: 'America/Los_Angeles' });
+      const cap = mkCo({ slug: 'carina', name: 'Carina Ride', tagline: 'Chauffeured cars across Seattle, the Eastside and all three airports', color: '#7a2433', phone: '(206) 555-0147', email: 'book@carina.demo', plan: 'free', monthlyFee: 0, setupFee: 0, billing: 'monthly', refPrefix: 'CR', timezone: 'America/Los_Angeles' });
       cap.pricing.peakDates = [
         { id: id('peak'), date: day(3), label: 'Marathon weekend', pct: 25 },
         { id: id('peak'), date: `${base.getFullYear()}-12-31`, label: "New Year's Eve", pct: 50 },
@@ -7697,7 +7728,7 @@
       const robert = await mkUser({ role: 'customer', companyId: cap.id, name: 'Robert Chen', email: 'robert@demo.com', phone: '(206) 555-0190' });
       const priya = await mkUser({ role: 'customer', companyId: cap.id, name: 'Priya Shah', email: 'travel@acme.demo', phone: '(206) 555-0175', account: 'Acme Corp', discountPct: 10, notes: 'Corporate account, invoice monthly' });
 
-      const sum = mkCo({ slug: 'summit', name: 'Summit Black Car', tagline: 'Denver airport and mountain transfers', color: '#24584a', phone: '(303) 555-0120', email: 'rides@summit.demo', plan: 'standard', monthlyFee: 99, setupFee: 0, billing: 'monthly', refPrefix: 'SUM', timezone: 'America/Denver' });
+      const sum = mkCo({ slug: 'summit', name: 'Summit Black Car', tagline: 'Denver airport and mountain transfers', color: '#24584a', phone: '(303) 555-0120', email: 'rides@summit.demo', plan: 'free', monthlyFee: 0, setupFee: 0, billing: 'monthly', refPrefix: 'SUM', timezone: 'America/Denver' });
       const sub = mkVeh(sum, { name: 'Chevrolet Suburban', type: 'SUV', capacity: 6, plate: 'CO 552-KRT', color: 'Black', year: 2023, odometer: 30500, lastServiceOdometer: 28000 });
       mkVeh(sum, { name: 'Lincoln Aviator', type: 'Sedan', capacity: 3, plate: 'CO 118-LMV', color: 'Grey', year: 2022, odometer: 41200, lastServiceOdometer: 40000 });
       await mkUser({ role: 'admin', companyId: sum.id, name: 'Greg Lindqvist', email: 'dispatch@summit.demo', phone: '(303) 555-0120' });
@@ -7787,7 +7818,7 @@
 
 
       // A second Seattle-area company so the network has a local partner.
-      const pot = mkCo({ slug: 'pugetsound', name: 'Puget Sound Executive Cars', tagline: 'Executive sedans and SUVs for Seattle, the Eastside and Tacoma', color: '#1f4e79', phone: '(425) 555-0188', email: 'ops@pugetsound.demo', plan: 'fleet', monthlyFee: 199, setupFee: 0, billing: 'yearly', paidThrough: '', refPrefix: 'PSE', timezone: 'America/Los_Angeles' });
+      const pot = mkCo({ slug: 'pugetsound', name: 'Puget Sound Executive Cars', tagline: 'Executive sedans and SUVs for Seattle, the Eastside and Tacoma', color: '#1f4e79', phone: '(425) 555-0188', email: 'ops@pugetsound.demo', plan: 'free', monthlyFee: 0, setupFee: 0, billing: 'monthly', refPrefix: 'PSE', timezone: 'America/Los_Angeles' });
       const eCls = mkVeh(pot, { name: 'Mercedes-Benz E-Class', type: 'Sedan', capacity: 3, plate: 'WA 7Y2031', color: 'Black', year: 2023, odometer: 27400, lastServiceOdometer: 25000 });
       const tahoe = mkVeh(pot, { name: 'Chevrolet Tahoe', type: 'SUV', capacity: 6, plate: 'WA 9K4410', color: 'Black', year: 2024, odometer: 15800, lastServiceOdometer: 15000 });
       mkVeh(pot, { name: 'Ford Transit Executive', type: 'Sprinter Van', capacity: 12, plate: 'WA TRN-88', color: 'Black', year: 2022, odometer: 52100, lastServiceOdometer: 50000 });
@@ -7931,22 +7962,15 @@
       // Run the flight monitor once so delays show up straight away.
       for (const c of [cap, sum, pot]) monitorFlights(c, true);
 
-      // Last month's platform invoices, already paid.
+      // Last month's platform invoices, already paid. LimoRelay is free, so
+      // they hold only the texts each company used.
       const last = new Date(base.getFullYear(), base.getMonth() - 1, 1);
       const period = `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, '0')}`;
-      for (const c of [cap, sum]) {
-        const inv = { id: id('inv'), number: `INV-${period.replace('-', '')}-${String((db.seq.inv || 0) + 1).padStart(3, '0')}`, companyId: c.id, period, items: [{ label: `${PLANS[c.plan].label} plan, ${period}`, amount: c.monthlyFee }], total: c.monthlyFee, status: 'paid', createdAt: new Date(last.getFullYear(), last.getMonth(), 1, 9).toISOString(), paidAt: new Date(last.getFullYear(), last.getMonth(), 4, 9).toISOString() };
+      for (const [c, n] of [[cap, 412], [sum, 236]]) {
+        const amt = round2(n * DEFAULT_TEXTS.perText);
+        const inv = { id: id('inv'), number: `INV-${period.replace('-', '')}-${String((db.seq.inv || 0) + 1).padStart(3, '0')}`, companyId: c.id, period, items: [{ label: `${n} texts used in ${period} at $${DEFAULT_TEXTS.perText} each`, amount: amt }], total: amt, status: 'paid', createdAt: new Date(last.getFullYear(), last.getMonth() + 1, 1, 9).toISOString(), paidAt: new Date(last.getFullYear(), last.getMonth() + 1, 2, 9).toISOString() };
         id('inv');
         db.invoices.push(inv);
-      }
-      // Puget Sound pays yearly: one invoice for 12 months at the price of 10.
-      {
-        const from = new Date(base.getFullYear(), base.getMonth() - 2, 1);
-        const fp = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, '0')}`;
-        const through = addMonths(`${fp}-15T12:00:00Z`, 11).slice(0, 7);
-        const amt = round2(pot.monthlyFee * YEARLY_MONTHS);
-        db.invoices.push({ id: id('inv'), number: `INV-${fp.replace('-', '')}-${String((db.seq.inv || 0) + 1).padStart(3, '0')}`, companyId: pot.id, period: fp, items: [{ label: `${PLANS.fleet.label} plan, yearly ${fp} to ${through} (2 months free)`, amount: amt }], total: amt, status: 'paid', createdAt: new Date(from.getFullYear(), from.getMonth(), 1, 9).toISOString(), paidAt: new Date(from.getFullYear(), from.getMonth(), 3, 9).toISOString() });
-        id('inv'); pot.paidThrough = through;
       }
       // Cards on file: every sample customer has one and fares inside the charge
       // window were already charged. One phone booking still needs a card and
@@ -8836,5 +8860,6 @@
     };
   }
 
-  return { createCore, bagFits, exactAddress, typesBySize, MSG_TEMPLATES, INCIDENT_KINDS, setProviders, routeVia, TEMPS, MUSIC, MAX_STOPS, STOP_WAITS, DEFAULT_POLICY, quote, estimateRoute, suggestPlaces, isAirport, flightStatus, normFlight, ApiError, VEHICLE_TYPES, SERVICES, EVENT_TYPES, STATUS_LABELS, DRIVER_FLOW, PLANS, PLATFORM_EMAIL, DEFAULT_AUTOFARM, DEFAULT_DISPATCH, DEFAULT_RATES, DEFAULT_PRICING, VEHICLE_STATUS, MAINT_KINDS, PAY_TYPES, DAYS, AIRLINES };
+  const TEXT_PRICE = DEFAULT_TEXTS.perText.toFixed(2);
+  return { TEXT_PRICE, SETUP_HELP_PRICE, createCore, bagFits, exactAddress, typesBySize, MSG_TEMPLATES, INCIDENT_KINDS, setProviders, routeVia, TEMPS, MUSIC, MAX_STOPS, STOP_WAITS, DEFAULT_POLICY, quote, estimateRoute, suggestPlaces, isAirport, flightStatus, normFlight, ApiError, VEHICLE_TYPES, SERVICES, EVENT_TYPES, STATUS_LABELS, DRIVER_FLOW, PLANS, PLATFORM_EMAIL, DEFAULT_AUTOFARM, DEFAULT_DISPATCH, DEFAULT_RATES, DEFAULT_PRICING, VEHICLE_STATUS, MAINT_KINDS, PAY_TYPES, DAYS, AIRLINES };
 });

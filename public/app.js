@@ -655,16 +655,16 @@
     if (!(await payLocked(el, 'LimoRelay membership', () => drawMembership(el)))) return;
     let mb;
     try { mb = await api('company.membership'); } catch (e) { el.innerHTML = '<h2>LimoRelay membership</h2>'; return showErr(el, e); }
-    const price = mb.billing === 'yearly' ? `${money(mb.yearlyFee)} a year (2 months free)` : `${money(mb.monthlyFee)} a month`;
+    const price = !(mb.monthlyFee > 0) ? 'no monthly fee' : mb.billing === 'yearly' ? `${money(mb.yearlyFee)} a year` : `${money(mb.monthlyFee)} a month`;
     const open = mb.invoices.filter((i) => i.status === 'open');
     const invStatus = (i) => i.status === 'paid' ? `<span class="pill paid">Paid</span>${i.paidBy ? `<div class="small faint">${esc(i.paidBy)}</div>` : ''}`
       : i.charge && i.charge.status === 'pending' ? '<span class="pill s-assigned">Charging card</span>'
       : i.charge && i.charge.status === 'failed' ? `<span class="pill s-cancelled">Card declined</span><div class="small faint">${esc(i.charge.error)}</div>` : '<span class="pill unpaid">Due</span>';
     el.innerHTML = `<div class="spread"><h2>LimoRelay membership</h2>${lockNowBtn('mb-lock')}</div>
       <dl class="kv"><dt>Plan</dt><dd>${esc(mb.planLabel)}${IOS_APP ? '' : `, ${price}`}${mb.priceLockedUntil && !IOS_APP ? `<div class="small faint">Price locked until ${esc(fmtYMD(mb.priceLockedUntil))}</div>` : ''}</dd>
-        <dt>Status</dt><dd>${mb.inTrial ? `Free trial until ${esc(fmtYMD(mb.trialEnds))}` : open.length ? `<b>${open.length} invoice${open.length === 1 ? '' : 's'} due</b>` : 'Paid up'}</dd>
+        <dt>Status</dt><dd>${open.length ? `<b>${open.length} invoice${open.length === 1 ? '' : 's'} due</b>` : 'Paid up'}</dd>
         <dt>Card</dt><dd id="mb-card">${mb.card ? `${esc(mb.card.brand)} ending ${esc(mb.card.last4)}${mb.card.exp ? ` · exp ${esc(mb.card.exp)}` : ''}` : '<span class="faint">No card yet</span>'}</dd></dl>
-      <p class="small muted" id="mb-note">${IOS_APP ? 'Membership billing is not available in the iPhone app.' : mb.card ? 'Each invoice is charged to this card automatically.' : `Add a card and each invoice is paid automatically.${mb.inTrial ? ' Nothing is charged until your free trial ends.' : ''}`}</p>
+      <p class="small muted" id="mb-note">${IOS_APP ? 'Membership billing is not available in the iPhone app.' : `${PLATFORM} is free. You pay only for the texts you send, billed on the 1st for the month before. ${mb.card ? 'Each invoice is charged to this card automatically.' : 'Add a card and each invoice is paid automatically.'}`}</p>
       ${IOS_APP ? '' : mb.cardsOn ? `<div class="row"><button class="btn ${mb.card ? '' : 'brand'}" type="button" id="mb-addcard">${mb.card ? 'Change card' : 'Add a card'}</button></div>` : '<p class="small faint">Online card payment for memberships isn\'t switched on yet. We\'ll email your invoices.</p>'}
       ${mb.invoices.length ? `<div class="tablewrap"><table><thead><tr><th>Invoice</th><th>For</th><th class="r">Amount</th><th>Status</th><th></th></tr></thead><tbody>
         ${mb.invoices.map((i) => `<tr><td class="mono small">${esc(i.number)}</td><td class="small">${i.items.map((x) => esc(x.label)).join('<br>')}</td><td class="r num">${money(i.total)}</td><td>${invStatus(i)}</td>
@@ -707,7 +707,7 @@
       <section class="panel"><dl class="kv"><dt>Name</dt><dd>${esc(u.name)}</dd><dt>Email</dt><dd>${esc(u.email)}</dd>${u.phone ? `<dt>Mobile</dt><dd>${esc(u.phone)}</dd>` : ''}<dt>Account</dt><dd>${esc(roleName)}${co ? ` · ${esc(co.name)}` : ''}</dd></dl></section>
       <section class="panel stack"><h2>Your privacy</h2><p class="small muted">What we keep and why is in the ${privacyLink()}. To change your name or number, ${u.role === 'customer' ? `call ${esc((co && co.name) || 'the company')}` : 'ask your office'}.</p></section>
       ${u.role === 'admin' ? '<section class="panel stack" id="acct-plan"><h2>LimoRelay membership</h2><p class="small faint">Loading…</p></section>' : ''}
-      ${['owner', 'admin'].includes(u.role) ? `<section class="panel stack"><h2>Sign-in email</h2><p class="small muted">You sign in with ${esc(u.email)}.${u.role === 'owner' ? ' Free-trial requests are emailed there too.' : ''}</p><div><button class="btn" type="button" id="acct-email">Change sign-in email</button></div></section>` : ''}
+      ${['owner', 'admin'].includes(u.role) ? `<section class="panel stack"><h2>Sign-in email</h2><p class="small muted">You sign in with ${esc(u.email)}.${u.role === 'owner' ? ' Join requests are emailed there too.' : ''}</p><div><button class="btn" type="button" id="acct-email">Change sign-in email</button></div></section>` : ''}
       ${u.role === 'owner' ? '' : `<section class="panel stack danger-zone"><h2>Delete my account</h2>
         <p class="small muted">${u.role === 'customer' ? 'This removes your login, saved card and contact details. Past rides stay on the company\'s books for tax records, with your name removed. You can\'t undo this.' : 'This switches off your login and removes your name, contact details and photo. Past trips and pay records stay on the company\'s books without your name. You can\'t undo this.'}</p>
         <button class="btn danger" type="button" id="acct-del">Delete my account</button></section>`}
@@ -1537,10 +1537,10 @@
   const CONTACT_EMAIL = C.PLATFORM_EMAIL || 'info@limorelay.com';
   const mailLink = (cls = '') => `<a${cls ? ` class="${cls}"` : ''} href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>`;
   const LP_FAQ = [
-    ['Is there a setup fee?', 'No. There is no setup fee on any plan.'],
-    ['What happens after the free trial?', 'You choose a plan and add a card. Nothing is charged during the 30 days, and you keep all your rides, drivers and customers.'],
+    ['Is it really free?', 'Yes. There is no monthly fee, no setup fee and no contract. You pay only for the texts you send.'],
+    ['How do texts work?', `Each text costs $${C.TEXT_PRICE}. On the 1st of each month you get one bill for the texts you sent the month before. Emails are always free.`],
     ['Do my drivers and passengers need to download anything?', 'No. Everything works in the phone’s browser and can be added to the home screen like an app.'],
-    ['What if I run out of texts?', 'Each plan includes a monthly text allowance. Extra texts are $15 for 500, and emails are always free.'],
+    ['Can you set it up for me?', `Yes. For $${C.SETUP_HELP_PRICE} one time, we load your cars, rates and customers. It's optional.`],
     ['Can I bring my existing rides?', 'Yes. Upcoming rides can be imported from a spreadsheet, so you can switch without losing bookings.'],
   ];
   // Where a signed-out person goes: their company's branded sign-in page if we know it.
@@ -1555,22 +1555,21 @@
     const v = shell({});
     let companies = [], sample = true;
     try { [companies, { sample }] = await Promise.all([api('public.companies'), api('public.info')]); } catch (e) { /* listing optional */ }
-    const P = C.PLANS, yearly = (k) => P[k].monthly * 10;
-    const plan = (k, blurb, items, featured) => `<div class="lp-plan${featured ? ' featured' : ''}">
-        ${featured ? '<span class="lp-flag">Best for new companies</span>' : ''}
-        <h3>${esc(P[k].label)}</h3><p class="small muted">${blurb}</p>
-        <div class="lp-price"><b>$${P[k].monthly}</b><span>/month</span></div>
-        <p class="small faint">or $${yearly(k).toLocaleString()} a year (2 months free)</p>
+    const plan = (title, blurb, items, featured) => `<div class="lp-plan${featured ? ' featured' : ''}">
+        ${featured ? '<span class="lp-flag">For every company</span>' : ''}
+        <h3>${esc(title)}</h3><p class="small muted">${blurb}</p>
+        <div class="lp-price"><b>$0</b><span>/month</span></div>
+        <p class="small faint">Texts: $${C.TEXT_PRICE} each, only what you send</p>
         <ul>${items.map((x) => `<li>${x}</li>`).join('')}</ul>
-        <button class="btn ${featured ? 'brand' : ''}" type="button" data-scroll="lp-trial">Start free trial</button></div>`;
+        <button class="btn ${featured ? 'brand' : ''}" type="button" data-scroll="lp-trial">Join free</button></div>`;
     v.innerHTML = `<div class="lp">
       <section class="signin lp-hero">
         <div class="stack" style="gap:18px">
           <span class="label">From one limo operator to another</span>
           <h1>Let’s help each other grow.</h1>
           <p class="lede">We run Carina Ride, a chauffeur company in Seattle, and built ${PLATFORM} to run our own rides. Now we’re inviting operators in every city to join us: send each other the rides we can’t cover, look after each other’s clients when they travel, and share the tools that keep our own company running.</p>
-          <div class="row"><button class="btn brand lp-cta" type="button" data-scroll="lp-trial">Join us, free for 30 days</button><button class="btn lp-cta" type="button" data-scroll="lp-help">How it works</button></div>
-          <ul class="lp-ticks small"><li>No card needed to join</li><li>Partners in other cities for your clients</li><li>Booking, dispatch, driver and passenger apps included</li></ul>
+          <div class="row"><button class="btn brand lp-cta" type="button" data-scroll="lp-trial">Join us for free</button><button class="btn lp-cta" type="button" data-scroll="lp-help">How it works</button></div>
+          <ul class="lp-ticks small"><li>Free, no monthly fee and no card needed</li><li>Partners in other cities for your clients</li><li>Booking, dispatch, driver and passenger apps included</li></ul>
         </div>
         <form class="panel stack" id="signin-form" novalidate>
           <h2>Sign in</h2>
@@ -1619,32 +1618,31 @@
         </ol>
       </section>
       <section class="lp-sec" id="lp-pricing">
-        <div class="lp-head"><h2>Membership</h2><p class="muted">Kept low so every operator can join. Every plan includes the network, the dispatch board, the driver app and the passenger app. Try any plan free for 30 days.</p></div>
+        <div class="lp-head"><h2>Free for every company</h2><p class="muted">No monthly fee, no setup fee and no contract. You get the network, the dispatch board, the driver app and the passenger app. You pay only for the texts you send.</p></div>
         <div class="lp-plans">
-          ${plan('founding', `For the first ${P.founding.limit} companies. Price locked for 2 years.`, ['All features', `${P.founding.texts.toLocaleString()} passenger texts a month`, 'No setup fee', 'Unlimited bookings'], true)}
-          ${plan('standard', 'For growing companies.', ['All features', `${P.standard.texts.toLocaleString()} passenger texts a month`, 'No setup fee', 'Unlimited bookings'])}
-          ${plan('fleet', 'For larger fleets and busy offices.', ['All features', `${P.fleet.texts.toLocaleString()} passenger texts a month`, 'No setup fee', 'Unlimited bookings'])}
+          ${plan('Free', 'Everything included, for companies of every size.', ['All features', 'Unlimited bookings', 'Unlimited emails', 'No setup fee'], true)}
         </div>
-        <p class="small faint" style="margin-top:12px">Extra texts are $15 for 500. Card fees are billed by your own card service (Stripe, Square, Authorize.net or PayPal); ${PLATFORM} takes no share of your fares.</p>
+        <p class="small muted" style="margin-top:12px"><b>Want us to set it up for you?</b> For $${C.SETUP_HELP_PRICE} one time, we load your cars, rates and customers. It's optional; most companies do it themselves with the setup guide.</p>
+        <p class="small faint" style="margin-top:8px">Each text costs $${C.TEXT_PRICE}, billed on the 1st for the month before. Card fees are billed by your own card service (Stripe, Square, Authorize.net or PayPal); ${PLATFORM} takes no share of your fares.</p>
       </section>
       <section class="lp-sec" id="lp-compare">
-        <div class="lp-head"><h2>How we compare</h2><p class="muted">Everything is included in one flat monthly price. No fee per ride.</p></div>
+        <div class="lp-head"><h2>How we compare</h2><p class="muted">Everything is included, free. No fee per ride.</p></div>
         <div class="lp-cmp-wrap"><table class="lp-cmp"><colgroup><col class="f"><col><col><col></colgroup>
           <thead><tr><th scope="col">Feature</th><th scope="col" class="lp-us">${PLATFORM}</th><th scope="col">Limo Anywhere</th><th scope="col">Limosys</th></tr></thead>
-          <tbody><tr><th scope="row">Online booking and dispatch</th><td class="lp-us"><span class="lp-yes" aria-label="Yes">✓</span></td><td><span class="lp-yes" aria-label="Yes">✓</span></td><td><span class="lp-yes" aria-label="Yes">✓</span></td></tr><tr><th scope="row">Driver app</th><td class="lp-us"><span class="lp-yes" aria-label="Yes">✓</span></td><td><span class="lp-yes" aria-label="Yes">✓</span></td><td><span class="lp-yes" aria-label="Yes">✓</span></td></tr><tr><th scope="row">Passenger app</th><td class="lp-us">Included</td><td>$99/month extra on most plans</td><td>Included</td></tr><tr><th scope="row">Monthly price</th><td class="lp-us">$49 to $199</td><td>$99 to $549, plus a fee per ride</td><td>Custom quote</td></tr><tr><th scope="row">Fee per ride</th><td class="lp-us">None</td><td>$0.20 to $0.50</td><td>None</td></tr><tr><th scope="row">Setup fee</th><td class="lp-us">None</td><td>$299 to $899</td><td>Not listed</td></tr><tr><th scope="row">Free trial</th><td class="lp-us">30 days, no card</td><td>Not listed</td><td>Not listed</td></tr><tr><th scope="row">Affiliate network</th><td class="lp-us">Included, no fee</td><td>$0.25 to $0.75 per ride</td><td>25,000-car network</td></tr><tr><th scope="row">Contract</th><td class="lp-us">Month to month</td><td>Month to month, 30 days notice</td><td>Not listed</td></tr></tbody>
+          <tbody><tr><th scope="row">Online booking and dispatch</th><td class="lp-us"><span class="lp-yes" aria-label="Yes">✓</span></td><td><span class="lp-yes" aria-label="Yes">✓</span></td><td><span class="lp-yes" aria-label="Yes">✓</span></td></tr><tr><th scope="row">Driver app</th><td class="lp-us"><span class="lp-yes" aria-label="Yes">✓</span></td><td><span class="lp-yes" aria-label="Yes">✓</span></td><td><span class="lp-yes" aria-label="Yes">✓</span></td></tr><tr><th scope="row">Passenger app</th><td class="lp-us">Included</td><td>$99/month extra on most plans</td><td>Included</td></tr><tr><th scope="row">Monthly price</th><td class="lp-us">Free</td><td>$99 to $549, plus a fee per ride</td><td>Custom quote</td></tr><tr><th scope="row">Fee per ride</th><td class="lp-us">None</td><td>$0.20 to $0.50</td><td>None</td></tr><tr><th scope="row">Setup fee</th><td class="lp-us">None</td><td>$299 to $899</td><td>Not listed</td></tr><tr><th scope="row">Text messages</th><td class="lp-us">$${C.TEXT_PRICE} each, only what you send</td><td>Not listed</td><td>Not listed</td></tr><tr><th scope="row">Affiliate network</th><td class="lp-us">Included, no fee</td><td>$0.25 to $0.75 per ride</td><td>25,000-car network</td></tr><tr><th scope="row">Contract</th><td class="lp-us">None</td><td>Month to month, 30 days notice</td><td>Not listed</td></tr></tbody>
         </table></div>
         <p class="small faint" style="margin-top:12px">From each company’s public website, November 2026. Their prices can change.</p>
       </section>
       <section class="lp-sec lp-trial" id="lp-trial">
-        <div class="stack" style="gap:8px"><h2>Join us, free for 30 days</h2><p class="muted" id="tr-lead">It takes two minutes. Your free trial starts right away, with no card needed, and a short setup guide helps you add your cars, prices and first booking. Questions? Email ${mailLink()}.</p></div>
+        <div class="stack" style="gap:8px"><h2>Join us for free</h2><p class="muted" id="tr-lead">It takes two minutes. You can start right away, with no card needed, and a short setup guide helps you add your cars, prices and first booking. Questions? Email ${mailLink()}.</p></div>
         <form id="tr-form" class="stack" novalidate>
           <div class="grid2"><label class="field"><span>Company name</span><input id="tr-company" name="company" autocomplete="organization"></label><label class="field"><span>Booking link name</span><input id="tr-slug" name="slug" class="mono" autocapitalize="off" placeholder="your-company"><span class="hint" id="tr-slughint">Your booking page will be ${esc(location.host || 'limorelay.com')}/#book.<b class="mono">your-company</b></span></label></div>
           <div class="grid2"><label class="field"><span>Your name</span><input id="tr-name" name="name" autocomplete="name"></label><label class="field"><span>Mobile phone</span><input id="tr-phone" name="phone" type="tel" autocomplete="tel"></label></div>
           <div class="grid2"><label class="field"><span>Email (you sign in with this)</span><input id="tr-email" name="email" type="email" autocomplete="email"></label><label class="field"><span>Choose a password</span><input id="tr-pw" name="password" type="password" autocomplete="new-password" minlength="8"><span class="hint">At least 8 characters.</span></label></div>
           <div class="grid2"><label class="field"><span>City</span><input id="tr-city" name="city"></label><label class="field"><span>Vehicles in your fleet</span><select id="tr-fleet" name="fleet"><option value="">Choose</option><option>1-3</option><option>4-10</option><option>11-25</option><option>26+</option></select></label></div>
           <label class="field"><span>Time zone</span><select id="tr-tz" name="timezone">${[['America/Los_Angeles', 'Pacific'], ['America/Denver', 'Mountain'], ['America/Phoenix', 'Arizona'], ['America/Chicago', 'Central'], ['America/New_York', 'Eastern'], ['America/Anchorage', 'Alaska'], ['Pacific/Honolulu', 'Hawaii']].map(([z, l]) => `<option value="${z}" ${z === myTz ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-          <label class="field"><span>Membership</span><select id="tr-plan" name="plan"><option value="">Choose</option>${['founding', 'standard', 'fleet'].map((k) => `<option value="${k}">${esc(P[k].label)}, $${P[k].monthly}/month after the free trial</option>`).join('')}</select></label>
           <label class="field"><span>Tell us about your company</span><textarea id="tr-note" name="note" placeholder="The software you use today, when you want to start"></textarea></label>
+          <label class="check"><input type="checkbox" id="tr-help" name="setupHelp" value="1"> <span>Yes, set it up for me: you load my cars, rates and customers ($${C.SETUP_HELP_PRICE} one time, optional)</span></label>
           <label class="check"><input type="checkbox" id="tr-terms" name="terms" value="1"> <span>I agree to the ${termsLink()} and ${privacyLink()}.</span></label>
           <div id="tr-err"></div>
           <div><button class="btn brand" type="submit" id="tr-go">Sign up my company</button></div>
@@ -1674,7 +1672,7 @@
     $('#tr-company', v).oninput = () => { if (!slugEdited) { $('#tr-slug', v).value = slugOf($('#tr-company', v).value); showSlug(); if ($('#tr-slug', v).closest('.field.bad')) checkSignup($('#tr-form', v), $('#tr-slug', v)); } };
     $('#tr-slug', v).oninput = () => { slugEdited = true; showSlug(); };
     // When the owner approves sign-ups by hand, say so before they sign up.
-    api('public.signupInfo').then((r) => { const l = $('#tr-lead', v); if (l && !r.instant) l.innerHTML = `It takes two minutes. We welcome every new member personally and email you as soon as you’re approved, within 3 to 7 business days. Your free trial starts then, with no card needed. Questions? Email ${mailLink()}.`; }).catch(() => {});
+    api('public.signupInfo').then((r) => { const l = $('#tr-lead', v); if (l && !r.instant) l.innerHTML = `It takes two minutes. We welcome every new member personally and email you as soon as you’re approved, within 3 to 7 business days. ${PLATFORM} is free, with no card needed. Questions? Email ${mailLink()}.`; }).catch(() => {});
     // Every field must be filled in correctly; the problems show under each field.
     const SIGNUP_CHECKS = [
       ['company', (x) => x.trim().length >= 2, 'Enter your company name.'],
@@ -1686,7 +1684,6 @@
       ['city', (x) => x.trim().length >= 2, 'Enter your city.'],
       ['fleet', (x) => !!x, 'Choose your fleet size.'],
       ['timezone', (x) => !!x, 'Choose your time zone.'],
-      ['plan', (x) => !!x, 'Choose a membership.'],
       ['note', (x) => x.trim().length >= 3, 'Tell us a little about your company.'],
     ];
     const checkSignup = (form, only) => {
@@ -1711,14 +1708,14 @@
       $('#tr-err', v).innerHTML = '';
       await busy($('#tr-go', v), async () => {
         try {
-          const res = await api('public.companySignup', { ...f, terms: $('#tr-terms', v).checked });
+          const res = await api('public.companySignup', { ...f, setupHelp: $('#tr-help', v).checked, terms: $('#tr-terms', v).checked });
           // Trial started: sign them straight in to the setup guide.
           if (res.started) {
             setSession({ token: res.token, user: res.user, company: res.company, remember: true });
             // render() closes any open window, so the thank-you opens once the Board is up.
             const home = HOME[res.user.role];
             if (location.hash.slice(1) === home) render(); else { location.hash = home; await new Promise((ok) => window.addEventListener('hashchange', () => setTimeout(ok, 0), { once: true })); }
-            const m = openModal({ title: 'Thank you for signing up!', body: `<div class="stack"><p><b>Thank you for signing up with LimoRelay.</b> Our service team will reach out to you soon.</p><p class="muted">Your free trial has started. The setup guide on your Board walks you through the first steps.</p></div>`, footer: '<button class="btn primary" type="button" data-close>Get started</button>' });
+            const m = openModal({ title: 'Thank you for signing up!', body: `<div class="stack"><p><b>Thank you for signing up with LimoRelay.</b> Our service team will reach out to you soon.</p><p class="muted">${PLATFORM} is free. The setup guide on your Board walks you through the first steps.</p></div>`, footer: '<button class="btn primary" type="button" data-close>Get started</button>' });
             $('[data-close]', m).onclick = closeModal;
             return;
           }
@@ -6453,6 +6450,20 @@
     // This month's texts: what's used, what's left, and buying more.
     function textsPanel(t) {
       const mon = new Date(t.month + '-15T12:00:00').toLocaleDateString([], { month: 'long' });
+      // Pay as you go: LimoRelay is free and the company pays for each text it sends.
+      if (t.payAsYouGo) {
+        const prev = (t.past || [])[0];
+        return `<section class="panel stack texts" id="tx-panel" style="margin-bottom:16px">
+        <div class="spread"><h2>Texts this month</h2><span class="pill s-on_board">On</span></div>
+        <div class="tiles three">
+          <div class="tile"><span class="label">Sent in ${esc(mon)}</span><b class="num">${t.used}</b><span class="small faint">${t.included || t.fromPacks ? `${Math.max(0, t.used - t.billable)} free` : `$${t.perText} each`}</span></div>
+          <div class="tile"><span class="label">Cost so far</span><b class="num">${money(t.cost)}</b><span class="small faint">Billed on the 1st</span></div>
+          <div class="tile"><span class="label">Last month</span><b class="num">${prev ? money((prev.billable || 0) * t.perText) : money(0)}</b><span class="small faint">${prev ? `${prev.used} texts` : 'No texts'}</span></div>
+        </div>
+        <p class="small muted" id="tx-plan">${PLATFORM} is free. You pay only for the texts you send: $${t.perText} each. On the 1st you get one bill for the month before.</p>
+        <p class="small faint">Emails are unlimited and free. A text over 160 characters counts as 2 or more, the same way phone carriers bill it.</p>
+      </section>`;
+      }
       const status = t.out ? '<span class="pill s-cancelled">Out of texts</span>' : t.low ? '<span class="pill unpaid">Running low</span>' : '<span class="pill s-on_board">OK</span>';
       return `<section class="panel stack texts" id="tx-panel" style="margin-bottom:16px">
         <div class="spread"><h2>Texts this month</h2>${status}</div>
@@ -7016,27 +7027,26 @@
         const pending = list.filter((c) => c.status === 'pending');
         list = list.filter((c) => c.status !== 'pending');
         const active = list.filter((c) => c.status === 'active');
-        const mrr = active.filter((c) => !c.inTrial).reduce((s, c) => s + c.monthlyEquivalent, 0);
-        const trials = active.filter((c) => c.inTrial).length;
+        const mrr = active.reduce((s, c) => s + (c.monthlyEquivalent || 0), 0);
+        const textCost = list.reduce((s, c) => s + (c.texts.cost || 0), 0);
         const open = invoices.filter((i) => i.status === 'open').reduce((s, i) => s + i.total, 0);
         v.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Companies on ${PLATFORM}</h1><p class="muted">Every limo company you host. Each one has its own logins, booking page, fleet and customers.</p></div>
             <button class="btn primary" type="button" id="co-add">Add company</button></div>
           <div class="tiles" style="margin-bottom:20px">
             <div class="tile"><span class="label">Active companies</span><b>${active.length}</b></div>
-            <div class="tile"><span class="label">Monthly subscriptions</span><b>${money0(mrr)}</b>${trials ? `<span class="small faint">${trials} on free trial</span>` : ''}</div>
-            <div class="tile"><span class="label">Founding places left</span><b>${plans.foundingLeft}</b><span class="small faint">of ${plans.plans.founding.limit}</span></div>
+            <div class="tile"><span class="label">Texts this month</span><b>${money(textCost)}</b><span class="small faint">Billed on the 1st${mrr ? `, plus ${money0(mrr)} in fees` : ''}</span></div>
             <div class="tile"><span class="label">Trips booked this month</span><b>${list.reduce((s, c) => s + c.tripsMonth, 0)}</b></div>
             <div class="tile"><span class="label">Unpaid invoices</span><b>${money0(open)}</b></div>
           </div>
-          <label class="switch" style="margin-bottom:16px"><input type="checkbox" id="co-approve" ${pf.approveSignups ? 'checked' : ''}><span>Approve new companies by hand <span class="small faint">${pf.approveSignups ? 'New sign-ups wait for you before they can sign in.' : 'Off: new companies start their free trial as soon as they sign up. You get an email for each one.'}</span></span></label>
-          ${pending.length ? `<section class="panel stack" id="co-pending" style="margin-bottom:20px"><div class="row" style="justify-content:space-between"><h2>Waiting for your approval <span class="pill s-assigned count">${pending.length}</span></h2><span class="small faint">Companies that signed up on the home page. They can sign in once you approve; their 30-day trial starts then.</span></div>
-            <div class="tablewrap"><table><thead><tr><th>Signed up</th><th>Company</th><th>Contact</th><th>City</th><th>Fleet</th><th>Plan</th><th>Note</th><th></th></tr></thead><tbody>
+          <label class="switch" style="margin-bottom:16px"><input type="checkbox" id="co-approve" ${pf.approveSignups ? 'checked' : ''}><span>Approve new companies by hand <span class="small faint">${pf.approveSignups ? 'New sign-ups wait for you before they can sign in.' : 'Off: new companies can start as soon as they sign up. You get an email for each one.'}</span></span></label>
+          ${pending.length ? `<section class="panel stack" id="co-pending" style="margin-bottom:20px"><div class="row" style="justify-content:space-between"><h2>Waiting for your approval <span class="pill s-assigned count">${pending.length}</span></h2><span class="small faint">Companies that signed up on the home page. They can sign in once you approve.</span></div>
+            <div class="tablewrap"><table><thead><tr><th>Signed up</th><th>Company</th><th>Contact</th><th>City</th><th>Fleet</th><th>Setup help</th><th>Note</th><th></th></tr></thead><tbody>
             ${pending.map((c) => `<tr><td class="mono small nowrap">${esc(fmtDT(c.createdAt))}</td><td data-label="Company"><b>${esc(c.name)}</b><br><span class="small mono">#book.${esc(c.slug)}</span></td>
               <td data-label="Contact" class="small">${esc(c.adminName)}<br><a href="mailto:${esc(c.adminEmail)}">${esc(c.adminEmail)}</a>${c.adminPhone ? `<br><a href="tel:${esc(c.adminPhone)}">${esc(c.adminPhone)}</a>` : ''}</td>
-              <td data-label="City" class="small">${esc((c.signup || {}).city || '')}</td><td data-label="Fleet" class="small">${esc((c.signup || {}).fleet || '')}</td><td data-label="Plan" class="small">${esc(c.planLabel || c.plan)}</td><td data-label="Note" class="small" style="max-width:240px">${esc((c.signup || {}).note || '')}</td>
+              <td data-label="City" class="small">${esc((c.signup || {}).city || '')}</td><td data-label="Fleet" class="small">${esc((c.signup || {}).fleet || '')}</td><td data-label="Setup help" class="small">${c.setupHelp ? `Yes, ${money0(c.setupHelp.price)}` : 'No'}</td><td data-label="Note" class="small" style="max-width:240px">${esc((c.signup || {}).note || '')}</td>
               <td class="nowrap"><button class="btn sm primary" type="button" data-approve="${c.id}">Approve</button> <button class="btn sm" type="button" data-decline="${c.id}">Decline</button></td></tr>`).join('')}
             </tbody></table></div></section>` : ''}
-          ${leads.length ? `<details class="panel" id="co-leads" style="margin-bottom:20px" ${leads.some((l) => l.status === 'new') ? 'open' : ''}><summary><b>Free-trial requests</b> <span class="pill ${leads.some((l) => l.status === 'new') ? 's-assigned' : 'off'} count">${leads.filter((l) => l.status === 'new').length} new</span> <span class="small faint">earlier requests from the home page. Add the company when you have spoken to them.</span></summary>
+          ${leads.length ? `<details class="panel" id="co-leads" style="margin-bottom:20px" ${leads.some((l) => l.status === 'new') ? 'open' : ''}><summary><b>Join requests</b> <span class="pill ${leads.some((l) => l.status === 'new') ? 's-assigned' : 'off'} count">${leads.filter((l) => l.status === 'new').length} new</span> <span class="small faint">earlier requests from the home page. Add the company when you have spoken to them.</span></summary>
             <div class="tablewrap" style="margin-top:12px"><table><thead><tr><th>Received</th><th>Name and company</th><th>Contact</th><th>City</th><th>Fleet</th><th>Note</th><th>Status</th><th></th></tr></thead><tbody>
             ${leads.map((l) => `<tr><td class="mono small nowrap">${esc(fmtDT(l.at))}</td><td data-label="Name and company"><b>${esc(l.name)}</b><br><span class="small">${esc(l.company)}</span></td>
               <td data-label="Contact" class="small"><a href="mailto:${esc(l.email)}">${esc(l.email)}</a>${l.phone ? `<br><a href="tel:${esc(l.phone)}">${esc(l.phone)}</a>` : ''}</td><td data-label="City" class="small">${esc(l.city || '')}</td><td data-label="Fleet" class="small">${esc(l.fleet || '')}</td><td data-label="Note" class="small" style="max-width:260px">${esc(l.note || '')}</td>
@@ -7049,8 +7059,8 @@
             <td class="mono small">${esc(c.adminEmail)}</td>
             <td><select class="input" style="width:auto;min-height:32px;padding:3px 6px" data-plan="${c.id}" aria-label="Plan">${Object.entries(C.PLANS).map(([k, p]) => `<option value="${k}" ${c.plan === k ? 'selected' : ''}>${p.label}</option>`).join('')}</select>
               <select class="input" style="width:auto;min-height:32px;padding:3px 6px" data-billing="${c.id}" aria-label="Billing"><option value="monthly" ${c.billing === 'monthly' ? 'selected' : ''}>Monthly</option><option value="yearly" ${c.billing === 'yearly' ? 'selected' : ''}>Yearly</option></select></td>
-            <td class="r num nowrap">${c.billing === 'yearly' ? `${money(c.yearlyFee)}/yr` : `${money(c.monthlyFee)}/mo`}${c.inTrial ? `<div class="small faint">Trial until ${esc(fmtYMD(c.trialEnds))}</div>` : c.priceLockedUntil ? `<div class="small faint">Locked until ${esc(fmtYMD(c.priceLockedUntil))}</div>` : c.paidThrough ? `<div class="small faint">Paid through ${esc(c.paidThrough)}</div>` : ''}</td><td class="r num">${c.drivers}</td><td class="r num">${c.vehicles}</td><td class="r num">${c.tripsMonth}</td><td class="r num">${money0(c.bookedMonth)}</td>
-            <td class="nowrap"><button class="linkbtn num" type="button" data-texts="${c.id}">${c.texts.used} / ${c.texts.included}${c.texts.custom ? '*' : ''}</button>${c.texts.out ? ' <span class="pill s-cancelled">Out</span>' : c.texts.low ? ' <span class="pill unpaid">Low</span>' : ''}${c.texts.credits ? `<div class="small faint">+${c.texts.credits} bought</div>` : ''}</td>
+            <td class="r num nowrap">${c.billing === 'yearly' ? `${money(c.yearlyFee)}/yr` : `${money(c.monthlyFee)}/mo`}${c.setupHelp ? `<div class="small"><span class="pill ${c.setupHelp.invoiceId ? 'paid' : 'unpaid'}">Setup help ${money0(c.setupHelp.price)}${c.setupHelp.invoiceId ? ', invoiced' : ''}</span></div>` : ''}${!(c.monthlyFee > 0) ? '<div class="small faint">Free</div>' : c.priceLockedUntil ? `<div class="small faint">Locked until ${esc(fmtYMD(c.priceLockedUntil))}</div>` : c.paidThrough ? `<div class="small faint">Paid through ${esc(c.paidThrough)}</div>` : ''}</td><td class="r num">${c.drivers}</td><td class="r num">${c.vehicles}</td><td class="r num">${c.tripsMonth}</td><td class="r num">${money0(c.bookedMonth)}</td>
+            <td class="nowrap"><button class="linkbtn num" type="button" data-texts="${c.id}">${c.texts.payAsYouGo ? `${c.texts.used} used` : `${c.texts.used} / ${c.texts.included}`}${c.texts.custom ? '*' : ''}</button>${c.texts.payAsYouGo && c.texts.cost ? `<div class="small faint">${money(c.texts.cost)} so far</div>` : ''}${c.texts.out ? ' <span class="pill s-cancelled">Out</span>' : c.texts.low ? ' <span class="pill unpaid">Low</span>' : ''}${c.texts.credits ? `<div class="small faint">+${c.texts.credits} bought</div>` : ''}</td>
             <td>${c.status === 'active' ? '<span class="pill s-on_board">Active</span>' : '<span class="pill s-cancelled">Paused</span>'}</td>
             </tr>`).join('')}
           </tbody></table></div>
@@ -7059,7 +7069,7 @@
         $('#co-approve', v).onchange = async (e) => { try { await api('owner.savePlatform', { approveSignups: e.target.checked }); toast(e.target.checked ? 'New sign-ups now wait for your approval.' : 'New companies now start right away.'); last = ''; refresh(); } catch (err) { toast(err.message, true); } };
         $$('[data-approve]', v).forEach((b) => { b.onclick = () => busy(b, async () => {
           const c = pending.find((x) => x.id === b.dataset.approve);
-          if (!confirm(`Approve ${c.name}? ${c.adminName} can sign in right away and their 30-day free trial starts today.`)) return;
+          if (!confirm(`Approve ${c.name}? ${c.adminName} can sign in right away and they can start today.`)) return;
           try { await api('owner.reviewSignup', { id: c.id, approve: true }); toast(`${c.name} approved. We emailed ${c.adminEmail}.`); last = ''; refresh(); } catch (e) { toast(e.message, true); }
         }); });
         $$('[data-decline]', v).forEach((b) => { b.onclick = () => busy(b, async () => {
@@ -7123,7 +7133,9 @@
               <label class="field"><span>Company email</span><input name="email" type="email" value="${esc(c.email || '')}"><span class="hint">Shown to their customers and used as the reply-to address.</span></label></div>
             <div class="grid2"><label class="field"><span>Time zone</span><select name="timezone">${[...new Set([c.timezone, ...TZ].filter(Boolean))].map((z) => `<option value="${z}" ${z === c.timezone ? 'selected' : ''}>${esc(z.replace(/_/g, ' '))}</option>`).join('')}</select></label>
               <label class="field"><span>Brand color</span><input name="color" type="color" value="${esc(c.color || '#2b4a7e')}" style="padding:4px;height:40px"></label></div>
-            <label class="field"><span>Membership fee ($ a month)</span><input id="ec-fee" name="fee" type="number" min="0" step="0.01" value="${esc(String(c.monthlyFee))}"><span class="hint">Their ${esc(c.planLabel || 'plan')} price. Set 0 for a company you don't bill, such as your own.</span></label>
+            <label class="field"><span>Membership fee ($ a month)</span><input id="ec-fee" name="fee" type="number" min="0" step="0.01" value="${esc(String(c.monthlyFee))}"><span class="hint">${PLATFORM} is free, so this is 0. Only set a fee if you agreed one with this company.</span></label>
+            ${c.setupHelp && c.setupHelp.invoiceId ? `<p class="small muted">Setup help (${money0(c.setupHelp.price)}) is on an invoice.</p>` : `<div class="grid2"><label class="check"><input type="checkbox" name="setupHelp" id="ec-help" ${c.setupHelp ? 'checked' : ''}> <span>Setup help: we load their cars, rates and customers. Goes on their next invoice.</span></label>
+              <label class="field"><span>Setup help price ($)</span><input name="setupHelpPrice" type="number" min="0" step="1" value="${c.setupHelp ? c.setupHelp.price : C.SETUP_HELP_PRICE}"></label></div>`}
             <h3>Their admin login</h3>
             <div class="grid2"><label class="field"><span>Admin name</span><input id="ec-aname" name="adminName" value="${esc(c.adminName || '')}"></label>
               <label class="field"><span>Admin email</span><input id="ec-aemail" name="adminEmail" type="email" value="${esc(c.adminEmail || '')}"><span class="hint">They sign in with this email. Use Send login email afterwards if it changed.</span></label></div>
@@ -7143,7 +7155,7 @@
           try { await api('owner.updateCompany', { id: c.id, resetPin: true }); c.pinSet = false; rp.remove(); toast('Payment PIN reset. Tell them to choose a new one.'); last = ''; refresh(); } catch (err) { showErr($('#ec-err', m), err); }
         });
         $('#ec-save', m).onclick = (e) => busy(e.currentTarget, async () => {
-          try { const f = formData($('#ec', m)); const r = await api('owner.updateCompany', { id: c.id, info: f, monthlyFee: f.fee }); closeModal(); toast(`${r.name} saved.`); last = ''; refresh(); } catch (err) { showErr($('#ec-err', m), err); }
+          try { const f = formData($('#ec', m)); const hb = $('#ec-help', m); const r = await api('owner.updateCompany', { id: c.id, info: f, monthlyFee: f.fee, ...(hb ? { setupHelp: hb.checked, setupHelpPrice: f.setupHelpPrice } : {}) }); closeModal(); toast(`${r.name} saved.`); last = ''; refresh(); } catch (err) { showErr($('#ec-err', m), err); }
         });
       }
       function addCompany() {
@@ -7152,10 +7164,7 @@
           body: `<form id="ac" class="stack" novalidate>
             <div class="grid2"><label class="field"><span>Company name</span><input id="ac-name" name="name" placeholder="Gold Coast Limousine"></label>
               <label class="field"><span>Booking link name</span><input id="ac-slug" name="slug" class="mono" placeholder="gold-coast"><span class="hint">Their page: #book.<span id="ac-slug-show">…</span></span></label></div>
-            <div class="grid2"><label class="field"><span>Plan</span><select id="ac-plan" name="plan">${Object.entries(C.PLANS).map(([k, p]) => `<option value="${k}" ${k === 'standard' ? 'selected' : ''} ${k === 'founding' && plans.foundingLeft <= 0 ? 'disabled' : ''}>${p.label}: $${p.monthly}/mo, ${plans.texts[k]} texts${k === 'founding' ? ` (${plans.foundingLeft} places left)` : ''}</option>`).join('')}</select></label>
-              <label class="field"><span>Billing</span><select id="ac-billing" name="billing"><option value="monthly">Monthly</option><option value="yearly">Yearly: 12 months for the price of 10</option></select></label></div>
-            <label class="switch"><input type="checkbox" id="ac-trial" name="trial" checked><span>Start with a ${plans.trialDays}-day free trial (nothing billed until it ends)</span></label>
-            <p class="small faint">Every plan includes dispatch, the driver app and the passenger app. Founding is for the first ${plans.plans.founding.limit} companies, with the price locked for 2 years.</p>
+            <p class="small faint">${PLATFORM} is free: dispatch, the driver app and the passenger app are all included. The company pays only for the texts it sends, billed on the 1st.</p>
             <div class="grid2">
               <label class="field"><span>Brand color</span><input id="ac-color" name="color" type="color" value="#2b4a7e" style="padding:4px;height:40px"></label>
               <label class="field"><span>Phone</span><input id="ac-phone" name="phone" type="tel"></label></div>
@@ -7184,17 +7193,15 @@
       let invoices, tp, bi;
       try { [invoices, tp, bi] = await Promise.all([api('owner.invoices'), api('owner.textPlan'), api('owner.billingInfo')]); } catch (e) { return showErr(v, e); }
       const month = new Date().toISOString().slice(0, 7);
-      v.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Billing</h1><p class="muted">Monthly invoices to each company for their plan. Yearly companies get one invoice a year for 10 months. There is no setup fee. Companies on a free trial are skipped until it ends.</p></div>
+      v.innerHTML = `<div class="pagehead"><div class="stack" style="gap:4px"><h1>Billing</h1><p class="muted">${PLATFORM} is free. On the 1st of each month each company gets one invoice for the texts it sent the month before. A company with no texts gets no invoice.</p></div>
           <div class="row"><input class="input" type="month" id="bl-month" value="${month}" style="width:auto"><button class="btn primary" type="button" id="bl-run">Create invoices for ${esc(new Date(month + '-15T12:00:00').toLocaleDateString([], { month: 'long', year: 'numeric' }))}</button></div></div>
-        <section class="panel stack" style="margin-bottom:16px"><label class="check"><input type="checkbox" id="bl-auto" ${bi.autoBill ? 'checked' : ''}> <span><b>Bill companies automatically</b><br><span class="small muted">On the 1st of each month, and the day a free trial ends, each company gets its invoice. Companies with a card on file (My account, Membership) are charged right away; the others get an email with a link to pay. Text packs a company buys go on its next invoice.</span></span></label>
+        <section class="panel stack" style="margin-bottom:16px"><label class="check"><input type="checkbox" id="bl-auto" ${bi.autoBill ? 'checked' : ''}> <span><b>Bill companies automatically</b><br><span class="small muted">On the 1st of each month each company gets its invoice for last month's texts. Companies with a card on file (My account, Membership) are charged right away; the others get an email with a link to pay.</span></span></label>
           <p class="small faint">${bi.payMode === 'stripe' ? 'Cards are charged on your own Stripe account.' : bi.payMode === 'demo' ? 'Demo: cards are simulated.' : 'Add STRIPE_SECRET_KEY in Render to take card payments; until then invoices are emailed and you mark them paid.'}</p></section>
         <form class="panel stack" id="tp-form" style="margin-bottom:16px" novalidate><h2>Texts for every company</h2>
-          <div class="grid3">${Object.entries(C.PLANS).map(([k, p]) => `<label class="field"><span>${esc(p.label)} plan, texts a month</span><input class="input" type="number" name="plan_${k}" min="0" value="${tp.plans[k]}"></label>`).join('')}</div>
           <div class="grid3">
-            <label class="field"><span>Texts in a pack</span><input class="input" type="number" name="packSize" min="50" value="${tp.packSize}"></label>
-            <label class="field"><span>Pack price ($)</span><input class="input" type="number" name="packPrice" min="0" step="0.01" value="${tp.packPrice}"></label>
-            <label class="field"><span>Warn at (% used)</span><input class="input" type="number" name="warnPct" min="50" max="99" value="${tp.warnPct}"></label></div>
-          <p class="small faint">Emails are unlimited. A company can have its own monthly number; set it from the Texts column on Companies.</p>
+            <label class="field"><span>Price per text ($)</span><input class="input" type="number" name="perText" min="0" max="10" step="0.01" value="${tp.perText}"></label>
+            ${Object.entries(C.PLANS).map(([k, p]) => `<label class="field"><span>Free texts a month</span><input class="input" type="number" name="plan_${k}" min="0" value="${tp.plans[k]}"></label>`).join('')}</div>
+          <p class="small faint">Each company pays for the texts it sends, at this price, billed on the 1st for the month before. Emails are unlimited and free. A company can get its own free texts from the Texts column on Companies.</p>
           <div id="tp-err"></div><div><button class="btn" type="submit">Save texts</button></div></form>
         <div class="tablewrap"><table><thead><tr><th>Invoice</th><th>Company</th><th>Period</th><th>Items</th><th class="r">Total</th><th>Status</th><th></th></tr></thead><tbody>
         ${invoices.map((i) => `<tr><td class="mono small">${esc(i.number)}</td><td>${esc(i.companyName)}</td><td class="mono small">${esc(i.period)}</td><td class="small">${i.items.map((x) => `${esc(x.label)}: ${money(x.amount)}`).join('<br>')}</td>
